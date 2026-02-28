@@ -32,3 +32,10 @@ uv run ruff check --fix
 ```sh
 uv run mypy src/
 ```
+# CIで落ちたら
+
+`uv run pre-commit run --all-files`
+
+上記のコマンドを記述するとファイルの自動修正やエラー箇所の出力が行われます。出力されたエラー箇所を修正することでCIが通るようになると思います。
+
+多くの場合は自動修正された変更をpushすることでCIに通るようになります。

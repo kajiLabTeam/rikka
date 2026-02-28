@@ -1,0 +1,23 @@
+{
+	"[python]": {
+		"editor.defaultFormatter": "charliermarsh.ruff",
+		"editor.formatOnSave": true,
+		"editor.codeActionsOnSave": {
+			"source.organizeImports.ruff": "always",
+			"source.fixAll.ruff": "always"
+		}
+	},
+	"mypy-type-checker.args": [
+		"--config-file=pyproject.toml"
+	],
+	"mypy-type-checker.importStrategy": "fromEnvironment",
+	"mypy-type-checker.interpreter": [
+		"${workspaceFolder}/.venv/bin/python"
+	],
+	"mypy-type-checker.reportingScope": "workspace",
+	"python.analysis.diagnosticMode": "workspace",
+	"python.languageServer": "Pylance",
+	"files.insertFinalNewline": true,
+	"files.trimTrailingWhitespace": true,
+	"files.trimFinalNewlines": true
+}
