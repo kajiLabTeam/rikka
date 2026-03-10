@@ -1,4 +1,3 @@
-
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -35,12 +34,8 @@ GYRO_COLUMNS = {
 def load_sensor_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     """Load accelerometer and gyroscope data from CSV files."""
     data_path = Path(DATA_DIR)
-    df_acc = pd.read_csv(data_path / "Accelerometer.csv").rename(
-        columns=ACC_COLUMNS
-    )
-    df_gyro = pd.read_csv(data_path / "Gyroscope.csv").rename(
-        columns=GYRO_COLUMNS
-    )
+    df_acc = pd.read_csv(data_path / "Accelerometer.csv").rename(columns=ACC_COLUMNS)
+    df_gyro = pd.read_csv(data_path / "Gyroscope.csv").rename(columns=GYRO_COLUMNS)
     return df_acc, df_gyro
 
 
@@ -54,13 +49,11 @@ def process_sensor_data(
     df_acc["norm"] = np.sqrt(df_acc["x"] ** 2 + df_acc["y"] ** 2 + df_acc["z"] ** 2)
     df_acc["low_norm"] = df_acc["norm"].rolling(window=WINDOW_ACC).mean()
 
-    df_gyro["norm"] = np.sqrt(
-        df_gyro["x"] ** 2 + df_gyro["y"] ** 2 + df_gyro["z"] ** 2
-    )
+    df_gyro["norm"] = np.sqrt(df_gyro["x"] ** 2 + df_gyro["y"] ** 2 + df_gyro["z"] ** 2)
     df_gyro["angle"] = np.cumsum(df_gyro["x"]) / SAMPLING_RATE
-    df_gyro["low_angle"] = df_gyro["angle"].rolling(
-        window=WINDOW_GYRO, center=True
-    ).mean()
+    df_gyro["low_angle"] = (
+        df_gyro["angle"].rolling(window=WINDOW_GYRO, center=True).mean()
+    )
 
     return df_acc, df_gyro
 
@@ -75,9 +68,7 @@ def detect_steps(df_acc: pd.DataFrame) -> np.ndarray:
     return peaks
 
 
-def estimate_trajectory(
-    peaks: np.ndarray, df_gyro: pd.DataFrame
-) -> list[list[float]]:
+def estimate_trajectory(peaks: np.ndarray, df_gyro: pd.DataFrame) -> list[list[float]]:
     """Estimate 2D trajectory from step peaks and gyroscope angle."""
     points: list[list[float]] = [[0.0, 0.0]]
     low_angle = df_gyro["low_angle"]
