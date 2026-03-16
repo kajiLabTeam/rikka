@@ -68,8 +68,10 @@ def process_sensor_data(
 
     Returns:
         tuple[pd.DataFrame, pd.DataFrame]:
-            - df_acc: ``norm``（合成加速度）と ``low_norm``（平滑化ノルム）を追加した加速度DataFrame
-            - df_gyro: ``norm``（合成角速度）・``angle``（積算角度）・``low_angle``（平滑化角度）を追加したジャイロDataFrame
+            - df_acc:
+            ``norm``（合成加速度）と ``low_norm``（平滑化ノルム）を追加した加速度Data
+            - df_gyro:
+            ``norm``（合成角速度）・``angle``（積算角度）・``low_angle``（平滑化角度）を追加したジャイロData
     """
     df_acc = df_acc.copy()
     df_gyro = df_gyro.copy()
