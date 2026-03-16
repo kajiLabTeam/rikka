@@ -158,11 +158,14 @@ def plot_trajectory(trajectory: list[list[float]]) -> None:
     plt.show()
 
 
-def run() -> None:
+def run() -> pd.DataFrame:
     """PDRのメインパイプラインを実行する。
 
-    センサーデータの読み込みから軌跡の推定・表示までを一括して実行する。
-    処理の流れ: データ読み込み → センサー処理 → ステップ検出 → 軌跡推定 → 表示
+    センサーデータの読み込みから軌跡の推定・CSV保存・表示までを一括して実行する。
+    処理の流れ: データ読み込み → センサー処理 → ステップ検出 → 軌跡推定 → CSV保存 → 表示
+
+    Returns:
+        pd.DataFrame: 軌跡データ（列: x, y）
     """
     df_acc, df_gyro = load_sensor_data()
     df_acc, df_gyro = process_sensor_data(df_acc, df_gyro)
@@ -173,4 +176,14 @@ def run() -> None:
     for i, (x, y) in enumerate(trajectory):
         print(f"step {i}: ({x:.3f}, {y:.3f})")
 
+    df_trajectory = pd.DataFrame(trajectory, columns=["x", "y"])
+
+    # 軌跡データをoutputディレクトリにCSVとして保存
+    output_path = Path("output/trajectory.csv")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    df_trajectory.to_csv(output_path, index=False)
+    print(f"Trajectory saved to {output_path}")
+
     plot_trajectory(trajectory)
+
+    return df_trajectory
