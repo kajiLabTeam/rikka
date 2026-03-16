@@ -1,6 +1,7 @@
 # CLAUDE.md
 
 回答は全て日本語で行い，思考は英語で行ってください
+コメント文を書くときは説明の部分は日本語で行ってください
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
