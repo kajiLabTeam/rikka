@@ -37,18 +37,26 @@ GYRO_COLUMNS = {
 }
 
 
-def load_sensor_data() -> tuple[pd.DataFrame, pd.DataFrame]:
+def load_sensor_data(
+    data_dir: str | Path | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """CSVファイルから加速度計とジャイロスコープのデータを読み込む。
 
-    ``DATA_DIR`` に設定されたディレクトリ内の ``Accelerometer.csv`` と
-    ``Gyroscope.csv`` を読み込み，列名を統一した形式に変換して返す。
+    ``data_dir`` が指定された場合はそのディレクトリを，
+    省略時は ``DATA_DIR`` を使用する。
+    ``Accelerometer.csv`` と ``Gyroscope.csv`` を読み込み，
+    列名を統一した形式に変換して返す。
+
+    Args:
+        data_dir (str | Path | None):
+            CSVファイルが格納されたディレクトリパス。省略時は ``DATA_DIR`` を使用。
 
     Returns:
         tuple[pd.DataFrame, pd.DataFrame]:
             - df_acc: 加速度データ（列: t, x, y, z）
             - df_gyro: ジャイロスコープデータ（列: t, x, y, z）
     """
-    data_path = Path(DATA_DIR)
+    data_path = Path(data_dir) if data_dir is not None else Path(DATA_DIR)
     df_acc = pd.read_csv(data_path / "Accelerometer.csv").rename(columns=ACC_COLUMNS)
     df_gyro = pd.read_csv(data_path / "Gyroscope.csv").rename(columns=GYRO_COLUMNS)
     return df_acc, df_gyro
@@ -105,7 +113,7 @@ def detect_steps(df_acc: pd.DataFrame) -> np.ndarray:
         distance=PEAK_DISTANCE,
         height=PEAK_HEIGHT,
     )
-    return peaks
+    return np.asarray(peaks)
 
 
 def estimate_trajectory(peaks: np.ndarray, df_gyro: pd.DataFrame) -> list[list[float]]:
@@ -158,16 +166,39 @@ def plot_trajectory(trajectory: list[list[float]]) -> None:
     plt.show()
 
 
-def run() -> pd.DataFrame:
+def run(
+    df_acc: pd.DataFrame | None = None,
+    df_gyro: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     """PDRのメインパイプラインを実行する。
 
     センサーデータの読み込みから軌跡の推定・CSV保存・表示までを一括して実行する。
     処理の流れ: データ読み込み → センサー処理 → ステップ検出 → 軌跡推定 → CSV保存 → 表示
 
+    Args:
+        df_acc (pd.DataFrame | None):
+            加速度データ（列: t, x, y, z）。省略時は ``DATA_DIR`` の CSV から読み込む。
+            渡す場合は ``load_sensor_data()`` によるリネーム後の列名
+            （t, x, y, z）を使うこと。
+        df_gyro (pd.DataFrame | None):
+            ジャイロスコープデータ（列: t, x, y, z）。
+            省略時は ``DATA_DIR`` の CSV から読み込む。
+            ``df_acc`` と必ずセットで渡すこと。
+
     Returns:
         pd.DataFrame: 軌跡データ（列: x, y）
+
+    Raises:
+        ValueError: ``df_acc`` と ``df_gyro`` の片方だけが渡された場合
     """
-    df_acc, df_gyro = load_sensor_data()
+    if (df_acc is None) != (df_gyro is None):
+        raise ValueError("df_acc と df_gyro は両方渡すか、両方省略してください。")
+
+    if df_acc is None and df_gyro is None:
+        df_acc, df_gyro = load_sensor_data()
+
+    assert df_acc is not None
+    assert df_gyro is not None
     df_acc, df_gyro = process_sensor_data(df_acc, df_gyro)
     peaks = detect_steps(df_acc)
     trajectory = estimate_trajectory(peaks, df_gyro)
