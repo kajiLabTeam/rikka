@@ -109,7 +109,7 @@ def detect_steps(df_acc: pd.DataFrame) -> np.ndarray:
         np.ndarray: ステップピークのインデックス配列
     """
     peaks, _ = find_peaks(
-        df_acc["low_norm"].dropna(),
+        df_acc["low_norm"].to_numpy(),
         distance=PEAK_DISTANCE,
         height=PEAK_HEIGHT,
     )
