@@ -1,5 +1,6 @@
 from .main import printname as printname
+from .pdr import run
 
 
 def main() -> None:
-    print("Hello from rikka!")
+    run()
