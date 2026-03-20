@@ -5,8 +5,11 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "pre-commit>=4.5.1",
+    "matplotlib>=3.10.8",
+    "numpy>=2.4.3",
+    "pandas>=3.0.1",
     "pydantic>=2.12.5",
+    "scipy>=1.17.1",
 ]
 
 [project.scripts]
@@ -17,11 +20,16 @@ requires = ["uv_build>=0.10.6,<0.11.0"]
 build-backend = "uv_build"
 
 
+[tool.uv]
+package = true
+
+
 [dependency-groups]
 dev = [
     "ruff>=0.15",
     "pytest>=9.0",
     "mypy>=1.19",
+    "pre-commit>=4.5.1",
 ]
 
 [tool.ruff]
@@ -41,14 +49,14 @@ select = [
 ignore = []
 
 [tool.ruff.lint.isort]
-known-first-party = ["my_project"]
+known-first-party = ["rikka"]
 
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.14"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
