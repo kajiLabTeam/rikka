@@ -1,3 +1,4 @@
+
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -5,12 +6,11 @@ import numpy as np
 import pandas as pd
 from scipy.signal import find_peaks
 
-from .config import DATA_DIR
+from .config import DATA_DIR, STEP_LENGTH_WINDOW, WEINBERG_K
 
 # Constants
 WINDOW_ACC = 80
 WINDOW_GYRO = 40
-STEP_LENGTH = 0.3  # meters
 ANGLE_SCALE = 1.2
 PEAK_DISTANCE = 50
 PEAK_HEIGHT = 10
@@ -86,6 +86,8 @@ def process_sensor_data(
 
     df_acc["norm"] = np.sqrt(df_acc["x"] ** 2 + df_acc["y"] ** 2 + df_acc["z"] ** 2)
     df_acc["low_norm"] = df_acc["norm"].rolling(window=WINDOW_ACC).mean()
+    # 移動平均（重力推定値）を引いて動的加速度ノルムを算出
+    df_acc["linear_norm"] = df_acc["norm"] - df_acc["low_norm"]
 
     df_gyro["norm"] = np.sqrt(df_gyro["x"] ** 2 + df_gyro["y"] ** 2 + df_gyro["z"] ** 2)
     df_gyro["angle"] = np.cumsum(df_gyro["x"]) / SAMPLING_RATE
@@ -116,16 +118,50 @@ def detect_steps(df_acc: pd.DataFrame) -> np.ndarray:
     return np.asarray(peaks)
 
 
-def estimate_trajectory(peaks: np.ndarray, df_gyro: pd.DataFrame) -> list[list[float]]:
+def estimate_step_length(
+    df_acc: pd.DataFrame,
+    peak_index: int,
+    window: int = STEP_LENGTH_WINDOW,
+    k: float = WEINBERG_K,
+) -> float:
+    """Weinberg モデルによる単一ステップの歩幅推定。
+
+    ピークインデックスの前後 ``window`` サンプルの範囲内で
+    重力除去済み加速度ノルム（``linear_norm``）の最大値・最小値を求め，
+    Weinberg 式で歩幅を計算する。
+    ウィンドウがデータ範囲外にかかる場合はクリッピングする。
+
+    Args:
+        df_acc (pd.DataFrame): ``linear_norm`` 列を含む加速度DataFrame
+        peak_index (int): ステップピークのインデックス
+        window (int): ピーク前後のサンプル数
+        k (float): Weinberg モデルのスケール係数
+
+    Returns:
+        float: 推定歩幅（メートル）
+    """
+    n = len(df_acc)
+    start = max(0, peak_index - window)
+    end = min(n, peak_index + window + 1)
+    segment = df_acc["linear_norm"].iloc[start:end].dropna()
+    acc_max = float(segment.max())
+    acc_min = float(segment.min())
+    return float(k * (acc_max - acc_min) ** 0.25)
+
+
+def estimate_trajectory(
+    peaks: np.ndarray, df_gyro: pd.DataFrame, df_acc: pd.DataFrame
+) -> list[list[float]]:
     """ステップピークとジャイロスコープ角度から2次元軌跡を推定する。
 
-    各ステップピーク時刻の平滑化角度（``low_angle``）をもとに，
-    一定のステップ長（``STEP_LENGTH``）で次の座標を計算し，軌跡を構築する。
+    各ステップピーク時刻の平滑化角度（``low_angle``）と
+    Weinberg モデルによる動的歩幅推定をもとに次の座標を計算し，軌跡を構築する。
     原点 [0.0, 0.0] から始まり，ステップごとに座標を追加する。
 
     Args:
         peaks (np.ndarray): ステップピークのインデックス配列
         df_gyro (pd.DataFrame): ``low_angle`` 列を含むジャイロスコープDataFrame
+        df_acc (pd.DataFrame): ``linear_norm`` 列を含む加速度DataFrame
 
     Returns:
         list[list[float]]: 各ステップの [x, y] 座標リスト（原点を含む）
@@ -137,8 +173,9 @@ def estimate_trajectory(peaks: np.ndarray, df_gyro: pd.DataFrame) -> list[list[f
         if p >= len(low_angle):
             continue
         angle = low_angle.iloc[p] * ANGLE_SCALE
-        x = points[-1][0] + STEP_LENGTH * float(np.cos(angle))
-        y = points[-1][1] + STEP_LENGTH * float(np.sin(angle))
+        step_length = estimate_step_length(df_acc, int(p))
+        x = points[-1][0] + step_length * float(np.cos(angle))
+        y = points[-1][1] + step_length * float(np.sin(angle))
         points.append([x, y])
 
     return points
@@ -201,7 +238,7 @@ def run(
     assert df_gyro is not None
     df_acc, df_gyro = process_sensor_data(df_acc, df_gyro)
     peaks = detect_steps(df_acc)
-    trajectory = estimate_trajectory(peaks, df_gyro)
+    trajectory = estimate_trajectory(peaks, df_gyro, df_acc)
 
     print(f"Steps detected: {len(peaks)}")
     for i, (x, y) in enumerate(trajectory):

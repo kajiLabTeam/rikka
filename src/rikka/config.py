@@ -2,7 +2,10 @@
 
 # Data directory path
 # Change this path to use different input data
-DATA_DIR = "input/エレベータ前で曲がる90歩"
+DATA_DIR = "input/90steps_turn_elevator"
 
-# Other available data directories:
-# DATA_DIR = "input/14号5階内種研から山本研前を通るデータ/phyphox 2025-05-06 16-48-42"
+# Weinberg モデルのスケール係数（校正が必要なパラメータ）
+WEINBERG_K = 0.4
+
+# 歩幅推定用ウィンドウ（ステップピーク前後のサンプル数）
+STEP_LENGTH_WINDOW = 50  # ±50サンプル = ±0.5秒 @ 100Hz
