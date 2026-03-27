@@ -2,7 +2,9 @@
 
 # Data directory path
 # Change this path to use different input data
+
 DATA_DIR = "input/90steps_turn_elevator"
+# DATA_DIR = "input/90steps_turn_Yamamoto"
 
 # Weinberg モデルのスケール係数（校正が必要なパラメータ）
 WEINBERG_K = 0.4
