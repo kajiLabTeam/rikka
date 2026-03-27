@@ -1,4 +1,3 @@
-
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -11,7 +10,7 @@ from .config import DATA_DIR, STEP_LENGTH_WINDOW, WEINBERG_K
 # Constants
 WINDOW_ACC = 80
 WINDOW_GYRO = 40
-ANGLE_SCALE = 1.2
+ANGLE_SCALE = 1.0
 PEAK_DISTANCE = 50
 PEAK_HEIGHT = 10
 SAMPLING_RATE = 100
@@ -90,9 +89,15 @@ def process_sensor_data(
     df_acc["linear_norm"] = df_acc["norm"] - df_acc["low_norm"]
 
     df_gyro["norm"] = np.sqrt(df_gyro["x"] ** 2 + df_gyro["y"] ** 2 + df_gyro["z"] ** 2)
-    df_gyro["angle"] = np.cumsum(df_gyro["x"]) / SAMPLING_RATE
+    # 最小分散区間（静止期間）を自動検出してバイアスを推定する
+    # 全体 mean はターン動作の信号が混入するため使用しない
+    _rolling_var = df_gyro["x"].rolling(window=WINDOW_GYRO).var()
+    _quiet_end = int(_rolling_var.idxmin())
+    _quiet_start = max(0, _quiet_end - WINDOW_GYRO)
+    gyro_bias = float(df_gyro["x"].iloc[_quiet_start:_quiet_end].mean())
+    df_gyro["angle"] = np.cumsum(df_gyro["x"] - gyro_bias) / SAMPLING_RATE
     df_gyro["low_angle"] = (
-        df_gyro["angle"].rolling(window=WINDOW_GYRO, center=True).mean()
+        df_gyro["angle"].rolling(window=WINDOW_GYRO, center=True, min_periods=1).mean()
     )
 
     return df_acc, df_gyro
@@ -169,10 +174,17 @@ def estimate_trajectory(
     points: list[list[float]] = [[0.0, 0.0]]
     low_angle = df_gyro["low_angle"]
 
-    for p in peaks:
+    for i, p in enumerate(peaks):
         if p >= len(low_angle):
             continue
-        angle = low_angle.iloc[p] * ANGLE_SCALE
+        # 次のピークとの中点（mid-swing 相当）でサンプリングして着地衝撃ノイズを除去
+        if i + 1 < len(peaks) and peaks[i + 1] < len(low_angle):
+            mid_idx = (int(p) + int(peaks[i + 1])) // 2
+        else:
+            mid_idx = int(p)
+        angle = low_angle.iloc[mid_idx] * ANGLE_SCALE
+        if np.isnan(angle):
+            continue  # NaN のステップを軌跡から除外して伝播を防ぐ
         step_length = estimate_step_length(df_acc, int(p))
         x = points[-1][0] + step_length * float(np.cos(angle))
         y = points[-1][1] + step_length * float(np.sin(angle))
