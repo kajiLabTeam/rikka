@@ -84,7 +84,6 @@ def process_sensor_data(
     """生センサーデータからノルム・重力推定・水平加速度・角度を計算する。
 
     加速度データには以下の列を追加する：
-    - ``norm``: 合成加速度ノルム
     - ``gx, gy, gz``: 各軸のLPFによる重力ベクトル推定値
     - ``lin_x, lin_y, lin_z``: ベクトル減算による線形加速度
     - ``lin_norm``: 線形加速度ノルム
@@ -92,7 +91,7 @@ def process_sensor_data(
     - ``h_x, h_y, h_z``: 重力方向を射影除去した水平加速度成分
     - ``h_norm``: 水平加速度ノルム（歩幅推定用）
 
-    ジャイロスコープデータにはノルム・積算角度（``angle``）・
+    ジャイロスコープデータには積算角度（``angle``）・
     移動平均角度（``low_angle``）を追加する。
 
     Args:
@@ -103,7 +102,7 @@ def process_sensor_data(
         tuple[pd.DataFrame, pd.DataFrame]:
             - df_acc: 上記列を追加した加速度DataFrame
             - df_gyro:
-            ``norm``（合成角速度）・``angle``（積算角度）・``low_angle``（平滑化角度）を追加したジャイロDataFrame
+            ``angle``（積算角度）・``low_angle``（平滑化角度）を追加したジャイロDataFrame
     """
     df_acc = df_acc.copy()
     df_gyro = df_gyro.copy()
@@ -157,10 +156,16 @@ def process_sensor_data(
     # 全体 mean はターン動作の信号が混入するため使用しない
     # 分散が最小のウィンドウが最も静止に近い区間
     _rolling_var = df_gyro["x"].rolling(window=WINDOW_GYRO).var()
-    _quiet_end = int(_rolling_var.idxmin())
-    _quiet_start = max(0, _quiet_end - WINDOW_GYRO)
-    # 静止区間の平均値をドリフトオフセットとして使用 [rad/s]
-    gyro_bias = float(df_gyro["x"].iloc[_quiet_start:_quiet_end].mean())
+    if _rolling_var.notna().any():
+        # rolling(window=W) のインデックス i は [i-W+1, i] の W 個を表す
+        _quiet_end = int(_rolling_var.idxmin())
+        _quiet_start = max(0, _quiet_end - WINDOW_GYRO + 1)
+        # 静止区間の平均値をドリフトオフセットとして使用 [rad/s]
+        gyro_bias = float(df_gyro["x"].iloc[_quiet_start : _quiet_end + 1].mean())
+    else:
+        # データ長が WINDOW_GYRO 未満で全 NaN になる場合
+        # 全サンプルの平均をフォールバックとして使用
+        gyro_bias = float(df_gyro["x"].mean())
     df_gyro["angle"] = np.cumsum(df_gyro["x"] - gyro_bias) / SAMPLING_RATE
     df_gyro["low_angle"] = (
         df_gyro["angle"].rolling(window=WINDOW_GYRO, center=True, min_periods=1).mean()
