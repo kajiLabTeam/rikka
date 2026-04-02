@@ -5,22 +5,16 @@ import numpy as np
 import pandas as pd
 from scipy.signal import find_peaks
 
-from .config import DATA_DIR, STEP_LENGTH_WINDOW, WEINBERG_K
-
-# Constants
-# 加速度 LPF のウィンドウサイズ（80サンプル = 0.8秒 @ 100Hz）
-# 重力ベクトル推定・低周波成分の平滑化に共用
-WINDOW_ACC = 80
-# ジャイロ LPF・静止区間検出のウィンドウサイズ（40サンプル = 0.4秒）
-WINDOW_GYRO = 40
-# ステップ間の最小サンプル数（50サンプル = 0.5秒）
-# 1ステップの最短継続時間を保証し、重複検出を防ぐ
-PEAK_DISTANCE = 50
-# ステップ検出の最小ピーク高さ [m/s²]
-# ノイズ・微小な動きとステップを区別する閾値
-PEAK_HEIGHT = 1.0
-# センサーのサンプリングレート [Hz]、角速度積分・時間換算に使用
-SAMPLING_RATE = 100
+from .config import (
+    DATA_DIR,
+    PEAK_DISTANCE,
+    PEAK_HEIGHT,
+    SAMPLING_RATE,
+    STEP_LENGTH_WINDOW,
+    WEINBERG_K,
+    WINDOW_ACC,
+    WINDOW_GYRO,
+)
 
 # Column name mappings from phyphox CSV format
 ACC_COLUMNS = {
