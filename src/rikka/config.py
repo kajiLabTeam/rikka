@@ -3,7 +3,18 @@
 # Data directory path
 # Change this path to use different input data
 
-DATA_DIR = "input/90steps_turn_elevator"
+DATA_DIR = "input/90steps_turn_elevator2"
+
+# フロアマップ設定
+# 背景として表示するフロアマップ画像のパス
+FLOORMAP_PATH = "input/Floormap_building14_5floor.png"
+# 軌跡の起点（原点）がフロアマップ上で対応するピクセル座標 (x_px, y_px)
+# 実際の歩行開始位置に合わせて調整すること
+FLOORMAP_ORIGIN_PX: tuple[int, int] = (2050, 900)
+# 1ピクセルあたりのメートル数（1px = 1cm = 0.01m）
+FLOORMAP_SCALE = 0.01
+# 軌跡の初期方向 [度]（0 = 右方向、90 = 上方向、反時計回りが正）
+INITIAL_DIRECTION = 90.0
 # DATA_DIR = "input/90steps_turn_Yamamoto"
 
 # センサーのサンプリングレート [Hz]、角速度積分・時間換算に使用
