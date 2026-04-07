@@ -1,8 +1,11 @@
 from pathlib import Path
 
+import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.collections import LineCollection
+from matplotlib.colors import Normalize
 from scipy.signal import find_peaks
 
 from .config import (
@@ -310,15 +313,27 @@ def plot_trajectory(
     px = origin_px[0] + df["x"] / scale
     py = origin_px[1] + y_sign * df["y"] / scale
 
-    _, ax = plt.subplots(figsize=(10, 10))
+    fig, ax = plt.subplots(figsize=(7, 7))
 
     # フロアマップを背景として表示
     map_img = plt.imread(Path(floormap_path))
     ax.imshow(map_img)
 
-    ax.plot(px, py, ".-", color="red", label="Estimated trajectory", zorder=2)
+    # 軌跡をグラデーション（開始:青 → 終了:赤）で描画
+    n = len(px)
+    norm = Normalize(vmin=0, vmax=max(n - 1, 1))
+    cmap = cm.get_cmap("plasma")
+    # 各ステップ間のセグメントに色を付けて LineCollection で描画
+    pts = np.column_stack([px.to_numpy(), py.to_numpy()]).reshape(-1, 1, 2)
+    segments = np.concatenate([pts[:-1], pts[1:]], axis=1)
+    lc = LineCollection(segments, cmap=cmap, norm=norm, zorder=2)
+    lc.set_array(np.arange(n - 1))
+    ax.add_collection(lc)
+    # 各ステップ点を同じカラーマップで描画
+    sc = ax.scatter(px, py, c=np.arange(n), cmap=cmap, norm=norm, s=20, zorder=3)
+    fig.colorbar(sc, ax=ax, label="Step")
     # 起点を強調表示
-    ax.plot(px.iloc[0], py.iloc[0], "go", markersize=10, label="Start", zorder=3)
+    ax.plot(px.iloc[0], py.iloc[0], "go", markersize=10, label="Start", zorder=4)
 
     ax.set_title("Walking Trajectory on Floormap")
     ax.legend()
