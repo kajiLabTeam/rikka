@@ -235,7 +235,7 @@ def estimate_trajectory(
     df_gyro: pd.DataFrame,
     df_acc: pd.DataFrame,
     initial_direction: float = INITIAL_DIRECTION,
-) -> list[list[float]]:
+) -> tuple[list[list[float]], list[float]]:
     """ステップピークとジャイロスコープ角度から2次元軌跡を推定する。
 
     各ステップピーク時刻の平滑化角度（``low_angle``）と
@@ -251,9 +251,12 @@ def estimate_trajectory(
             （デフォルト: ``INITIAL_DIRECTION``）
 
     Returns:
-        list[list[float]]: 各ステップの [x, y] 座標リスト（原点を含む）
+        tuple[list[list[float]], list[float]]:
+            - 各ステップの [x, y] 座標リスト（原点を含む）
+            - 各ステップの推定歩幅リスト [m]
     """
     points: list[list[float]] = [[0.0, 0.0]]
+    step_lengths: list[float] = []
     low_angle = df_gyro["low_angle"]
     # 度 → ラジアン変換してオフセットとして使用
     direction_offset = float(np.deg2rad(initial_direction))
@@ -273,11 +276,12 @@ def estimate_trajectory(
             # rolling 端部でデータ不足の場合に発生
             continue
         step_length = estimate_step_length(df_acc, int(p))
+        step_lengths.append(step_length)
         x = points[-1][0] + step_length * float(np.cos(angle))
         y = points[-1][1] + step_length * float(np.sin(angle))
         points.append([x, y])
 
-    return points
+    return points, step_lengths
 
 
 def plot_trajectory(
@@ -381,7 +385,7 @@ def run(
 
     df_acc, df_gyro = process_sensor_data(df_acc, df_gyro)
     peaks = detect_steps(df_acc)
-    trajectory = estimate_trajectory(peaks, df_gyro, df_acc)
+    trajectory, step_lengths = estimate_trajectory(peaks, df_gyro, df_acc)
 
     # 重力成分の平均を算出（Y軸反転の自動判定に使用）
     gx_mean = float(df_acc["gx"].mean())
@@ -406,6 +410,14 @@ def run(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df_trajectory.to_csv(output_path, index=False)
     print(f"Trajectory saved to {output_path}")
+
+    # 歩幅データを output/step_lengths.csv として保存
+    df_step_lengths = pd.DataFrame(
+        {"step": range(1, len(step_lengths) + 1), "step_length_m": step_lengths}
+    )
+    step_length_path = Path("output/step_lengths.csv")
+    df_step_lengths.to_csv(step_length_path, index=False)
+    print(f"Step lengths saved to {step_length_path}")
 
     if plot:
         plot_trajectory(trajectory, gx_mean=gx_mean, gz_mean=gz_mean)
