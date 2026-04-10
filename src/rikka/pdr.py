@@ -1,3 +1,4 @@
+from datetime import datetime
 from pathlib import Path
 
 import matplotlib.cm as cm
@@ -291,6 +292,7 @@ def plot_trajectory(
     floormap_path: str | Path = FLOORMAP_PATH,
     origin_px: tuple[int, int] = FLOORMAP_ORIGIN_PX,
     scale: float = FLOORMAP_SCALE,
+    output_dir: Path | None = None,
 ) -> None:
     """推定した2次元歩行軌跡をフロアマップ上にプロットする。
 
@@ -342,6 +344,9 @@ def plot_trajectory(
     ax.set_title("Walking Trajectory on Floormap")
     ax.legend()
     plt.tight_layout()
+    if output_dir is not None:
+        # グラフ画像をoutputフォルダに保存
+        fig.savefig(output_dir / "trajectory.png", dpi=150, bbox_inches="tight")
     plt.show()
 
 
@@ -374,6 +379,10 @@ def run(
     Raises:
         ValueError: ``df_acc`` と ``df_gyro`` の片方だけが渡された場合
     """
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = Path("output") / timestamp
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     if (df_acc is None) != (df_gyro is None):
         raise ValueError("df_acc と df_gyro は両方渡すか、両方省略してください。")
 
@@ -405,21 +414,22 @@ def run(
 
     df_trajectory = pd.DataFrame(trajectory, columns=["x", "y"])
 
-    # 軌跡データをoutputディレクトリにCSVとして保存
-    output_path = Path("output/trajectory.csv")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    # 軌跡データをoutputフォルダにCSVとして保存
+    output_path = output_dir / "trajectory.csv"
     df_trajectory.to_csv(output_path, index=False)
     print(f"Trajectory saved to {output_path}")
 
-    # 歩幅データを output/step_lengths.csv として保存
+    # 歩幅データをoutputフォルダにCSVとして保存
     df_step_lengths = pd.DataFrame(
         {"step": range(1, len(step_lengths) + 1), "step_length_m": step_lengths}
     )
-    step_length_path = Path("output/step_lengths.csv")
+    step_length_path = output_dir / "step_lengths.csv"
     df_step_lengths.to_csv(step_length_path, index=False)
     print(f"Step lengths saved to {step_length_path}")
 
     if plot:
-        plot_trajectory(trajectory, gx_mean=gx_mean, gz_mean=gz_mean)
+        plot_trajectory(
+            trajectory, gx_mean=gx_mean, gz_mean=gz_mean, output_dir=output_dir
+        )
 
     return df_trajectory
