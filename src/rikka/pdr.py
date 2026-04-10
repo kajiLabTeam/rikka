@@ -1,12 +1,19 @@
 from pathlib import Path
 
+import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.collections import LineCollection
+from matplotlib.colors import Normalize
 from scipy.signal import find_peaks
 
 from .config import (
     DATA_DIR,
+    FLOORMAP_ORIGIN_PX,
+    FLOORMAP_PATH,
+    FLOORMAP_SCALE,
+    INITIAL_DIRECTION,
     PEAK_DISTANCE,
     PEAK_HEIGHT,
     SAMPLING_RATE,
@@ -224,24 +231,35 @@ def estimate_step_length(
 
 
 def estimate_trajectory(
-    peaks: np.ndarray, df_gyro: pd.DataFrame, df_acc: pd.DataFrame
-) -> list[list[float]]:
+    peaks: np.ndarray,
+    df_gyro: pd.DataFrame,
+    df_acc: pd.DataFrame,
+    initial_direction: float = INITIAL_DIRECTION,
+) -> tuple[list[list[float]], list[float]]:
     """ステップピークとジャイロスコープ角度から2次元軌跡を推定する。
 
     各ステップピーク時刻の平滑化角度（``low_angle``）と
     Weinberg モデルによる動的歩幅推定をもとに次の座標を計算し，軌跡を構築する。
     原点 [0.0, 0.0] から始まり，ステップごとに座標を追加する。
+    ``initial_direction`` を加算することで，歩行開始方向をフロアマップに合わせられる。
 
     Args:
         peaks (np.ndarray): ステップピークのインデックス配列
         df_gyro (pd.DataFrame): ``low_angle`` 列を含むジャイロスコープDataFrame
         df_acc (pd.DataFrame): ``h_norm`` 列を含む加速度DataFrame
+        initial_direction (float): 歩行開始方向のオフセット [度]
+            （デフォルト: ``INITIAL_DIRECTION``）
 
     Returns:
-        list[list[float]]: 各ステップの [x, y] 座標リスト（原点を含む）
+        tuple[list[list[float]], list[float]]:
+            - 各ステップの [x, y] 座標リスト（原点を含む）
+            - 各ステップの推定歩幅リスト [m]
     """
     points: list[list[float]] = [[0.0, 0.0]]
+    step_lengths: list[float] = []
     low_angle = df_gyro["low_angle"]
+    # 度 → ラジアン変換してオフセットとして使用
+    direction_offset = float(np.deg2rad(initial_direction))
 
     for i, p in enumerate(peaks):
         if p >= len(low_angle):
@@ -252,37 +270,77 @@ def estimate_trajectory(
             mid_idx = (int(p) + int(peaks[i + 1])) // 2
         else:
             mid_idx = int(p)
-        angle = low_angle.iloc[mid_idx]
+        angle = low_angle.iloc[mid_idx] + direction_offset
         if np.isnan(angle):
             # NaN のステップを軌跡から除外して伝播を防ぐ
             # rolling 端部でデータ不足の場合に発生
             continue
         step_length = estimate_step_length(df_acc, int(p))
+        step_lengths.append(step_length)
         x = points[-1][0] + step_length * float(np.cos(angle))
         y = points[-1][1] + step_length * float(np.sin(angle))
         points.append([x, y])
 
-    return points
+    return points, step_lengths
 
 
-def plot_trajectory(trajectory: list[list[float]]) -> None:
-    """推定した2次元歩行軌跡をプロットする。
+def plot_trajectory(
+    trajectory: list[list[float]],
+    gx_mean: float = 0.0,
+    gz_mean: float = 0.0,
+    floormap_path: str | Path = FLOORMAP_PATH,
+    origin_px: tuple[int, int] = FLOORMAP_ORIGIN_PX,
+    scale: float = FLOORMAP_SCALE,
+) -> None:
+    """推定した2次元歩行軌跡をフロアマップ上にプロットする。
 
-    軌跡の各座標を折れ線グラフで描画し，縦横比を等倍に固定して表示する。
+    フロアマップ画像を背景として表示し，軌跡をピクセル座標に変換してオーバーレイする。
+    重力の主成分軸（|gx| vs |gz| の大小）でY軸反転の判定軸を自動選択する。
+    - |gx| > |gz|（端末を縦に持つ持ち方）: gx < 0 のとき反転（X軸が上を向いている）
+    - |gz| >= |gx|（端末を平置き）        : gz > 0 のとき反転（画面が上を向いている）
 
     Args:
-        trajectory (list[list[float]]): 各ステップの [x, y] 座標リスト
+        trajectory (list[list[float]]): 各ステップの [x, y] 座標リスト（メートル）
+        gx_mean (float): X軸重力成分の全サンプル平均値 [m/s²]
+        gz_mean (float): Z軸重力成分の全サンプル平均値 [m/s²]
+        floormap_path (str | Path): フロアマップ画像のパス
+        origin_px (tuple[int, int]): 軌跡の起点に対応するピクセル座標 (x_px, y_px)
+        scale (float): 1ピクセルあたりのメートル数（1px = 1cm = 0.01m）
     """
     df = pd.DataFrame(trajectory, columns=["x", "y"])
 
-    plt.figure(figsize=(8, 8))
-    plt.plot(df["x"], df["y"], ".-", label="Estimated trajectory", zorder=1)
-    plt.gca().set_aspect("equal", adjustable="box")
-    plt.title("Walking Trajectory")
-    plt.xlabel("x [m]")
-    plt.ylabel("y [m]")
-    plt.grid(True)
-    plt.legend()
+    # 重力の主成分軸で反転方向を決定する
+    if abs(gx_mean) > abs(gz_mean):
+        y_sign = -1 if gx_mean > 0 else 1
+    else:
+        y_sign = -1 if gz_mean < 0 else 1
+    px = origin_px[0] + df["x"] / scale
+    py = origin_px[1] + y_sign * df["y"] / scale
+
+    fig, ax = plt.subplots(figsize=(7, 7))
+
+    # フロアマップを背景として表示
+    map_img = plt.imread(Path(floormap_path))
+    ax.imshow(map_img)
+
+    # 軌跡をグラデーション（開始:青 → 終了:赤）で描画
+    n = len(px)
+    norm = Normalize(vmin=0, vmax=max(n - 1, 1))
+    cmap = cm.get_cmap("plasma")
+    # 各ステップ間のセグメントに色を付けて LineCollection で描画
+    pts = np.column_stack([px.to_numpy(), py.to_numpy()]).reshape(-1, 1, 2)
+    segments = np.concatenate([pts[:-1], pts[1:]], axis=1)
+    lc = LineCollection(segments, cmap=cmap, norm=norm, zorder=2)
+    lc.set_array(np.arange(n - 1))
+    ax.add_collection(lc)
+    # 各ステップ点を同じカラーマップで描画
+    sc = ax.scatter(px, py, c=np.arange(n), cmap=cmap, norm=norm, s=20, zorder=3)
+    fig.colorbar(sc, ax=ax, label="Step")
+    # 起点を強調表示
+    ax.plot(px.iloc[0], py.iloc[0], "go", markersize=10, label="Start", zorder=4)
+
+    ax.set_title("Walking Trajectory on Floormap")
+    ax.legend()
     plt.tight_layout()
     plt.show()
 
@@ -327,7 +385,19 @@ def run(
 
     df_acc, df_gyro = process_sensor_data(df_acc, df_gyro)
     peaks = detect_steps(df_acc)
-    trajectory = estimate_trajectory(peaks, df_gyro, df_acc)
+    trajectory, step_lengths = estimate_trajectory(peaks, df_gyro, df_acc)
+
+    # 重力成分の平均を算出（Y軸反転の自動判定に使用）
+    gx_mean = float(df_acc["gx"].mean())
+    gz_mean = float(df_acc["gz"].mean())
+    dominant = "X軸" if abs(gx_mean) > abs(gz_mean) else "Z軸"
+    y_flipped = (abs(gx_mean) > abs(gz_mean) and gx_mean < 0) or (
+        abs(gz_mean) >= abs(gx_mean) and gz_mean > 0
+    )
+    print(
+        f"重力主成分: {dominant}  gx={gx_mean:.2f}, gz={gz_mean:.2f} m/s²"
+        f" → Y軸{'反転' if y_flipped else '非反転'}"
+    )
 
     print(f"Steps detected: {len(peaks)}")
     for i, (x, y) in enumerate(trajectory):
@@ -341,7 +411,15 @@ def run(
     df_trajectory.to_csv(output_path, index=False)
     print(f"Trajectory saved to {output_path}")
 
+    # 歩幅データを output/step_lengths.csv として保存
+    df_step_lengths = pd.DataFrame(
+        {"step": range(1, len(step_lengths) + 1), "step_length_m": step_lengths}
+    )
+    step_length_path = Path("output/step_lengths.csv")
+    df_step_lengths.to_csv(step_length_path, index=False)
+    print(f"Step lengths saved to {step_length_path}")
+
     if plot:
-        plot_trajectory(trajectory)
+        plot_trajectory(trajectory, gx_mean=gx_mean, gz_mean=gz_mean)
 
     return df_trajectory
