@@ -3,14 +3,14 @@
 # Data directory path
 # Change this path to use different input data
 
-DATA_DIR = "input/90steps_turn_elevator2"
+DATA_DIR = "input/85random_steps_turn_Yamamoto"
 
 # フロアマップ設定
 # 背景として表示するフロアマップ画像のパス
 FLOORMAP_PATH = "input/Floormap_building14_5floor.png"
 # 軌跡の起点（原点）がフロアマップ上で対応するピクセル座標 (x_px, y_px)
 # 実際の歩行開始位置に合わせて調整すること
-FLOORMAP_ORIGIN_PX: tuple[int, int] = (2050, 900)
+FLOORMAP_ORIGIN_PX: tuple[int, int] = (2050, 700)
 # 1ピクセルあたりのメートル数（1px = 1cm = 0.01m）
 FLOORMAP_SCALE = 0.01
 # 軌跡の初期方向 [度]（0 = 右方向、90 = 上方向、反時計回りが正）
@@ -39,7 +39,7 @@ PEAK_HEIGHT = 1.0
 # 歩幅 = K × (a_max - a_min)^0.25 の K に相当する
 # ユーザーの体格・歩行スタイル・端末装着位置で個人差があるため、
 # 実測の数ステップで検証してキャリブレーションすることを推奨
-WEINBERG_K = 0.4
+WEINBERG_K = 0.47
 
 # 歩幅推定用ウィンドウ（ステップピーク前後のサンプル数）
 # ±50サンプル = ±0.5秒 @ 100Hz
