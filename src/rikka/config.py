@@ -3,7 +3,7 @@
 # Data directory path
 # Change this path to use different input data
 
-DATA_DIR = "input/85random_steps_turn_Yamamoto"
+DATA_DIR = "input/c"
 
 # フロアマップ設定
 # 背景として表示するフロアマップ画像のパス
