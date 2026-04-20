@@ -3,7 +3,7 @@
 # Data directory path
 # Change this path to use different input data
 
-DATA_DIR = "input/10steps_stride_length_check_1m-2"
+DATA_DIR = "input/c"
 
 # フロアマップ設定
 # 背景として表示するフロアマップ画像のパス
@@ -31,11 +31,6 @@ WINDOW_GYRO = 40
 # 1ステップの最短継続時間を保証し、重複検出を防ぐ
 PEAK_DISTANCE = 50
 
-# ステップ区間の最大サンプル数（80サンプル = 0.8秒 @ 100Hz）
-# これを超える区間はピーク未検出による2ステップ合算とみなして除外する
-# 通常の歩行ステップは 50〜71 サンプル（0.5〜0.71秒）
-MAX_SEG_SAMPLES = 80
-
 # ステップ検出の最小ピーク高さ [m/s²]
 # ノイズ・微小な動きとステップを区別する閾値
 PEAK_HEIGHT = 1.0
@@ -50,14 +45,3 @@ WEINBERG_K = 0.47
 # ±50サンプル = ±0.5秒 @ 100Hz
 # スイング期（足の振り上げ〜接地）の上下動を十分に捕捉できる幅に設定
 STEP_LENGTH_WINDOW = 50
-
-# 歩幅推定手法の選択
-# "weinberg": Weinbergモデル（経験則による max-min 振幅から推定）
-# "forward" : 方位方向射影積分（ジャイロから前進方向を自動推定し符号付き成分を2重積分）
-STEP_LENGTH_METHOD = "forward"
-
-# 前進方向射影積分のユニバーサルスケール係数
-# 歩幅 = K_FORWARD × 振動変位
-# 振動変位 ≈ 0.13 m（体装着センサーの直流速度成分が計測不能なため）
-# K = v_mean / Δv_peak × 2/π ≈ 定数（v_mean と Δv が歩行速度に比例するため）
-K_FORWARD = 9.0
