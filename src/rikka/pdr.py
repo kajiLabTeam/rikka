@@ -15,9 +15,12 @@ from .config import (
     FLOORMAP_PATH,
     FLOORMAP_SCALE,
     INITIAL_DIRECTION,
+    K_FORWARD,
+    MAX_SEG_SAMPLES,
     PEAK_DISTANCE,
     PEAK_HEIGHT,
     SAMPLING_RATE,
+    STEP_LENGTH_METHOD,
     STEP_LENGTH_WINDOW,
     WEINBERG_K,
     WINDOW_ACC,
@@ -231,6 +234,104 @@ def estimate_step_length(
     return float(k * (acc_max - acc_min) ** 0.25)
 
 
+def _estimate_initial_forward_angle(
+    df_acc: pd.DataFrame,
+    df_gyro: pd.DataFrame,
+    peaks: np.ndarray,
+) -> float:
+    """全ステップの変位方向の循環平均から前進方向の初期角度 φ₀ を推定する。
+
+    各ステップの h_y・h_z を2重積分した変位ベクトルを求め、
+    そのステップ中点での low_angle を引いてセンサー座標系の角度を取得。
+    全ステップの循環平均（sin/cos の平均 → atan2）で外れ値に頑健な推定を行う。
+
+    Returns:
+        float: センサー Y-Z 平面における前進方向の角度 [rad]
+    """
+    dt = 1.0 / SAMPLING_RATE
+    sin_sum = 0.0
+    cos_sum = 0.0
+    count = 0
+    for i in range(len(peaks) - 1):
+        start = int(peaks[i])
+        end = int(peaks[i + 1])
+        if not (30 <= end - start <= MAX_SEG_SAMPLES):
+            continue
+        h_y = df_acc["h_y"].iloc[start:end].to_numpy()
+        h_z = df_acc["h_z"].iloc[start:end].to_numpy()
+        n = len(h_y)
+        v_y = np.cumsum(h_y) * dt
+        v_z = np.cumsum(h_z) * dt
+        v_y -= np.linspace(v_y[0], v_y[-1], n)
+        v_z -= np.linspace(v_z[0], v_z[-1], n)
+        dy = float(np.sum(v_y) * dt)
+        dz = float(np.sum(v_z) * dt)
+        if np.hypot(dy, dz) < 1e-4:
+            continue
+        # センサー座標系の角度 = 変位方向 − その時点での yaw 角
+        mid_idx = min((start + end) // 2, len(df_gyro["low_angle"]) - 1)
+        angle_at_mid = float(df_gyro["low_angle"].iloc[mid_idx])
+        sensor_angle = np.arctan2(dz, dy) - angle_at_mid
+        sin_sum += np.sin(sensor_angle)
+        cos_sum += np.cos(sensor_angle)
+        count += 1
+    if count == 0:
+        return 0.0
+    return float(np.arctan2(sin_sum, cos_sum))
+
+
+def estimate_step_length_forward(
+    df_acc: pd.DataFrame,
+    df_gyro: pd.DataFrame,
+    peaks: np.ndarray,
+    i: int,
+    phi_0: float,
+) -> float:
+    """方位方向射影による単一ステップの歩幅推定。
+
+    ジャイロから得た前進方向角（φ₀ + low_angle）へ水平加速度を射影し、
+    符号付きの前進加速度を直接2重積分する。
+    線形ドリフト補正で両端速度を 0 に揃えた後、K_FORWARD を乗じて歩幅を算出する。
+
+    Args:
+        df_acc: h_y・h_z 列を含む加速度 DataFrame
+        df_gyro: low_angle 列を含むジャイロ DataFrame
+        peaks: ステップピークのインデックス配列
+        i: 現在のステップインデックス
+        phi_0: センサー座標系における初期前進方向角 [rad]
+
+    Returns:
+        float: 推定歩幅 [m]（計算不能時は 0.0）
+    """
+    dt = 1.0 / SAMPLING_RATE
+    start = int(peaks[i])
+    end = int(peaks[i + 1]) if i + 1 < len(peaks) else start + 1
+
+    seg_len = end - start
+    if seg_len < 30 or seg_len > MAX_SEG_SAMPLES:
+        return 0.0
+
+    # このステップ中点での前進方向角
+    mid_idx = min((start + end) // 2, len(df_gyro["low_angle"]) - 1)
+    angle = float(df_gyro["low_angle"].iloc[mid_idx]) + phi_0
+
+    # 前進方向加速度（符号付き）= h_y・h_z をヨー角で射影
+    h_y = df_acc["h_y"].iloc[start:end].to_numpy()
+    h_z = df_acc["h_z"].iloc[start:end].to_numpy()
+    a_fwd = h_y * np.cos(angle) + h_z * np.sin(angle)
+
+    n = len(a_fwd)
+    if n < 3:
+        return 0.0
+
+    # 直接2重積分 + 線形ドリフト補正（両端速度を 0 に）
+    v = np.cumsum(a_fwd) * dt
+    v -= np.linspace(v[0], v[-1], n)
+    osc_disp = abs(float(np.sum(v) * dt))
+
+    return K_FORWARD * osc_disp
+
+
 def estimate_trajectory(
     peaks: np.ndarray,
     df_gyro: pd.DataFrame,
@@ -240,14 +341,14 @@ def estimate_trajectory(
     """ステップピークとジャイロスコープ角度から2次元軌跡を推定する。
 
     各ステップピーク時刻の平滑化角度（``low_angle``）と
-    Weinberg モデルによる動的歩幅推定をもとに次の座標を計算し，軌跡を構築する。
-    原点 [0.0, 0.0] から始まり，ステップごとに座標を追加する。
+    ``STEP_LENGTH_METHOD`` で選択した手法による歩幅推定をもとに次の座標を計算し，
+    軌跡を構築する。原点 [0.0, 0.0] から始まり，ステップごとに座標を追加する。
     ``initial_direction`` を加算することで，歩行開始方向をフロアマップに合わせられる。
 
     Args:
         peaks (np.ndarray): ステップピークのインデックス配列
         df_gyro (pd.DataFrame): ``low_angle`` 列を含むジャイロスコープDataFrame
-        df_acc (pd.DataFrame): ``h_norm`` 列を含む加速度DataFrame
+        df_acc (pd.DataFrame): ``h_y``・``h_z``・``h_norm`` 列を含む加速度DataFrame
         initial_direction (float): 歩行開始方向のオフセット [度]
             （デフォルト: ``INITIAL_DIRECTION``）
 
@@ -262,9 +363,18 @@ def estimate_trajectory(
     # 度 → ラジアン変換してオフセットとして使用
     direction_offset = float(np.deg2rad(initial_direction))
 
+    # forward 手法用: 初期前進角をデータから自動推定
+    phi_0 = (
+        _estimate_initial_forward_angle(df_acc, df_gyro, peaks)
+        if STEP_LENGTH_METHOD == "forward"
+        else 0.0
+    )
+
     for i, p in enumerate(peaks):
         if p >= len(low_angle):
             continue
+        if STEP_LENGTH_METHOD == "forward" and i + 1 >= len(peaks):
+            continue  # 次ピークなし：区間定義不可のためスキップ
         # 次のピークとの中点（swing 中盤）でサンプリング
         # 着地衝撃によるジャイロ揺らぎを避け、安定した進行方向角を得るため
         if i + 1 < len(peaks) and peaks[i + 1] < len(low_angle):
@@ -276,7 +386,10 @@ def estimate_trajectory(
             # NaN のステップを軌跡から除外して伝播を防ぐ
             # rolling 端部でデータ不足の場合に発生
             continue
-        step_length = estimate_step_length(df_acc, int(p))
+        if STEP_LENGTH_METHOD == "forward":
+            step_length = estimate_step_length_forward(df_acc, df_gyro, peaks, i, phi_0)
+        else:
+            step_length = estimate_step_length(df_acc, int(p))
         step_lengths.append(step_length)
         x = points[-1][0] + step_length * float(np.cos(angle))
         y = points[-1][1] + step_length * float(np.sin(angle))
