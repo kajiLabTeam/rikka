@@ -234,7 +234,6 @@ def estimate_step_length(
     return float(k * (acc_max - acc_min) ** 0.25)
 
 
-
 def _estimate_initial_forward_angle(
     df_acc: pd.DataFrame,
     df_gyro: pd.DataFrame,
