@@ -3,7 +3,7 @@
 # Data directory path
 # Change this path to use different input data
 
-DATA_DIR = "input/10steps_stride_length_check_50cm-1"
+DATA_DIR = "input/10steps_stride_length_check_1m-1"
 
 # フロアマップ設定
 # 背景として表示するフロアマップ画像のパス
@@ -15,7 +15,6 @@ FLOORMAP_ORIGIN_PX: tuple[int, int] = (2050, 700)
 FLOORMAP_SCALE = 0.01
 # 軌跡の初期方向 [度]（0 = 右方向、90 = 上方向、反時計回りが正）
 INITIAL_DIRECTION = 90.0
-# DATA_DIR = "input/90steps_turn_Yamamoto"
 
 # センサーのサンプリングレート [Hz]、角速度積分・時間換算に使用
 SAMPLING_RATE = 100

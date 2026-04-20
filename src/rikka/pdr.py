@@ -270,7 +270,7 @@ def _estimate_initial_forward_angle(
         if np.hypot(dy, dz) < 1e-4:
             continue
         # センサー座標系の角度 = 変位方向 − その時点での yaw 角
-        mid_idx = (start + end) // 2
+        mid_idx = min((start + end) // 2, len(df_gyro["low_angle"]) - 1)
         angle_at_mid = float(df_gyro["low_angle"].iloc[mid_idx])
         sensor_angle = np.arctan2(dz, dy) - angle_at_mid
         sin_sum += np.sin(sensor_angle)
@@ -292,8 +292,7 @@ def estimate_step_length_forward(
 
     ジャイロから得た前進方向角（φ₀ + low_angle）へ水平加速度を射影し、
     符号付きの前進加速度を直接2重積分する。
-    ZUPT 線形補正で両端速度を 0 に揃えてドリフトを除去した後、
-    K_FORWARD を乗じて歩幅を算出する。
+    線形ドリフト補正で両端速度を 0 に揃えた後、K_FORWARD を乗じて歩幅を算出する。
 
     Args:
         df_acc: h_y・h_z 列を含む加速度 DataFrame
@@ -314,7 +313,7 @@ def estimate_step_length_forward(
         return 0.0
 
     # このステップ中点での前進方向角
-    mid_idx = (start + end) // 2
+    mid_idx = min((start + end) // 2, len(df_gyro["low_angle"]) - 1)
     angle = float(df_gyro["low_angle"].iloc[mid_idx]) + phi_0
 
     # 前進方向加速度（符号付き）= h_y・h_z をヨー角で射影
@@ -326,7 +325,7 @@ def estimate_step_length_forward(
     if n < 3:
         return 0.0
 
-    # 直接2重積分 + ZUPT 線形ドリフト補正（両端速度を 0 に）
+    # 直接2重積分 + 線形ドリフト補正（両端速度を 0 に）
     v = np.cumsum(a_fwd) * dt
     v -= np.linspace(v[0], v[-1], n)
     osc_disp = abs(float(np.sum(v) * dt))
@@ -343,14 +342,14 @@ def estimate_trajectory(
     """ステップピークとジャイロスコープ角度から2次元軌跡を推定する。
 
     各ステップピーク時刻の平滑化角度（``low_angle``）と
-    Weinberg モデルによる動的歩幅推定をもとに次の座標を計算し，軌跡を構築する。
-    原点 [0.0, 0.0] から始まり，ステップごとに座標を追加する。
+    ``STEP_LENGTH_METHOD`` で選択した手法による歩幅推定をもとに次の座標を計算し，
+    軌跡を構築する。原点 [0.0, 0.0] から始まり，ステップごとに座標を追加する。
     ``initial_direction`` を加算することで，歩行開始方向をフロアマップに合わせられる。
 
     Args:
         peaks (np.ndarray): ステップピークのインデックス配列
         df_gyro (pd.DataFrame): ``low_angle`` 列を含むジャイロスコープDataFrame
-        df_acc (pd.DataFrame): ``h_norm`` 列を含む加速度DataFrame
+        df_acc (pd.DataFrame): ``h_y``・``h_z``・``h_norm`` 列を含む加速度DataFrame
         initial_direction (float): 歩行開始方向のオフセット [度]
             （デフォルト: ``INITIAL_DIRECTION``）
 
@@ -375,6 +374,8 @@ def estimate_trajectory(
     for i, p in enumerate(peaks):
         if p >= len(low_angle):
             continue
+        if STEP_LENGTH_METHOD == "forward" and i + 1 >= len(peaks):
+            continue  # 次ピークなし：区間定義不可のためスキップ
         # 次のピークとの中点（swing 中盤）でサンプリング
         # 着地衝撃によるジャイロ揺らぎを避け、安定した進行方向角を得るため
         if i + 1 < len(peaks) and peaks[i + 1] < len(low_angle):
