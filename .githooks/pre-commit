@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+MAX_RUNS=3
+
+staged_files=()
+while IFS= read -r -d '' file; do
+  staged_files+=("$file")
+done < <(git diff --cached --name-only --diff-filter=ACMR -z)
+
+if [ "${#staged_files[@]}" -eq 0 ]; then
+  exit 0
+fi
+
+partially_staged_files=()
+for file in "${staged_files[@]}"; do
+  if ! git diff --quiet -- "$file"; then
+    partially_staged_files+=("$file")
+  fi
+done
+
+run=1
+while [ "$run" -le "$MAX_RUNS" ]; do
+  if uv run pre-commit run --files "${staged_files[@]}"; then
+    exit 0
+  fi
+
+  if git diff --quiet -- "${staged_files[@]}"; then
+    exit 1
+  fi
+
+  if [ "${#partially_staged_files[@]}" -gt 0 ]; then
+    echo "partial staging されたファイルがあるため、自動で再 stage せず中断しました。" >&2
+    echo "対象: ${partially_staged_files[*]}" >&2
+    echo "必要なら format 後に改めて stage してください。" >&2
+    exit 1
+  fi
+
+  git add -- "${staged_files[@]}"
+  run=$((run + 1))
+done
+
+echo "pre-commitが自動修正を繰り返したため中断しました。変更内容を確認してください。" >&2
+exit 1

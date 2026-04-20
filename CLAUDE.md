@@ -40,15 +40,17 @@ uv run mypy src/
 
 ### Pre-commit
 
-Install pre-commit hooks:
+Enable the repository-managed git hook:
 ```sh
-uv run pre-commit install
+git config core.hooksPath .githooks
 ```
 
 Run pre-commit on all files (useful when CI fails):
 ```sh
 uv run pre-commit run --all-files
 ```
+
+The repo hook reruns `pre-commit` after auto-fixing and re-staging files, so formatter-only changes should not block `git commit`.
 
 This command auto-fixes many issues and outputs errors that need manual fixing. Most CI failures can be resolved by pushing the auto-fixed changes.
 
