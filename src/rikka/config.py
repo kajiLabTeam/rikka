@@ -3,7 +3,7 @@
 # Data directory path
 # Change this path to use different input data
 
-DATA_DIR = "input/10steps_stride_length_check_1m-1"
+DATA_DIR = "input/10steps_stride_length_check_50cm-2"
 
 # フロアマップ設定
 # 背景として表示するフロアマップ画像のパス
@@ -60,3 +60,9 @@ STEP_LENGTH_METHOD = "forward"
 # 振動変位 ≈ 0.13 m（体装着センサーの直流速度成分が計測不能なため）
 # K = v_mean / Δv_peak × 2/π ≈ 定数（v_mean と Δv が歩行速度に比例するため）
 K_FORWARD = 9.0
+
+# パーティクルフィルタ設定
+PF_NUM_PARTICLES = 500
+PF_SIGMA_INIT_HEADING = 0.3  # 初期方向ばらつき [rad]（±17°）
+PF_SIGMA_HEADING = 0.2  # ステップごとの方位角ノイズ [rad/step]（±11°）
+PF_SIGMA_STEP_LENGTH_RATIO = 0.1  # ステップ長ノイズ比率（±10%）
