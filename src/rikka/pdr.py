@@ -569,6 +569,9 @@ def run(
             plot_particle_filter_trajectory(
                 trajectory, gx_mean=gx_mean, gz_mean=gz_mean, output_dir=output_dir
             )
+            from .sensor_plot import plot_step_lengths  # noqa: PLC0415
+
+            plot_step_lengths(step_lengths, output_dir)
 
         save_particle_animation(
             all_particles,
@@ -603,5 +606,8 @@ def run(
             plot_trajectory(
                 trajectory, gx_mean=gx_mean, gz_mean=gz_mean, output_dir=output_dir
             )
+            from .sensor_plot import plot_step_lengths  # noqa: PLC0415
+
+            plot_step_lengths(step_lengths, output_dir)
 
     return df_trajectory
