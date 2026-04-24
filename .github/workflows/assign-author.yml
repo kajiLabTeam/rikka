@@ -1,7 +1,7 @@
 name: Assign Author
 on:
   pull_request_target:
-    types: [opened,reopened]
+    types: [opened]
 
 jobs:
   assign-author:
@@ -19,5 +19,5 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.payload.pull_request.number,
-              assignees: [context.actor],  // botチェックはjobのifに集約
+              assignees: [context.actor],
             });
