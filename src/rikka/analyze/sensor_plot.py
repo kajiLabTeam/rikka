@@ -5,7 +5,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-from .config import DATA_DIR
+from ..config import DATA_DIR
 from .pdr import detect_steps, load_sensor_data, process_sensor_data
 
 
