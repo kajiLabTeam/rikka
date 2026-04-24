@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.animation import FuncAnimation
+from matplotlib.artist import Artist
 from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize
 
@@ -137,6 +138,7 @@ def run_particle_filter(
             prev_pts を渡すと前後の線分を5点サンプリングし、
             途中で壁を横断したパーティクルも除外する。
             """
+
             def _brightness(arr: np.ndarray) -> np.ndarray:
                 px_f, py_f = _compute_pixel_coords(
                     arr[:, 0], arr[:, 1], gx_mean, gz_mean, origin_px, scale
@@ -240,7 +242,7 @@ def plot_particle_filter_trajectory(
     cmap = cm.get_cmap("plasma")
     pts = np.column_stack([px, py]).reshape(-1, 1, 2)
     segments = np.concatenate([pts[:-1], pts[1:]], axis=1)
-    lc = LineCollection(segments, cmap=cmap, norm=norm, zorder=2)  # type: ignore[arg-type]
+    lc = LineCollection(segments.tolist(), cmap=cmap, norm=norm, zorder=2)
     lc.set_array(np.arange(n - 1))
     ax.add_collection(lc)
     sc = ax.scatter(px, py, c=np.arange(n), cmap=cmap, norm=norm, s=20, zorder=3)
@@ -286,7 +288,7 @@ def save_particle_animation(
 
     fig, ax = plt.subplots(figsize=(7, 7))
 
-    def update(frame: int) -> None:
+    def update(frame: int) -> list[Artist]:
         ax.cla()
         ax.imshow(map_img)
 
@@ -324,8 +326,9 @@ def save_particle_animation(
         )
         ax.scatter(px_c, py_c, s=60, c="red", zorder=4)
         ax.set_title(f"Step {frame}")
+        return []
 
-    anim = FuncAnimation(fig, update, frames=len(all_particles), interval=1000 // fps)  # type: ignore[arg-type]
+    anim = FuncAnimation(fig, update, frames=len(all_particles), interval=1000 // fps)
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
