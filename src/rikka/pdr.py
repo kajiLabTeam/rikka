@@ -485,6 +485,10 @@ def run(
     df_gyro: pd.DataFrame | None = None,
     plot: bool = True,
     use_particle_filter: bool = False,
+    floormap_path: str | Path = FLOORMAP_PATH,
+    origin_px: tuple[int, int] = FLOORMAP_ORIGIN_PX,
+    scale: float = FLOORMAP_SCALE,
+    initial_direction: float = INITIAL_DIRECTION,
 ) -> pd.DataFrame:
     """PDRのメインパイプラインを実行する。
 
@@ -503,6 +507,17 @@ def run(
         plot (bool):
             ``True`` のとき軌跡をプロット表示する。
             バッチ処理やCI環境では ``False`` を指定する。デフォルトは ``True``。
+        use_particle_filter (bool):
+            ``True`` のときパーティクルフィルタで軌跡を推定する。
+            デフォルトは ``False``。
+        floormap_path (str | Path):
+            フロアマップ画像のパス。デフォルトは ``FLOORMAP_PATH``。
+        origin_px (tuple[int, int]):
+            軌跡起点のピクセル座標 ``(x, y)``。デフォルトは ``FLOORMAP_ORIGIN_PX``。
+        scale (float):
+            1ピクセルあたりのメートル数。デフォルトは ``FLOORMAP_SCALE``。
+        initial_direction (float):
+            歩行開始方向のオフセット [度]。デフォルトは ``INITIAL_DIRECTION``。
 
     Returns:
         pd.DataFrame: 軌跡データ（列: x, y）
@@ -546,7 +561,15 @@ def run(
         )
 
         trajectory, step_lengths, all_particles = run_particle_filter(
-            peaks, df_gyro, df_acc, gx_mean, gz_mean
+            peaks,
+            df_gyro,
+            df_acc,
+            gx_mean,
+            gz_mean,
+            floormap_path=floormap_path,
+            origin_px=origin_px,
+            scale=scale,
+            initial_direction=initial_direction,
         )
 
         print(f"Steps detected: {len(peaks)}")
@@ -567,7 +590,13 @@ def run(
 
         if plot:
             plot_particle_filter_trajectory(
-                trajectory, gx_mean=gx_mean, gz_mean=gz_mean, output_dir=output_dir
+                trajectory,
+                gx_mean=gx_mean,
+                gz_mean=gz_mean,
+                floormap_path=floormap_path,
+                origin_px=origin_px,
+                scale=scale,
+                output_dir=output_dir,
             )
             from .sensor_plot import plot_step_lengths  # noqa: PLC0415
 
@@ -578,6 +607,9 @@ def run(
             trajectory,
             gx_mean=gx_mean,
             gz_mean=gz_mean,
+            floormap_path=floormap_path,
+            origin_px=origin_px,
+            scale=scale,
             output_path=output_dir / "particle_filter.mp4",
         )
     else:
@@ -604,7 +636,13 @@ def run(
 
         if plot:
             plot_trajectory(
-                trajectory, gx_mean=gx_mean, gz_mean=gz_mean, output_dir=output_dir
+                trajectory,
+                gx_mean=gx_mean,
+                gz_mean=gz_mean,
+                floormap_path=floormap_path,
+                origin_px=origin_px,
+                scale=scale,
+                output_dir=output_dir,
             )
             from .sensor_plot import plot_step_lengths  # noqa: PLC0415
 

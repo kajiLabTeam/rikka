@@ -10,6 +10,12 @@
 uv sync --all-groups
 ```
 
+MP4 アニメーション出力（`uv run rikka particle`）には ffmpeg が必要です。
+
+```sh
+brew install ffmpeg
+```
+
 ---
 
 ## 使い方
@@ -24,6 +30,15 @@ input/
     ├── Accelerometer.csv
     └── Gyroscope.csv
 ```
+
+各 CSV の列構成は次のとおりです（phyphox アプリの出力形式）。
+
+| ファイル | 列 |
+|---|---|
+| `Accelerometer.csv` | `Time (s)`, `Acceleration x (m/s^2)`, `Acceleration y (m/s^2)`, `Acceleration z (m/s^2)` |
+| `Gyroscope.csv` | `Time (s)`, `Gyroscope x (rad/s)`, `Gyroscope y (rad/s)`, `Gyroscope z (rad/s)` |
+
+列名が `X (m/s^2)` / `X (rad/s)` 形式の場合も自動で対応します。
 
 `src/rikka/config.py` の `DATA_DIR` を対象フォルダに変更します。
 
@@ -69,8 +84,11 @@ uv run rikka sensor
 
 - 折れ線グラフ：各ステップの歩幅 [m]
 - 赤い水平線：平均値
-- 赤い半透明帯：±1σ 範囲
+- 赤い半透明帯：±1σ 範囲（σ = 標準偏差。帯の幅が狭いほど歩幅が安定していることを示す）
 - 右上テキスト・コンソール出力：`mean / std / n`
+
+<!-- TODO: サンプル画像の URL をここに追加 -->
+<!-- 例: ![step_lengths サンプル](https://example.com/step_lengths.png) -->
 
 ---
 
@@ -93,6 +111,16 @@ trajectory = run(df_acc=df_acc, df_gyro=df_gyro, use_particle_filter=True)
 
 # グラフ非表示（バッチ処理向け）
 trajectory = run(df_acc=df_acc, df_gyro=df_gyro, plot=False)
+
+# フロアマップを外部から指定
+trajectory = run(
+    df_acc=df_acc,
+    df_gyro=df_gyro,
+    floormap_path="path/to/floormap.png",
+    origin_px=(1000, 500),
+    scale=0.01,
+    initial_direction=90.0,
+)
 ```
 
 `df_acc` と `df_gyro` は両方渡すか、両方省略（CSV から自動読み込み）してください。片方だけ渡すと `ValueError` になります。
