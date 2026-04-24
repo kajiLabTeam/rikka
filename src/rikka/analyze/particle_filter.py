@@ -11,7 +11,7 @@ from matplotlib.artist import Artist
 from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize
 
-from .config import (
+from ..config import (
     FLOORMAP_ORIGIN_PX,
     FLOORMAP_PATH,
     FLOORMAP_SCALE,

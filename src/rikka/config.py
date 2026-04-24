@@ -3,7 +3,7 @@
 # Data directory path
 # Change this path to use different input data
 
-DATA_DIR = "input/10steps_stride_length_check_50cm-2"
+DATA_DIR = "input/85random_steps_turn_Yamamoto"
 
 # フロアマップ設定
 # 背景として表示するフロアマップ画像のパス
@@ -12,6 +12,7 @@ FLOORMAP_PATH = "input/Floormap_building14_5floor.png"
 # 実際の歩行開始位置に合わせて調整すること
 FLOORMAP_ORIGIN_PX: tuple[int, int] = (2050, 700)
 # 1ピクセルあたりのメートル数（1px = 1cm = 0.01m）
+
 FLOORMAP_SCALE = 0.01
 # 軌跡の初期方向 [度]（0 = 右方向、90 = 上方向、反時計回りが正）
 INITIAL_DIRECTION = 90.0

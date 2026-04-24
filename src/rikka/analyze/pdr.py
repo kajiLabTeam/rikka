@@ -9,7 +9,7 @@ from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize
 from scipy.signal import find_peaks
 
-from .config import (
+from ..config import (
     DATA_DIR,
     FLOORMAP_ORIGIN_PX,
     FLOORMAP_PATH,
