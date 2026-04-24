@@ -125,8 +125,13 @@ def plot_step_lengths(
     fig, ax = plt.subplots(figsize=(max(6, n * 0.35 + 2), 4))
 
     ax.plot(
-        steps, arr, color="steelblue", linewidth=1.5,
-        marker="o", markersize=5, label="step length",
+        steps,
+        arr,
+        color="steelblue",
+        linewidth=1.5,
+        marker="o",
+        markersize=5,
+        label="step length",
     )
     ax.axhline(mean, color="crimson", linewidth=1.5, label=f"mean={mean:.3f} m")
     ax.axhspan(
