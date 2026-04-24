@@ -9,7 +9,7 @@ from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize
 from scipy.signal import find_peaks
 
-from .config import (
+from ..config import (
     DATA_DIR,
     FLOORMAP_ORIGIN_PX,
     FLOORMAP_PATH,
@@ -398,6 +398,27 @@ def estimate_trajectory(
     return points, step_lengths
 
 
+def _compute_pixel_coords(
+    xs: np.ndarray,
+    ys: np.ndarray,
+    gx_mean: float,
+    gz_mean: float,
+    origin_px: tuple[int, int],
+    scale: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """メートル座標をフロアマップのピクセル座標に変換する。
+
+    重力の主成分軸（|gx| vs |gz|）でY軸反転の判定軸を自動選択する。
+    """
+    if abs(gx_mean) > abs(gz_mean):
+        y_sign = -1 if gx_mean > 0 else 1
+    else:
+        y_sign = -1 if gz_mean < 0 else 1
+    px = origin_px[0] + xs / scale
+    py = origin_px[1] + y_sign * ys / scale
+    return px, py
+
+
 def plot_trajectory(
     trajectory: list[list[float]],
     gx_mean: float = 0.0,
@@ -424,13 +445,9 @@ def plot_trajectory(
     """
     df = pd.DataFrame(trajectory, columns=["x", "y"])
 
-    # 重力の主成分軸で反転方向を決定する
-    if abs(gx_mean) > abs(gz_mean):
-        y_sign = -1 if gx_mean > 0 else 1
-    else:
-        y_sign = -1 if gz_mean < 0 else 1
-    px = origin_px[0] + df["x"] / scale
-    py = origin_px[1] + y_sign * df["y"] / scale
+    px, py = _compute_pixel_coords(
+        df["x"].to_numpy(), df["y"].to_numpy(), gx_mean, gz_mean, origin_px, scale
+    )
 
     fig, ax = plt.subplots(figsize=(7, 7))
 
@@ -443,16 +460,16 @@ def plot_trajectory(
     norm = Normalize(vmin=0, vmax=max(n - 1, 1))
     cmap = cm.get_cmap("plasma")
     # 各ステップ間のセグメントに色を付けて LineCollection で描画
-    pts = np.column_stack([px.to_numpy(), py.to_numpy()]).reshape(-1, 1, 2)
+    pts = np.column_stack([px, py]).reshape(-1, 1, 2)
     segments = np.concatenate([pts[:-1], pts[1:]], axis=1)
-    lc = LineCollection(segments, cmap=cmap, norm=norm, zorder=2)
+    lc = LineCollection(segments.tolist(), cmap=cmap, norm=norm, zorder=2)
     lc.set_array(np.arange(n - 1))
     ax.add_collection(lc)
     # 各ステップ点を同じカラーマップで描画
     sc = ax.scatter(px, py, c=np.arange(n), cmap=cmap, norm=norm, s=20, zorder=3)
     fig.colorbar(sc, ax=ax, label="Step")
     # 起点を強調表示
-    ax.plot(px.iloc[0], py.iloc[0], "go", markersize=10, label="Start", zorder=4)
+    ax.plot(px[0], py[0], "go", markersize=10, label="Start", zorder=4)
 
     ax.set_title("Walking Trajectory on Floormap")
     ax.legend()
@@ -467,6 +484,11 @@ def run(
     df_acc: pd.DataFrame | None = None,
     df_gyro: pd.DataFrame | None = None,
     plot: bool = True,
+    use_particle_filter: bool = False,
+    floormap_path: str | Path = FLOORMAP_PATH,
+    origin_px: tuple[int, int] = FLOORMAP_ORIGIN_PX,
+    scale: float = FLOORMAP_SCALE,
+    initial_direction: float = INITIAL_DIRECTION,
 ) -> pd.DataFrame:
     """PDRのメインパイプラインを実行する。
 
@@ -485,6 +507,17 @@ def run(
         plot (bool):
             ``True`` のとき軌跡をプロット表示する。
             バッチ処理やCI環境では ``False`` を指定する。デフォルトは ``True``。
+        use_particle_filter (bool):
+            ``True`` のときパーティクルフィルタで軌跡を推定する。
+            デフォルトは ``False``。
+        floormap_path (str | Path):
+            フロアマップ画像のパス。デフォルトは ``FLOORMAP_PATH``。
+        origin_px (tuple[int, int]):
+            軌跡起点のピクセル座標 ``(x, y)``。デフォルトは ``FLOORMAP_ORIGIN_PX``。
+        scale (float):
+            1ピクセルあたりのメートル数。デフォルトは ``FLOORMAP_SCALE``。
+        initial_direction (float):
+            歩行開始方向のオフセット [度]。デフォルトは ``INITIAL_DIRECTION``。
 
     Returns:
         pd.DataFrame: 軌跡データ（列: x, y）
@@ -507,42 +540,112 @@ def run(
 
     df_acc, df_gyro = process_sensor_data(df_acc, df_gyro)
     peaks = detect_steps(df_acc)
-    trajectory, step_lengths = estimate_trajectory(peaks, df_gyro, df_acc)
 
     # 重力成分の平均を算出（Y軸反転の自動判定に使用）
     gx_mean = float(df_acc["gx"].mean())
     gz_mean = float(df_acc["gz"].mean())
     dominant = "X軸" if abs(gx_mean) > abs(gz_mean) else "Z軸"
-    y_flipped = (abs(gx_mean) > abs(gz_mean) and gx_mean < 0) or (
-        abs(gz_mean) >= abs(gx_mean) and gz_mean > 0
+    y_flipped = (abs(gx_mean) > abs(gz_mean) and gx_mean > 0) or (
+        abs(gz_mean) >= abs(gx_mean) and gz_mean < 0
     )
     print(
         f"重力主成分: {dominant}  gx={gx_mean:.2f}, gz={gz_mean:.2f} m/s²"
         f" → Y軸{'反転' if y_flipped else '非反転'}"
     )
 
-    print(f"Steps detected: {len(peaks)}")
-    for i, (x, y) in enumerate(trajectory):
-        print(f"step {i}: ({x:.3f}, {y:.3f})")
-
-    df_trajectory = pd.DataFrame(trajectory, columns=["x", "y"])
-
-    # 軌跡データをoutputフォルダにCSVとして保存
-    output_path = output_dir / "trajectory.csv"
-    df_trajectory.to_csv(output_path, index=False)
-    print(f"Trajectory saved to {output_path}")
-
-    # 歩幅データをoutputフォルダにCSVとして保存
-    df_step_lengths = pd.DataFrame(
-        {"step": range(1, len(step_lengths) + 1), "step_length_m": step_lengths}
-    )
-    step_length_path = output_dir / "step_lengths.csv"
-    df_step_lengths.to_csv(step_length_path, index=False)
-    print(f"Step lengths saved to {step_length_path}")
-
-    if plot:
-        plot_trajectory(
-            trajectory, gx_mean=gx_mean, gz_mean=gz_mean, output_dir=output_dir
+    if use_particle_filter:
+        from .particle_filter import (  # noqa: PLC0415
+            plot_particle_filter_trajectory,
+            run_particle_filter,
+            save_particle_animation,
         )
+
+        trajectory, step_lengths, all_particles = run_particle_filter(
+            peaks,
+            df_gyro,
+            df_acc,
+            gx_mean,
+            gz_mean,
+            floormap_path=floormap_path,
+            origin_px=origin_px,
+            scale=scale,
+            initial_direction=initial_direction,
+        )
+
+        print(f"Steps detected: {len(peaks)}")
+        for i, (x, y) in enumerate(trajectory):
+            print(f"step {i}: ({x:.3f}, {y:.3f})")
+
+        df_trajectory = pd.DataFrame(trajectory, columns=["x", "y"])
+        output_path = output_dir / "trajectory.csv"
+        df_trajectory.to_csv(output_path, index=False)
+        print(f"Trajectory saved to {output_path}")
+
+        df_step_lengths = pd.DataFrame(
+            {"step": range(1, len(step_lengths) + 1), "step_length_m": step_lengths}
+        )
+        step_length_path = output_dir / "step_lengths.csv"
+        df_step_lengths.to_csv(step_length_path, index=False)
+        print(f"Step lengths saved to {step_length_path}")
+
+        if plot:
+            plot_particle_filter_trajectory(
+                trajectory,
+                gx_mean=gx_mean,
+                gz_mean=gz_mean,
+                floormap_path=floormap_path,
+                origin_px=origin_px,
+                scale=scale,
+                output_dir=output_dir,
+            )
+            from .sensor_plot import plot_step_lengths  # noqa: PLC0415
+
+            plot_step_lengths(step_lengths, output_dir)
+
+        save_particle_animation(
+            all_particles,
+            trajectory,
+            gx_mean=gx_mean,
+            gz_mean=gz_mean,
+            floormap_path=floormap_path,
+            origin_px=origin_px,
+            scale=scale,
+            output_path=output_dir / "particle_filter.mp4",
+        )
+    else:
+        trajectory, step_lengths = estimate_trajectory(peaks, df_gyro, df_acc)
+
+        print(f"Steps detected: {len(peaks)}")
+        for i, (x, y) in enumerate(trajectory):
+            print(f"step {i}: ({x:.3f}, {y:.3f})")
+
+        df_trajectory = pd.DataFrame(trajectory, columns=["x", "y"])
+
+        # 軌跡データをoutputフォルダにCSVとして保存
+        output_path = output_dir / "trajectory.csv"
+        df_trajectory.to_csv(output_path, index=False)
+        print(f"Trajectory saved to {output_path}")
+
+        # 歩幅データをoutputフォルダにCSVとして保存
+        df_step_lengths = pd.DataFrame(
+            {"step": range(1, len(step_lengths) + 1), "step_length_m": step_lengths}
+        )
+        step_length_path = output_dir / "step_lengths.csv"
+        df_step_lengths.to_csv(step_length_path, index=False)
+        print(f"Step lengths saved to {step_length_path}")
+
+        if plot:
+            plot_trajectory(
+                trajectory,
+                gx_mean=gx_mean,
+                gz_mean=gz_mean,
+                floormap_path=floormap_path,
+                origin_px=origin_px,
+                scale=scale,
+                output_dir=output_dir,
+            )
+            from .sensor_plot import plot_step_lengths  # noqa: PLC0415
+
+            plot_step_lengths(step_lengths, output_dir)
 
     return df_trajectory
