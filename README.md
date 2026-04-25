@@ -87,6 +87,29 @@ uv run rikka sensor
 
 - 生加速度・線形加速度ノルム・ジャイロ・積算角度を4段グラフにして `input/<データフォルダ>/sensor_plot.png` に保存します。
 
+#### 簡易接続確認サーバー
+
+```sh
+uv run rikka serve [OPTIONS]
+
+# 例: ポートを変更して起動
+uv run rikka serve --port 9000
+```
+
+起動後、以下のエンドポイントで接続確認ができます。
+
+```sh
+curl http://localhost:8000/ping
+# → {"message":"Hello, rikka"}
+```
+
+| オプション | 説明 | 既定値 |
+|---|---|---|
+| `--host` | バインドするホスト | `0.0.0.0` |
+| `--port` | 待ち受けポート番号 | `8000` |
+
+Swagger UI は `http://localhost:8000/docs` で確認できます。
+
 ![sensor_plot サンプル](docs/images/sensor_plot_sample.png)
 
 ---
