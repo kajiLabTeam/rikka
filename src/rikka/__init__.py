@@ -162,6 +162,5 @@ def sensor(data_dir: str) -> None:
     plot_sensor_data(data_dir)
 
 
-
 def main() -> None:
     cli()
