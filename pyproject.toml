@@ -9,7 +9,6 @@ dependencies = [
     "matplotlib>=3.10.8",
     "numpy>=2.4.3",
     "pandas>=3.0.1",
-    "pydantic>=2.12.5",
     "scipy>=1.17.1",
 ]
 
@@ -64,11 +63,3 @@ disallow_untyped_defs = false
 check_untyped_defs = true
 ignore_missing_imports = true
 strict = true
-plugins = [
-    "pydantic.mypy"
-]
-
-[tool.pydantic-mypy]
-init_forbid_extra = true
-init_typed = true
-warn_required_dynamic_aliases = true

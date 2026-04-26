@@ -7,6 +7,7 @@ from .config import (
     FLOORMAP_SCALE,
     INITIAL_DIRECTION,
 )
+from .ping import ping as ping
 
 _DATA_DIR_DEFAULT = DATA_DIR
 _FLOORMAP_DEFAULT = FLOORMAP_PATH
@@ -61,7 +62,7 @@ def _common_options(f: click.decorators.FC) -> click.decorators.FC:
     return f
 
 
-@click.group()  # type: ignore[misc]
+@click.group()
 def cli() -> None:
     """rikka — PDR 歩行軌跡推定ツール"""
 
@@ -90,7 +91,7 @@ def _run_pdr(
     )
 
 
-@cli.command()  # type: ignore[misc]
+@cli.command()
 @_common_options
 def run(
     data_dir: str,
@@ -104,7 +105,7 @@ def run(
     _run_pdr(data_dir, floormap, origin_px, scale, direction, no_plot)
 
 
-@cli.command()  # type: ignore[misc]
+@cli.command()
 @_common_options
 def pdr(
     data_dir: str,
@@ -118,7 +119,7 @@ def pdr(
     _run_pdr(data_dir, floormap, origin_px, scale, direction, no_plot)
 
 
-@cli.command()  # type: ignore[misc]
+@cli.command()
 @_common_options
 def particle(
     data_dir: str,
@@ -145,8 +146,8 @@ def particle(
     )
 
 
-@cli.command()  # type: ignore[misc]
-@click.option(  # type: ignore[misc]
+@cli.command()
+@click.option(
     "--data-dir",
     "-d",
     default=_DATA_DIR_DEFAULT,

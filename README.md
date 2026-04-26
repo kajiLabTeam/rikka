@@ -87,6 +87,16 @@ uv run rikka sensor
 
 - 生加速度・線形加速度ノルム・ジャイロ・積算角度を4段グラフにして `input/<データフォルダ>/sensor_plot.png` に保存します。
 
+#### 簡易接続確認
+
+引数なしで呼び出し、`"Hello, rikka"` が返れば接続・インポートが正常に動作しています。
+
+```python
+from rikka.server import ping
+
+print(ping())  # → Hello, rikka
+```
+
 ![sensor_plot サンプル](docs/images/sensor_plot_sample.png)
 
 ---
