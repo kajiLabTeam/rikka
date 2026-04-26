@@ -7,7 +7,7 @@ from .config import (
     FLOORMAP_SCALE,
     INITIAL_DIRECTION,
 )
-from .server import ping as ping
+from .ping import ping as ping
 
 _DATA_DIR_DEFAULT = DATA_DIR
 _FLOORMAP_DEFAULT = FLOORMAP_PATH
