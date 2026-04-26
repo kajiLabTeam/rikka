@@ -7,6 +7,7 @@ from .config import (
     FLOORMAP_SCALE,
     INITIAL_DIRECTION,
 )
+from .server import ping as ping
 
 _DATA_DIR_DEFAULT = DATA_DIR
 _FLOORMAP_DEFAULT = FLOORMAP_PATH
@@ -160,17 +161,6 @@ def sensor(data_dir: str) -> None:
 
     plot_sensor_data(data_dir)
 
-
-@cli.command()
-@click.option("--host", default="0.0.0.0", show_default=True, help="バインドするホスト")
-@click.option("--port", default=8000, show_default=True, help="待ち受けポート番号")
-def serve(host: str, port: int) -> None:
-    """接続確認用 HTTP サーバーを起動する。"""
-    import uvicorn  # noqa: PLC0415
-
-    from .server import app  # noqa: PLC0415
-
-    uvicorn.run(app, host=host, port=port)
 
 
 def main() -> None:

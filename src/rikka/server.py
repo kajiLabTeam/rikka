@@ -1,13 +1,3 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
-
-app = FastAPI()
-
-
-class PingResponse(BaseModel):
-    message: str
-
-
-@app.get("/ping", response_model=PingResponse)
-def ping() -> PingResponse:
-    return PingResponse(message="Hello, rikka")
+def ping() -> str:
+    """接続確認用の関数。引数なしで "Hello, rikka" を返す。"""
+    return "Hello, rikka"
