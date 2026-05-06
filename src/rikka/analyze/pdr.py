@@ -337,7 +337,7 @@ def estimate_trajectory(
     df_gyro: pd.DataFrame,
     df_acc: pd.DataFrame,
     initial_direction: float = INITIAL_DIRECTION,
-) -> tuple[list[list[float]], list[float]]:
+) -> tuple[list[list[float]], list[float], list[float]]:
     """ステップピークとジャイロスコープ角度から2次元軌跡を推定する。
 
     各ステップピーク時刻の平滑化角度（``low_angle``）と
@@ -353,12 +353,14 @@ def estimate_trajectory(
             （デフォルト: ``INITIAL_DIRECTION``）
 
     Returns:
-        tuple[list[list[float]], list[float]]:
+        tuple[list[list[float]], list[float], list[float]]:
             - 各ステップの [x, y] 座標リスト（原点を含む）
             - 各ステップの推定歩幅リスト [m]
+            - 各ステップのピーク時刻リスト [s]
     """
     points: list[list[float]] = [[0.0, 0.0]]
     step_lengths: list[float] = []
+    t_at_steps: list[float] = []
     low_angle = df_gyro["low_angle"]
     # 度 → ラジアン変換してオフセットとして使用
     direction_offset = float(np.deg2rad(initial_direction))
@@ -391,11 +393,17 @@ def estimate_trajectory(
         else:
             step_length = estimate_step_length(df_acc, int(p))
         step_lengths.append(step_length)
+        t_p = (
+            float(df_acc["t"].iloc[int(p)])
+            if "t" in df_acc.columns
+            else int(p) / SAMPLING_RATE
+        )
+        t_at_steps.append(t_p)
         x = points[-1][0] + step_length * float(np.cos(angle))
         y = points[-1][1] + step_length * float(np.sin(angle))
         points.append([x, y])
 
-    return points, step_lengths
+    return points, step_lengths, t_at_steps
 
 
 def _compute_pixel_coords(
@@ -478,6 +486,44 @@ def plot_trajectory(
         # グラフ画像をoutputフォルダに保存
         fig.savefig(output_dir / "trajectory.png", dpi=150, bbox_inches="tight")
     plt.show()
+
+
+def _build_step_vectors_dataframe(trajectory: list[list[float]]) -> pd.DataFrame:
+    """軌跡点列からステップごとの変位ベクトルをDataFrame化する。"""
+    points = np.asarray(trajectory, dtype=float)
+    if len(points) < 2:
+        return pd.DataFrame(
+            columns=[
+                "step",
+                "start_x",
+                "start_y",
+                "end_x",
+                "end_y",
+                "dx",
+                "dy",
+                "step_length_m",
+                "heading_deg",
+            ]
+        )
+
+    starts = points[:-1]
+    ends = points[1:]
+    vectors = ends - starts
+    lengths = np.linalg.norm(vectors, axis=1)
+    headings = np.degrees(np.arctan2(vectors[:, 1], vectors[:, 0]))
+    return pd.DataFrame(
+        {
+            "step": np.arange(1, len(vectors) + 1),
+            "start_x": starts[:, 0],
+            "start_y": starts[:, 1],
+            "end_x": ends[:, 0],
+            "end_y": ends[:, 1],
+            "dx": vectors[:, 0],
+            "dy": vectors[:, 1],
+            "step_length_m": lengths,
+            "heading_deg": headings,
+        }
+    )
 
 
 def run(
@@ -588,6 +634,11 @@ def run(
         df_step_lengths.to_csv(step_length_path, index=False)
         print(f"Step lengths saved to {step_length_path}")
 
+        df_step_vectors = _build_step_vectors_dataframe(trajectory)
+        step_vector_path = output_dir / "step_vectors.csv"
+        df_step_vectors.to_csv(step_vector_path, index=False)
+        print(f"Step vectors saved to {step_vector_path}")
+
         if plot:
             plot_particle_filter_trajectory(
                 trajectory,
@@ -598,9 +649,13 @@ def run(
                 scale=scale,
                 output_dir=output_dir,
             )
-            from .sensor_plot import plot_step_lengths  # noqa: PLC0415
+            from .sensor_plot import (  # noqa: PLC0415
+                plot_step_lengths,
+                plot_step_vectors,
+            )
 
             plot_step_lengths(step_lengths, output_dir)
+            plot_step_vectors(trajectory, output_dir)
 
         save_particle_animation(
             all_particles,
@@ -613,7 +668,9 @@ def run(
             output_path=output_dir / "particle_filter.mp4",
         )
     else:
-        trajectory, step_lengths = estimate_trajectory(peaks, df_gyro, df_acc)
+        trajectory, step_lengths, t_at_steps = estimate_trajectory(
+            peaks, df_gyro, df_acc
+        )
 
         print(f"Steps detected: {len(peaks)}")
         for i, (x, y) in enumerate(trajectory):
@@ -634,6 +691,11 @@ def run(
         df_step_lengths.to_csv(step_length_path, index=False)
         print(f"Step lengths saved to {step_length_path}")
 
+        df_step_vectors = _build_step_vectors_dataframe(trajectory)
+        step_vector_path = output_dir / "step_vectors.csv"
+        df_step_vectors.to_csv(step_vector_path, index=False)
+        print(f"Step vectors saved to {step_vector_path}")
+
         if plot:
             plot_trajectory(
                 trajectory,
@@ -644,8 +706,23 @@ def run(
                 scale=scale,
                 output_dir=output_dir,
             )
-            from .sensor_plot import plot_step_lengths  # noqa: PLC0415
+            from .sensor_plot import (  # noqa: PLC0415
+                plot_step_lengths,
+                plot_step_vectors,
+            )
 
-            plot_step_lengths(step_lengths, output_dir)
+            t_acc = (
+                df_acc["t"].to_numpy()
+                if "t" in df_acc.columns
+                else np.arange(len(df_acc)) / SAMPLING_RATE
+            )
+            plot_step_lengths(
+                step_lengths,
+                output_dir,
+                t_at_steps=t_at_steps,
+                t_acc=t_acc,
+                low_lin_norm=df_acc["low_lin_norm"].to_numpy(),
+            )
+            plot_step_vectors(trajectory, output_dir)
 
     return df_trajectory
