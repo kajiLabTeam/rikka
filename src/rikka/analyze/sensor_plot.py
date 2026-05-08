@@ -122,9 +122,13 @@ def plot_step_lengths(
         low_lin_norm: 平滑化線形加速度ノルム配列（時系列モード用）
     """
     arr = np.array(step_lengths)
+    n = len(arr)
+    if n == 0:
+        print("ステップが検出されませんでした")
+        return
+
     mean = float(arr.mean())
     std = float(arr.std())
-    n = len(arr)
 
     print(f"歩幅  mean={mean:.3f} m  std={std:.3f} m  n={n}")
 
@@ -133,6 +137,12 @@ def plot_step_lengths(
     if t_at_steps is not None and t_acc is not None and low_lin_norm is not None:
         # --- 時系列モード: x軸を時間、低周波加速度ノルムを背景に描画 ---
         t_steps = np.asarray(t_at_steps)
+        if len(t_steps) != n:
+            raise ValueError(
+                "t_at_steps and step_lengths must have the same length in "
+                f"time-series mode: len(t_at_steps)={len(t_steps)}, "
+                f"len(step_lengths)={n}"
+            )
         fig, ax = plt.subplots(figsize=(12, 4))
 
         # 左y軸: low_lin_norm の連続時系列
@@ -266,6 +276,7 @@ def plot_step_vectors(
     if not valid.any():
         return
 
+    original_step_numbers = np.nonzero(valid)[0] + 1
     vectors = vectors[valid]
     lengths = lengths[valid]
     n = len(vectors)
@@ -282,8 +293,9 @@ def plot_step_vectors(
         save_dir = Path(output_dir) / "step_vectors"
         save_dir.mkdir(parents=True, exist_ok=True)
 
-    for i, ((dx, dy), length) in enumerate(zip(vectors, lengths, strict=True), start=1):
-        color = colors[i - 1]
+    for step_no, (dx, dy), length, color in zip(
+        original_step_numbers, vectors, lengths, colors, strict=True
+    ):
         heading = float(np.degrees(np.arctan2(dy, dx)))
 
         fig, ax = plt.subplots(figsize=(6, 6))
@@ -328,13 +340,13 @@ def plot_step_vectors(
         )
         ax.set_xlabel("dx [m]")
         ax.set_ylabel("dy [m]")
-        ax.set_title(f"Step {i:03d} Displacement Vector")
+        ax.set_title(f"Step {step_no:03d} Displacement Vector")
         ax.tick_params(labelsize=8)
         ax.legend(loc="upper left", fontsize=9)
         plt.tight_layout()
 
         if save_dir is not None:
-            save_path = save_dir / f"step_{i:03d}.png"
+            save_path = save_dir / f"step_{step_no:03d}.png"
             fig.savefig(save_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
 

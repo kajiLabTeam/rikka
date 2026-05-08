@@ -618,7 +618,8 @@ def run(
             initial_direction=initial_direction,
         )
 
-        print(f"Steps detected: {len(peaks)}")
+        print(f"Peaks detected: {len(peaks)}")
+        print(f"Steps used: {len(step_lengths)}")
         for i, (x, y) in enumerate(trajectory):
             print(f"step {i}: ({x:.3f}, {y:.3f})")
 
@@ -672,7 +673,8 @@ def run(
             peaks, df_gyro, df_acc
         )
 
-        print(f"Steps detected: {len(peaks)}")
+        print(f"Peaks detected: {len(peaks)}")
+        print(f"Steps used: {len(step_lengths)}")
         for i, (x, y) in enumerate(trajectory):
             print(f"step {i}: ({x:.3f}, {y:.3f})")
 
