@@ -93,8 +93,9 @@ def process_sensor_data(
     - ``lin_x, lin_y, lin_z``: ベクトル減算による線形加速度
     - ``lin_norm``: 線形加速度ノルム
     - ``low_lin_norm``: 平滑化線形加速度ノルム（ステップ検出用）
+    - ``v_acc``: 重力方向へ射影した上下加速度成分（Weinberg歩幅推定用）
     - ``h_x, h_y, h_z``: 重力方向を射影除去した水平加速度成分
-    - ``h_norm``: 水平加速度ノルム（歩幅推定用）
+    - ``h_norm``: 水平加速度ノルム（forward歩幅推定用）
 
     ジャイロスコープデータには積算角度（``angle``）・
     移動平均角度（``low_angle``）を追加する。
@@ -142,17 +143,20 @@ def process_sensor_data(
     df_acc["gy_hat"] = df_acc["gy"] / g_norm
     df_acc["gz_hat"] = df_acc["gz"] / g_norm
 
-    # 水平加速度: a_h = a_lin − (a_lin · ĝ) ĝ（重力方向成分を射影で除去）
-    # dot = a_lin · ĝ：線形加速度の重力方向成分（スカラー）
+    # 上下加速度: a_v = a_lin · ĝ（重力方向への符号付き射影）
+    # Weinbergモデルは上下方向の振幅を使うため、この値を歩幅推定に使用する
     dot = (
         df_acc["lin_x"] * df_acc["gx_hat"]
         + df_acc["lin_y"] * df_acc["gy_hat"]
         + df_acc["lin_z"] * df_acc["gz_hat"]
     )
+    df_acc["v_acc"] = dot
+
+    # 水平加速度: a_h = a_lin − (a_lin · ĝ) ĝ（重力方向成分を射影で除去）
     df_acc["h_x"] = df_acc["lin_x"] - dot * df_acc["gx_hat"]
     df_acc["h_y"] = df_acc["lin_y"] - dot * df_acc["gy_hat"]
     df_acc["h_z"] = df_acc["lin_z"] - dot * df_acc["gz_hat"]
-    # 水平加速度ノルム: 端末傾斜に依らない歩行動作の強度指標 [m/s²]（歩幅推定に使用）
+    # 水平加速度ノルム: forward手法で前進方向へ射影するための姿勢非依存な水平成分
     df_acc["h_norm"] = np.sqrt(
         df_acc["h_x"] ** 2 + df_acc["h_y"] ** 2 + df_acc["h_z"] ** 2
     )
@@ -208,13 +212,14 @@ def estimate_step_length(
     """Weinberg モデルによる単一ステップの歩幅推定。
 
     ピークインデックスの前後 ``window`` サンプルの範囲内で
-    水平加速度ノルム（``h_norm``）の最大値・最小値を求め，
+    上下加速度成分（``v_acc``）の最大値・最小値を求め，
     Weinberg 式で歩幅を計算する。
-    端末傾斜に対してロバストな水平成分を使用することで推定精度を向上させる。
+    重力方向へ射影した符号付き成分を使うことで、Weinbergモデルの前提である
+    歩行中の上下バウンド振幅を反映する。
     ウィンドウがデータ範囲外にかかる場合はクリッピングする。
 
     Args:
-        df_acc (pd.DataFrame): ``h_norm`` 列を含む加速度DataFrame
+        df_acc (pd.DataFrame): ``v_acc`` 列を含む加速度DataFrame
         peak_index (int): ステップピークのインデックス
         window (int): ピーク前後のサンプル数
         k (float): Weinberg モデルのスケール係数
@@ -225,8 +230,8 @@ def estimate_step_length(
     n = len(df_acc)
     start = max(0, peak_index - window)
     end = min(n, peak_index + window + 1)
-    # ウィンドウ内の水平加速度ノルム（NaN除去済み）
-    segment = df_acc["h_norm"].iloc[start:end].dropna()
+    # ウィンドウ内の上下加速度成分（NaN除去済み）
+    segment = df_acc["v_acc"].iloc[start:end].dropna()
     if segment.empty:
         return 0.0  # データ不足のステップは歩幅 0 として軌跡から実質除外
     acc_max = float(segment.max())  # h_norm 最大値 [m/s²]（スイング頂点付近）
