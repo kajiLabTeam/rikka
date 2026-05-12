@@ -3,14 +3,14 @@
 # Data directory path
 # Change this path to use different input data
 
-DATA_DIR = "input/87steps_turn_Yamamoto"
+DATA_DIR = "input/90steps_turn_elevator"
 
 # フロアマップ設定
 # 背景として表示するフロアマップ画像のパス
 FLOORMAP_PATH = "input/Floormap_building14_5floor.png"
 # 軌跡の起点（原点）がフロアマップ上で対応するピクセル座標 (x_px, y_px)
 # 実際の歩行開始位置に合わせて調整すること
-FLOORMAP_ORIGIN_PX: tuple[int, int] = (2050, 700)
+FLOORMAP_ORIGIN_PX: tuple[int, int] = (2050, 600)
 # 1ピクセルあたりのメートル数（1px = 1cm = 0.01m）
 
 FLOORMAP_SCALE = 0.01
@@ -54,7 +54,7 @@ STEP_LENGTH_WINDOW = 50
 # 歩幅推定手法の選択
 # "weinberg": Weinbergモデル（経験則による max-min 振幅から推定）
 # "forward" : 方位方向射影積分（ジャイロから前進方向を自動推定し符号付き成分を2重積分）
-STEP_LENGTH_METHOD = "forward"
+STEP_LENGTH_METHOD = "weinberg"
 
 # 前進方向射影積分のユニバーサルスケール係数
 # 歩幅 = K_FORWARD × 振動変位

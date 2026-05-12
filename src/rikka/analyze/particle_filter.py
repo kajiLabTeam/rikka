@@ -18,6 +18,7 @@ from ..config import (
     INITIAL_DIRECTION,
     PF_NUM_PARTICLES,
     PF_SIGMA_HEADING,
+    PF_SIGMA_INIT_HEADING,
     PF_SIGMA_STEP_LENGTH_RATIO,
     STEP_LENGTH_METHOD,
 )
@@ -29,10 +30,12 @@ from .pdr import (
 )
 
 
-def _systematic_resample(weights: np.ndarray) -> np.ndarray:
+def _systematic_resample(
+    weights: np.ndarray, rng: np.random.Generator
+) -> np.ndarray:
     """系統リサンプリングでインデックス配列を返す。O(N)・分散最小。"""
     n = len(weights)
-    positions = (np.arange(n) + np.random.uniform(0, 1)) / n
+    positions = (np.arange(n) + rng.uniform(0, 1)) / n
     cumsum = np.cumsum(weights)
     return np.searchsorted(cumsum, positions)
 
@@ -48,6 +51,7 @@ def run_particle_filter(
     scale: float = FLOORMAP_SCALE,
     initial_direction: float = INITIAL_DIRECTION,
     n_particles: int = PF_NUM_PARTICLES,
+    sigma_init_heading: float = PF_SIGMA_INIT_HEADING,
     sigma_heading: float = PF_SIGMA_HEADING,
     sigma_sl_ratio: float = PF_SIGMA_STEP_LENGTH_RATIO,
 ) -> tuple[list[list[float]], list[float], np.ndarray]:
@@ -64,6 +68,7 @@ def run_particle_filter(
         scale: 1ピクセルあたりのメートル数
         initial_direction: 歩行開始方向のオフセット [度]
         n_particles: パーティクル数
+        sigma_init_heading: 粒子ごとの初期方位ばらつき [rad]
         sigma_heading: ステップごとの方位角ノイズ [rad]
         sigma_sl_ratio: ステップ長ノイズの比率
 
@@ -83,6 +88,7 @@ def run_particle_filter(
 
     # 全パーティクルを原点で初期化（[x, y] の2次元状態）
     particles = np.zeros((n_particles, 2))
+    heading_bias = rng.normal(0, sigma_init_heading, n_particles)
     weights = np.ones(n_particles) / n_particles
 
     mean_trajectory: list[list[float]] = [[0.0, 0.0]]
@@ -122,8 +128,9 @@ def run_particle_filter(
         # 予測前の状態を保存（全壁レスキュー用）
         particles_before = particles.copy()
 
-        # 予測ステップ：各パーティクルに独立ノイズを加算（累積しない）
-        theta = angle_det + rng.normal(0, sigma_heading, n_particles)
+        # 予測ステップ：粒子ごとの方位バイアスをランダムウォークとして累積
+        heading_bias += rng.normal(0, sigma_heading, n_particles)
+        theta = angle_det + heading_bias
         sl = np.clip(sl_det * (1 + rng.normal(0, sigma_sl_ratio, n_particles)), 0, None)
         particles[:, 0] += sl * np.cos(theta)
         particles[:, 1] += sl * np.sin(theta)
@@ -168,13 +175,17 @@ def run_particle_filter(
         if total < 1e-300:
             # レスキュー：予測前の位置から3倍のノイズで再試行
             particles = particles_before.copy()
-            theta_r = angle_det + rng.normal(0, sigma_heading * 3, n_particles)
+            theta_r = (
+                angle_det
+                + heading_bias
+                + rng.normal(0, sigma_heading * 3, n_particles)
+            )
             sl_r = np.clip(
                 sl_det * (1 + rng.normal(0, sigma_sl_ratio * 3, n_particles)), 0, None
             )
             particles[:, 0] += sl_r * np.cos(theta_r)
             particles[:, 1] += sl_r * np.sin(theta_r)
-            _, in_corridor = _eval_corridor(particles)
+            _, in_corridor = _eval_corridor(particles, prev_pts=particles_before)
             weights = in_corridor.astype(float)
             total = weights.sum()
             if total < 1e-300:
@@ -199,8 +210,9 @@ def run_particle_filter(
         step_lengths.append(sl_det)
 
         # 系統リサンプリング
-        indices = _systematic_resample(weights)
+        indices = _systematic_resample(weights, rng)
         particles = particles[indices]
+        heading_bias = heading_bias[indices]
         weights[:] = 1.0 / n_particles
         all_particles_list.append(particles.copy())
 
