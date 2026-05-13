@@ -21,6 +21,7 @@ from ..config import (
     PF_SIGMA_INIT_HEADING,
     PF_SIGMA_STEP_LENGTH_RATIO,
     STEP_LENGTH_METHOD,
+    WEINBERG_K,
 )
 from .pdr import (
     _compute_pixel_coords,
@@ -54,6 +55,7 @@ def run_particle_filter(
     sigma_init_heading: float = PF_SIGMA_INIT_HEADING,
     sigma_heading: float = PF_SIGMA_HEADING,
     sigma_sl_ratio: float = PF_SIGMA_STEP_LENGTH_RATIO,
+    weinberg_k: float = WEINBERG_K,
 ) -> tuple[list[list[float]], list[float], np.ndarray]:
     """パーティクルフィルタでマップマッチング付き歩行軌跡を推定する。
 
@@ -71,6 +73,7 @@ def run_particle_filter(
         sigma_init_heading: 粒子ごとの初期方位ばらつき [rad]
         sigma_heading: ステップごとの方位角ノイズ [rad]
         sigma_sl_ratio: ステップ長ノイズの比率
+        weinberg_k: Weinbergモデルのスケール係数
 
     Returns:
         tuple: (加重平均軌跡の座標リスト, 各ステップの決定論的歩幅リスト,
@@ -88,10 +91,10 @@ def run_particle_filter(
 
     # 全パーティクルを原点で初期化（[x, y] の2次元状態）
     particles = np.zeros((n_particles, 2))
+    particle_paths = particles[:, None, :].copy()
     heading_bias = rng.normal(0, sigma_init_heading, n_particles)
     weights = np.ones(n_particles) / n_particles
 
-    mean_trajectory: list[list[float]] = [[0.0, 0.0]]
     step_lengths: list[float] = []
     all_particles_list: list[np.ndarray] = [particles.copy()]  # ステップ0（原点）
 
@@ -123,7 +126,7 @@ def run_particle_filter(
         if STEP_LENGTH_METHOD == "forward":
             sl_det = estimate_step_length_forward(df_acc, df_gyro, peaks, i, phi_0)
         else:
-            sl_det = estimate_step_length(df_acc, int(p))
+            sl_det = estimate_step_length(df_acc, int(p), k=weinberg_k)
 
         # 予測前の状態を保存（全壁レスキュー用）
         particles_before = particles.copy()
@@ -197,26 +200,24 @@ def run_particle_filter(
         else:
             weights /= total
 
-        # 通路パーティクルのみで加重平均を計算（壁パーティクルを mean に混入させない）
-        if in_corridor.any():
-            corridor_w = weights * in_corridor
-            corridor_w = corridor_w / corridor_w.sum()
-            mean_x = float(np.average(particles[:, 0], weights=corridor_w))
-            mean_y = float(np.average(particles[:, 1], weights=corridor_w))
-            mean_trajectory.append([mean_x, mean_y])
-        else:
-            # 通路パーティクルなし → 前ステップの位置を維持
-            mean_trajectory.append(list(mean_trajectory[-1]))
+        # 粒子ごとの履歴も状態として保持する。
+        # 現在位置だけを時系列で平均すると、生存クラスタの切り替わりで
+        # 軌跡が不連続に飛ぶ。
+        particle_paths = np.concatenate(
+            [particle_paths, particles[:, None, :]], axis=1
+        )
         step_lengths.append(sl_det)
 
         # 系統リサンプリング
         indices = _systematic_resample(weights, rng)
         particles = particles[indices]
+        particle_paths = particle_paths[indices]
         heading_bias = heading_bias[indices]
         weights[:] = 1.0 / n_particles
         all_particles_list.append(particles.copy())
 
     all_particles = np.stack(all_particles_list)  # shape: (T+1, N, 2)
+    mean_trajectory = particle_paths.mean(axis=0).tolist()
     return mean_trajectory, step_lengths, all_particles
 
 
