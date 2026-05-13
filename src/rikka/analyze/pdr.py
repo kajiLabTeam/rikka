@@ -22,9 +22,11 @@ from ..config import (
     SAMPLING_RATE,
     STEP_LENGTH_METHOD,
     STEP_LENGTH_WINDOW,
+    USER_HEIGHT_M,
     WEINBERG_K,
     WINDOW_ACC,
     WINDOW_GYRO,
+    compute_weinberg_k,
 )
 
 # Column name mappings from phyphox CSV format
@@ -86,7 +88,7 @@ def load_sensor_data(
 def process_sensor_data(
     df_acc: pd.DataFrame, df_gyro: pd.DataFrame
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """生センサーデータからノルム・重力推定・水平加速度・角度を計算する。
+    """生センサーデータからノルム・重力推定・上下/水平加速度・角度を計算する。
 
     加速度データには以下の列を追加する：
     - ``gx, gy, gz``: 各軸のLPFによる重力ベクトル推定値
@@ -234,8 +236,8 @@ def estimate_step_length(
     segment = df_acc["v_acc"].iloc[start:end].dropna()
     if segment.empty:
         return 0.0  # データ不足のステップは歩幅 0 として軌跡から実質除外
-    acc_max = float(segment.max())  # h_norm 最大値 [m/s²]（スイング頂点付近）
-    acc_min = float(segment.min())  # h_norm 最小値 [m/s²]（接地付近）
+    acc_max = float(segment.max())  # v_acc 最大値 [m/s²]（上向きバウンド付近）
+    acc_min = float(segment.min())  # v_acc 最小値 [m/s²]（下向きバウンド付近）
     return float(k * (acc_max - acc_min) ** 0.25)
 
 
@@ -342,6 +344,7 @@ def estimate_trajectory(
     df_gyro: pd.DataFrame,
     df_acc: pd.DataFrame,
     initial_direction: float = INITIAL_DIRECTION,
+    weinberg_k: float = WEINBERG_K,
 ) -> tuple[list[list[float]], list[float], list[float]]:
     """ステップピークとジャイロスコープ角度から2次元軌跡を推定する。
 
@@ -353,9 +356,11 @@ def estimate_trajectory(
     Args:
         peaks (np.ndarray): ステップピークのインデックス配列
         df_gyro (pd.DataFrame): ``low_angle`` 列を含むジャイロスコープDataFrame
-        df_acc (pd.DataFrame): ``h_y``・``h_z``・``h_norm`` 列を含む加速度DataFrame
+        df_acc (pd.DataFrame):
+            ``v_acc``・``h_y``・``h_z``・``h_norm`` 列を含む加速度DataFrame
         initial_direction (float): 歩行開始方向のオフセット [度]
             （デフォルト: ``INITIAL_DIRECTION``）
+        weinberg_k (float): Weinbergモデルのスケール係数
 
     Returns:
         tuple[list[list[float]], list[float], list[float]]:
@@ -396,7 +401,7 @@ def estimate_trajectory(
         if STEP_LENGTH_METHOD == "forward":
             step_length = estimate_step_length_forward(df_acc, df_gyro, peaks, i, phi_0)
         else:
-            step_length = estimate_step_length(df_acc, int(p))
+            step_length = estimate_step_length(df_acc, int(p), k=weinberg_k)
         step_lengths.append(step_length)
         t_p = (
             float(df_acc["t"].iloc[int(p)])
@@ -540,6 +545,7 @@ def run(
     origin_px: tuple[int, int] = FLOORMAP_ORIGIN_PX,
     scale: float = FLOORMAP_SCALE,
     initial_direction: float = INITIAL_DIRECTION,
+    height_m: float = USER_HEIGHT_M,
 ) -> pd.DataFrame:
     """PDRのメインパイプラインを実行する。
 
@@ -569,6 +575,8 @@ def run(
             1ピクセルあたりのメートル数。デフォルトは ``FLOORMAP_SCALE``。
         initial_direction (float):
             歩行開始方向のオフセット [度]。デフォルトは ``INITIAL_DIRECTION``。
+        height_m (float):
+            Weinbergモデルのスケール係数を補正するユーザー身長 [m]。
 
     Returns:
         pd.DataFrame: 軌跡データ（列: x, y）
@@ -591,6 +599,8 @@ def run(
 
     df_acc, df_gyro = process_sensor_data(df_acc, df_gyro)
     peaks = detect_steps(df_acc)
+    weinberg_k = compute_weinberg_k(height_m)
+    print(f"Weinberg K: {weinberg_k:.3f} (height={height_m:.2f} m)")
 
     # 重力成分の平均を算出（Y軸反転の自動判定に使用）
     gx_mean = float(df_acc["gx"].mean())
@@ -621,6 +631,7 @@ def run(
             origin_px=origin_px,
             scale=scale,
             initial_direction=initial_direction,
+            weinberg_k=weinberg_k,
         )
 
         print(f"Peaks detected: {len(peaks)}")
@@ -675,7 +686,7 @@ def run(
         )
     else:
         trajectory, step_lengths, t_at_steps = estimate_trajectory(
-            peaks, df_gyro, df_acc
+            peaks, df_gyro, df_acc, initial_direction, weinberg_k
         )
 
         print(f"Peaks detected: {len(peaks)}")
