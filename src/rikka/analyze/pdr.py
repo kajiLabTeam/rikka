@@ -672,7 +672,7 @@ def run(
             )
 
             plot_step_lengths(step_lengths, output_dir)
-            plot_step_vectors(trajectory, output_dir)
+            plot_step_vectors(trajectory, output_dir, df_acc=df_acc, peaks=peaks)
 
         save_particle_animation(
             all_particles,
@@ -741,6 +741,6 @@ def run(
                 t_acc=t_acc,
                 low_lin_norm=df_acc["low_lin_norm"].to_numpy(),
             )
-            plot_step_vectors(trajectory, output_dir)
+            plot_step_vectors(trajectory, output_dir, df_acc=df_acc, peaks=peaks)
 
     return df_trajectory

@@ -4,6 +4,8 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
+from numpy.typing import NDArray
 
 from ..config import DATA_DIR
 from .pdr import detect_steps, load_sensor_data, process_sensor_data
@@ -256,15 +258,76 @@ def plot_step_lengths(
     plt.show()
 
 
+def _get_step_acceleration_points(
+    df_acc: pd.DataFrame | None,
+    peaks: np.ndarray | None,
+    step_no: int,
+    window: int = 50,
+) -> NDArray[np.float64] | None:
+    """ステップに対応する水平加速度点群を返す。"""
+    if df_acc is None or peaks is None or len(peaks) == 0:
+        return None
+
+    accel_columns = (
+        ("h_y", "h_z") if {"h_y", "h_z"} <= set(df_acc.columns) else ("lin_y", "lin_z")
+    )
+    if not set(accel_columns) <= set(df_acc.columns):
+        return None
+
+    step_index = step_no - 1
+    if step_index >= len(peaks):
+        return None
+
+    peak = int(peaks[step_index])
+    if step_index + 1 < len(peaks):
+        start = peak
+        end = int(peaks[step_index + 1])
+    else:
+        start = max(0, peak - window)
+        end = min(len(df_acc), peak + window + 1)
+
+    if end <= start:
+        return None
+
+    points = np.asarray(
+        df_acc.iloc[start:end][list(accel_columns)].to_numpy(dtype=float),
+        dtype=np.float64,
+    )
+    points = points[np.isfinite(points).all(axis=1)]
+    if len(points) == 0:
+        return None
+    return points
+
+
+def _scale_acceleration_points(
+    points: NDArray[np.float64],
+    limit: float,
+) -> NDArray[np.float64] | None:
+    """加速度点群を変位ベクトル図へ重ねられる表示スケールに正規化する。"""
+    centered = points - np.median(points, axis=0)
+    scale = float(np.percentile(np.abs(centered), 95))
+    if scale <= 1e-12:
+        return None
+    return centered / scale * limit * 0.35
+
+
 def plot_step_vectors(
     trajectory: list[list[float]],
     output_dir: Path | None = None,
+    *,
+    df_acc: pd.DataFrame | None = None,
+    peaks: np.ndarray | None = None,
 ) -> None:
     """各ステップの変位ベクトルを個別画像として保存する。
+
+    ``df_acc`` と ``peaks`` が渡された場合は、同じステップ区間の水平加速度分布を
+    画像内に正規化して重ねる。
 
     Args:
         trajectory: 各ステップの [x, y] 座標リスト（原点を含む）
         output_dir: PNG 保存先ディレクトリ（None なら保存しない）
+        df_acc: 処理済み加速度DataFrame
+        peaks: ステップピークのインデックス配列
     """
     points = np.asarray(trajectory, dtype=float)
     if len(points) < 2:
@@ -297,6 +360,12 @@ def plot_step_vectors(
         original_step_numbers, vectors, lengths, colors, strict=True
     ):
         heading = float(np.degrees(np.arctan2(dy, dx)))
+        accel_points = _get_step_acceleration_points(df_acc, peaks, int(step_no))
+        scaled_accel_points = (
+            _scale_acceleration_points(accel_points, limit)
+            if accel_points is not None
+            else None
+        )
 
         fig, ax = plt.subplots(figsize=(6, 6))
         ax.set_aspect("equal", adjustable="box")
@@ -310,6 +379,16 @@ def plot_step_vectors(
         ax.grid(which="minor", color="0.9", linestyle="--", linewidth=0.8)
         ax.axhline(0, color="0.35", linewidth=1.0)
         ax.axvline(0, color="0.35", linewidth=1.0)
+        if scaled_accel_points is not None:
+            ax.scatter(
+                scaled_accel_points[:, 0],
+                scaled_accel_points[:, 1],
+                color="darkorange",
+                s=14,
+                alpha=0.28,
+                zorder=1,
+                label="accel distribution (scaled)",
+            )
         ax.plot([0.0, dx], [0.0, dy], color=color, linewidth=3.0, alpha=0.9)
         ax.scatter(0.0, 0.0, color="0.2", s=28, zorder=3, label="start")
         ax.scatter(dx, dy, color=color, s=40, zorder=3, label="end")
