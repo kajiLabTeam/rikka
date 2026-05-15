@@ -26,19 +26,32 @@ from ..config import (
 from .pdr import (
     _compute_pixel_coords,
     _estimate_initial_forward_angle,
+    _sample_gyro_angle,
+    _step_mid_index,
+    _step_mid_time,
     estimate_step_length,
     estimate_step_length_forward,
 )
 
 
-def _systematic_resample(
-    weights: np.ndarray, rng: np.random.Generator
-) -> np.ndarray:
+def _systematic_resample(weights: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     """系統リサンプリングでインデックス配列を返す。O(N)・分散最小。"""
     n = len(weights)
     positions = (np.arange(n) + rng.uniform(0, 1)) / n
     cumsum = np.cumsum(weights)
     return np.searchsorted(cumsum, positions)
+
+
+def _normalize_floormap_gray(map_raw: np.ndarray) -> np.ndarray:
+    """フロアマップ画像を 0..255 のグレースケール配列に正規化する。"""
+    map_arr: np.ndarray = np.asarray(map_raw, dtype=float)
+    if map_arr.ndim == 3:
+        map_arr = np.mean(map_arr[:, :, :3], axis=2)
+    if map_arr.size == 0:
+        return map_arr
+    if float(np.nanmax(map_arr)) <= 1.0:
+        map_arr = map_arr * 255.0
+    return np.asarray(np.clip(map_arr, 0.0, 255.0), dtype=float)
 
 
 def run_particle_filter(
@@ -82,11 +95,7 @@ def run_particle_filter(
     rng = np.random.default_rng()
 
     # フロアマップをグレースケールで読み込み
-    map_raw = plt.imread(Path(floormap_path))
-    if map_raw.ndim == 3:
-        map_gray = np.mean(map_raw[:, :, :3], axis=2) * 255.0
-    else:
-        map_gray = map_raw * 255.0
+    map_gray = _normalize_floormap_gray(plt.imread(Path(floormap_path)))
     map_h, map_w = map_gray.shape
 
     # 全パーティクルを原点で初期化（[x, y] の2次元状態）
@@ -98,7 +107,6 @@ def run_particle_filter(
     step_lengths: list[float] = []
     all_particles_list: list[np.ndarray] = [particles.copy()]  # ステップ0（原点）
 
-    low_angle = df_gyro["low_angle"]
     direction_offset = float(np.deg2rad(initial_direction))
 
     phi_0 = (
@@ -108,20 +116,21 @@ def run_particle_filter(
     )
 
     for i, p in enumerate(peaks):
-        if p >= len(low_angle):
+        if p >= len(df_acc):
             continue
         if STEP_LENGTH_METHOD == "forward" and i + 1 >= len(peaks):
             continue
 
         # estimate_trajectory と同一のサンプリングインデックス計算
-        if i + 1 < len(peaks) and peaks[i + 1] < len(low_angle):
-            mid_idx = (int(p) + int(peaks[i + 1])) // 2
-        else:
-            mid_idx = int(p)
-
-        angle_det = low_angle.iloc[mid_idx] + direction_offset
-        if np.isnan(angle_det):
+        mid_idx = _step_mid_index(peaks, i)
+        angle_at_mid = _sample_gyro_angle(
+            df_gyro,
+            sample_index=mid_idx,
+            sample_time=_step_mid_time(df_acc, peaks, i),
+        )
+        if angle_at_mid is None:
             continue
+        angle_det = angle_at_mid + direction_offset
 
         if STEP_LENGTH_METHOD == "forward":
             sl_det = estimate_step_length_forward(df_acc, df_gyro, peaks, i, phi_0)
@@ -179,9 +188,7 @@ def run_particle_filter(
             # レスキュー：予測前の位置から3倍のノイズで再試行
             particles = particles_before.copy()
             theta_r = (
-                angle_det
-                + heading_bias
-                + rng.normal(0, sigma_heading * 3, n_particles)
+                angle_det + heading_bias + rng.normal(0, sigma_heading * 3, n_particles)
             )
             sl_r = np.clip(
                 sl_det * (1 + rng.normal(0, sigma_sl_ratio * 3, n_particles)), 0, None
@@ -203,9 +210,7 @@ def run_particle_filter(
         # 粒子ごとの履歴も状態として保持する。
         # 現在位置だけを時系列で平均すると、生存クラスタの切り替わりで
         # 軌跡が不連続に飛ぶ。
-        particle_paths = np.concatenate(
-            [particle_paths, particles[:, None, :]], axis=1
-        )
+        particle_paths = np.concatenate([particle_paths, particles[:, None, :]], axis=1)
         step_lengths.append(sl_det)
 
         # 系統リサンプリング
