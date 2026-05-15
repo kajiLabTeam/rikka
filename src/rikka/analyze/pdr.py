@@ -22,9 +22,11 @@ from ..config import (
     SAMPLING_RATE,
     STEP_LENGTH_METHOD,
     STEP_LENGTH_WINDOW,
+    USER_HEIGHT_M,
     WEINBERG_K,
     WINDOW_ACC,
     WINDOW_GYRO,
+    compute_weinberg_k,
 )
 
 # Column name mappings from phyphox CSV format
@@ -83,18 +85,112 @@ def load_sensor_data(
     return df_acc, df_gyro
 
 
+def _time_values(df: pd.DataFrame) -> np.ndarray | None:
+    """単調増加する時刻配列を返す。利用できない場合は None を返す。"""
+    if "t" not in df.columns:
+        return None
+    times = np.asarray(pd.to_numeric(df["t"], errors="coerce"), dtype=float)
+    if len(times) == 0 or not np.isfinite(times).all():
+        return None
+    if len(times) > 1 and not np.all(np.diff(times) > 0):
+        return None
+    return times
+
+
+def _gyro_integration_dt(df_gyro: pd.DataFrame) -> np.ndarray:
+    """ジャイロ積分用のサンプル間隔を返す。時刻列がなければ固定周期を使う。"""
+    times = _time_values(df_gyro)
+    if times is None or len(times) < 2:
+        return np.full(len(df_gyro), 1.0 / SAMPLING_RATE)
+
+    dt = np.diff(times, prepend=times[0])
+    dt[0] = 0.0
+    return dt
+
+
+def _time_at_index(df: pd.DataFrame, index: int) -> float:
+    """DataFrame の index 位置に対応する時刻を返す。"""
+    times = _time_values(df)
+    if times is None:
+        return index / SAMPLING_RATE
+    clipped_index = min(max(index, 0), len(times) - 1)
+    return float(times[clipped_index])
+
+
+def _step_mid_index(peaks: np.ndarray, i: int) -> int:
+    """現在ステップの方位サンプリングに使う中点 index を返す。"""
+    start = int(peaks[i])
+    if i + 1 < len(peaks):
+        return (start + int(peaks[i + 1])) // 2
+    return start
+
+
+def _step_mid_time(df_acc: pd.DataFrame, peaks: np.ndarray, i: int) -> float:
+    """現在ステップの方位サンプリングに使う中点時刻を返す。"""
+    start = int(peaks[i])
+    if i + 1 < len(peaks):
+        end = int(peaks[i + 1])
+        return (_time_at_index(df_acc, start) + _time_at_index(df_acc, end)) / 2
+    return _time_at_index(df_acc, start)
+
+
+def _sample_gyro_angle(
+    df_gyro: pd.DataFrame,
+    sample_index: int,
+    sample_time: float | None = None,
+) -> float | None:
+    """指定時刻の low_angle を補間して返す。時刻列がなければ index で取得する。"""
+    low_angle = df_gyro["low_angle"].to_numpy(dtype=float)
+    if sample_time is not None:
+        times = _time_values(df_gyro)
+        if times is not None:
+            valid = np.isfinite(low_angle)
+            if valid.any():
+                return float(np.interp(sample_time, times[valid], low_angle[valid]))
+
+    if len(low_angle) == 0:
+        return None
+    clipped_index = min(max(sample_index, 0), len(low_angle) - 1)
+    angle = float(low_angle[clipped_index])
+    if not np.isfinite(angle):
+        return None
+    return angle
+
+
+def _create_output_dir(
+    base_dir: str | Path = "output",
+    now: datetime | None = None,
+) -> Path:
+    """衝突しないタイムスタンプ付き出力ディレクトリを作成して返す。"""
+    current = now if now is not None else datetime.now()
+    timestamp = current.strftime("%Y%m%d_%H%M%S_%f")
+    base_path = Path(base_dir)
+
+    for counter in range(1000):
+        suffix = "" if counter == 0 else f"_{counter:03d}"
+        output_dir = base_path / f"{timestamp}{suffix}"
+        try:
+            output_dir.mkdir(parents=True, exist_ok=False)
+        except FileExistsError:
+            continue
+        return output_dir
+
+    raise FileExistsError(f"出力ディレクトリ名が衝突しました: {base_path / timestamp}")
+
+
 def process_sensor_data(
     df_acc: pd.DataFrame, df_gyro: pd.DataFrame
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """生センサーデータからノルム・重力推定・水平加速度・角度を計算する。
+    """生センサーデータからノルム・重力推定・上下/水平加速度・角度を計算する。
 
     加速度データには以下の列を追加する：
     - ``gx, gy, gz``: 各軸のLPFによる重力ベクトル推定値
     - ``lin_x, lin_y, lin_z``: ベクトル減算による線形加速度
     - ``lin_norm``: 線形加速度ノルム
     - ``low_lin_norm``: 平滑化線形加速度ノルム（ステップ検出用）
+    - ``v_acc``: 重力方向へ射影した上下加速度成分（Weinberg歩幅推定用）
     - ``h_x, h_y, h_z``: 重力方向を射影除去した水平加速度成分
-    - ``h_norm``: 水平加速度ノルム（歩幅推定用）
+    - ``h_norm``: 水平加速度ノルム（forward歩幅推定用）
 
     ジャイロスコープデータには積算角度（``angle``）・
     移動平均角度（``low_angle``）を追加する。
@@ -109,8 +205,8 @@ def process_sensor_data(
             - df_gyro:
             ``angle``（積算角度）・``low_angle``（平滑化角度）を追加したジャイロDataFrame
     """
-    df_acc = df_acc.copy()
-    df_gyro = df_gyro.copy()
+    df_acc = df_acc.copy().reset_index(drop=True)
+    df_gyro = df_gyro.copy().reset_index(drop=True)
 
     # 3軸それぞれにLPFをかけて重力ベクトルを推定（スカラーノルムではなくベクトルで推定）
     # center=True で対称ウィンドウを使用し、位相遅れなく重力方向を推定する
@@ -142,17 +238,20 @@ def process_sensor_data(
     df_acc["gy_hat"] = df_acc["gy"] / g_norm
     df_acc["gz_hat"] = df_acc["gz"] / g_norm
 
-    # 水平加速度: a_h = a_lin − (a_lin · ĝ) ĝ（重力方向成分を射影で除去）
-    # dot = a_lin · ĝ：線形加速度の重力方向成分（スカラー）
+    # 上下加速度: a_v = a_lin · ĝ（重力方向への符号付き射影）
+    # Weinbergモデルは上下方向の振幅を使うため、この値を歩幅推定に使用する
     dot = (
         df_acc["lin_x"] * df_acc["gx_hat"]
         + df_acc["lin_y"] * df_acc["gy_hat"]
         + df_acc["lin_z"] * df_acc["gz_hat"]
     )
+    df_acc["v_acc"] = dot
+
+    # 水平加速度: a_h = a_lin − (a_lin · ĝ) ĝ（重力方向成分を射影で除去）
     df_acc["h_x"] = df_acc["lin_x"] - dot * df_acc["gx_hat"]
     df_acc["h_y"] = df_acc["lin_y"] - dot * df_acc["gy_hat"]
     df_acc["h_z"] = df_acc["lin_z"] - dot * df_acc["gz_hat"]
-    # 水平加速度ノルム: 端末傾斜に依らない歩行動作の強度指標 [m/s²]（歩幅推定に使用）
+    # 水平加速度ノルム: forward手法で前進方向へ射影するための姿勢非依存な水平成分
     df_acc["h_norm"] = np.sqrt(
         df_acc["h_x"] ** 2 + df_acc["h_y"] ** 2 + df_acc["h_z"] ** 2
     )
@@ -171,7 +270,8 @@ def process_sensor_data(
         # データ長が WINDOW_GYRO 未満で全 NaN になる場合
         # 全サンプルの平均をフォールバックとして使用
         gyro_bias = float(df_gyro["x"].mean())
-    df_gyro["angle"] = np.cumsum(df_gyro["x"] - gyro_bias) / SAMPLING_RATE
+    gyro_rate = (df_gyro["x"] - gyro_bias).to_numpy(dtype=float)
+    df_gyro["angle"] = np.cumsum(gyro_rate * _gyro_integration_dt(df_gyro))
     df_gyro["low_angle"] = (
         df_gyro["angle"].rolling(window=WINDOW_GYRO, center=True, min_periods=1).mean()
     )
@@ -208,13 +308,14 @@ def estimate_step_length(
     """Weinberg モデルによる単一ステップの歩幅推定。
 
     ピークインデックスの前後 ``window`` サンプルの範囲内で
-    水平加速度ノルム（``h_norm``）の最大値・最小値を求め，
+    上下加速度成分（``v_acc``）の最大値・最小値を求め，
     Weinberg 式で歩幅を計算する。
-    端末傾斜に対してロバストな水平成分を使用することで推定精度を向上させる。
+    重力方向へ射影した符号付き成分を使うことで、Weinbergモデルの前提である
+    歩行中の上下バウンド振幅を反映する。
     ウィンドウがデータ範囲外にかかる場合はクリッピングする。
 
     Args:
-        df_acc (pd.DataFrame): ``h_norm`` 列を含む加速度DataFrame
+        df_acc (pd.DataFrame): ``v_acc`` 列を含む加速度DataFrame
         peak_index (int): ステップピークのインデックス
         window (int): ピーク前後のサンプル数
         k (float): Weinberg モデルのスケール係数
@@ -225,12 +326,12 @@ def estimate_step_length(
     n = len(df_acc)
     start = max(0, peak_index - window)
     end = min(n, peak_index + window + 1)
-    # ウィンドウ内の水平加速度ノルム（NaN除去済み）
-    segment = df_acc["h_norm"].iloc[start:end].dropna()
+    # ウィンドウ内の上下加速度成分（NaN除去済み）
+    segment = df_acc["v_acc"].iloc[start:end].dropna()
     if segment.empty:
         return 0.0  # データ不足のステップは歩幅 0 として軌跡から実質除外
-    acc_max = float(segment.max())  # h_norm 最大値 [m/s²]（スイング頂点付近）
-    acc_min = float(segment.min())  # h_norm 最小値 [m/s²]（接地付近）
+    acc_max = float(segment.max())  # v_acc 最大値 [m/s²]（上向きバウンド付近）
+    acc_min = float(segment.min())  # v_acc 最小値 [m/s²]（下向きバウンド付近）
     return float(k * (acc_max - acc_min) ** 0.25)
 
 
@@ -269,8 +370,15 @@ def _estimate_initial_forward_angle(
         if np.hypot(dy, dz) < 1e-4:
             continue
         # センサー座標系の角度 = 変位方向 − その時点での yaw 角
-        mid_idx = min((start + end) // 2, len(df_gyro["low_angle"]) - 1)
-        angle_at_mid = float(df_gyro["low_angle"].iloc[mid_idx])
+        mid_idx = (start + end) // 2
+        mid_time = (_time_at_index(df_acc, start) + _time_at_index(df_acc, end)) / 2
+        angle_at_mid = _sample_gyro_angle(
+            df_gyro,
+            sample_index=mid_idx,
+            sample_time=mid_time,
+        )
+        if angle_at_mid is None:
+            continue
         sensor_angle = np.arctan2(dz, dy) - angle_at_mid
         sin_sum += np.sin(sensor_angle)
         cos_sum += np.cos(sensor_angle)
@@ -312,8 +420,16 @@ def estimate_step_length_forward(
         return 0.0
 
     # このステップ中点での前進方向角
-    mid_idx = min((start + end) // 2, len(df_gyro["low_angle"]) - 1)
-    angle = float(df_gyro["low_angle"].iloc[mid_idx]) + phi_0
+    mid_idx = (start + end) // 2
+    mid_time = (_time_at_index(df_acc, start) + _time_at_index(df_acc, end)) / 2
+    angle_at_mid = _sample_gyro_angle(
+        df_gyro,
+        sample_index=mid_idx,
+        sample_time=mid_time,
+    )
+    if angle_at_mid is None:
+        return 0.0
+    angle = angle_at_mid + phi_0
 
     # 前進方向加速度（符号付き）= h_y・h_z をヨー角で射影
     h_y = df_acc["h_y"].iloc[start:end].to_numpy()
@@ -337,6 +453,7 @@ def estimate_trajectory(
     df_gyro: pd.DataFrame,
     df_acc: pd.DataFrame,
     initial_direction: float = INITIAL_DIRECTION,
+    weinberg_k: float = WEINBERG_K,
 ) -> tuple[list[list[float]], list[float], list[float]]:
     """ステップピークとジャイロスコープ角度から2次元軌跡を推定する。
 
@@ -348,9 +465,11 @@ def estimate_trajectory(
     Args:
         peaks (np.ndarray): ステップピークのインデックス配列
         df_gyro (pd.DataFrame): ``low_angle`` 列を含むジャイロスコープDataFrame
-        df_acc (pd.DataFrame): ``h_y``・``h_z``・``h_norm`` 列を含む加速度DataFrame
+        df_acc (pd.DataFrame):
+            ``v_acc``・``h_y``・``h_z``・``h_norm`` 列を含む加速度DataFrame
         initial_direction (float): 歩行開始方向のオフセット [度]
             （デフォルト: ``INITIAL_DIRECTION``）
+        weinberg_k (float): Weinbergモデルのスケール係数
 
     Returns:
         tuple[list[list[float]], list[float], list[float]]:
@@ -361,7 +480,6 @@ def estimate_trajectory(
     points: list[list[float]] = [[0.0, 0.0]]
     step_lengths: list[float] = []
     t_at_steps: list[float] = []
-    low_angle = df_gyro["low_angle"]
     # 度 → ラジアン変換してオフセットとして使用
     direction_offset = float(np.deg2rad(initial_direction))
 
@@ -373,31 +491,29 @@ def estimate_trajectory(
     )
 
     for i, p in enumerate(peaks):
-        if p >= len(low_angle):
+        if p >= len(df_acc):
             continue
         if STEP_LENGTH_METHOD == "forward" and i + 1 >= len(peaks):
             continue  # 次ピークなし：区間定義不可のためスキップ
         # 次のピークとの中点（swing 中盤）でサンプリング
         # 着地衝撃によるジャイロ揺らぎを避け、安定した進行方向角を得るため
-        if i + 1 < len(peaks) and peaks[i + 1] < len(low_angle):
-            mid_idx = (int(p) + int(peaks[i + 1])) // 2
-        else:
-            mid_idx = int(p)
-        angle = low_angle.iloc[mid_idx] + direction_offset
-        if np.isnan(angle):
+        mid_idx = _step_mid_index(peaks, i)
+        angle_at_mid = _sample_gyro_angle(
+            df_gyro,
+            sample_index=mid_idx,
+            sample_time=_step_mid_time(df_acc, peaks, i),
+        )
+        if angle_at_mid is None:
             # NaN のステップを軌跡から除外して伝播を防ぐ
             # rolling 端部でデータ不足の場合に発生
             continue
+        angle = angle_at_mid + direction_offset
         if STEP_LENGTH_METHOD == "forward":
             step_length = estimate_step_length_forward(df_acc, df_gyro, peaks, i, phi_0)
         else:
-            step_length = estimate_step_length(df_acc, int(p))
+            step_length = estimate_step_length(df_acc, int(p), k=weinberg_k)
         step_lengths.append(step_length)
-        t_p = (
-            float(df_acc["t"].iloc[int(p)])
-            if "t" in df_acc.columns
-            else int(p) / SAMPLING_RATE
-        )
+        t_p = _time_at_index(df_acc, int(p))
         t_at_steps.append(t_p)
         x = points[-1][0] + step_length * float(np.cos(angle))
         y = points[-1][1] + step_length * float(np.sin(angle))
@@ -531,10 +647,12 @@ def run(
     df_gyro: pd.DataFrame | None = None,
     plot: bool = True,
     use_particle_filter: bool = False,
+    save_animation: bool | None = None,
     floormap_path: str | Path = FLOORMAP_PATH,
     origin_px: tuple[int, int] = FLOORMAP_ORIGIN_PX,
     scale: float = FLOORMAP_SCALE,
     initial_direction: float = INITIAL_DIRECTION,
+    height_m: float = USER_HEIGHT_M,
 ) -> pd.DataFrame:
     """PDRのメインパイプラインを実行する。
 
@@ -556,6 +674,9 @@ def run(
         use_particle_filter (bool):
             ``True`` のときパーティクルフィルタで軌跡を推定する。
             デフォルトは ``False``。
+        save_animation (bool | None):
+            パーティクルフィルタのアニメーション保存を制御する。
+            ``None`` のときは ``plot`` と同じ値を使う。
         floormap_path (str | Path):
             フロアマップ画像のパス。デフォルトは ``FLOORMAP_PATH``。
         origin_px (tuple[int, int]):
@@ -564,6 +685,8 @@ def run(
             1ピクセルあたりのメートル数。デフォルトは ``FLOORMAP_SCALE``。
         initial_direction (float):
             歩行開始方向のオフセット [度]。デフォルトは ``INITIAL_DIRECTION``。
+        height_m (float):
+            Weinbergモデルのスケール係数を補正するユーザー身長 [m]。
 
     Returns:
         pd.DataFrame: 軌跡データ（列: x, y）
@@ -571,9 +694,8 @@ def run(
     Raises:
         ValueError: ``df_acc`` と ``df_gyro`` の片方だけが渡された場合
     """
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = Path("output") / timestamp
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = _create_output_dir()
+    should_save_animation = plot if save_animation is None else save_animation
 
     if (df_acc is None) != (df_gyro is None):
         raise ValueError("df_acc と df_gyro は両方渡すか、両方省略してください。")
@@ -586,6 +708,8 @@ def run(
 
     df_acc, df_gyro = process_sensor_data(df_acc, df_gyro)
     peaks = detect_steps(df_acc)
+    weinberg_k = compute_weinberg_k(height_m)
+    print(f"Weinberg K: {weinberg_k:.3f} (height={height_m:.2f} m)")
 
     # 重力成分の平均を算出（Y軸反転の自動判定に使用）
     gx_mean = float(df_acc["gx"].mean())
@@ -616,6 +740,7 @@ def run(
             origin_px=origin_px,
             scale=scale,
             initial_direction=initial_direction,
+            weinberg_k=weinberg_k,
         )
 
         print(f"Peaks detected: {len(peaks)}")
@@ -656,21 +781,22 @@ def run(
             )
 
             plot_step_lengths(step_lengths, output_dir)
-            plot_step_vectors(trajectory, output_dir)
+            plot_step_vectors(trajectory, output_dir, df_acc=df_acc, peaks=peaks)
 
-        save_particle_animation(
-            all_particles,
-            trajectory,
-            gx_mean=gx_mean,
-            gz_mean=gz_mean,
-            floormap_path=floormap_path,
-            origin_px=origin_px,
-            scale=scale,
-            output_path=output_dir / "particle_filter.mp4",
-        )
+        if should_save_animation:
+            save_particle_animation(
+                all_particles,
+                trajectory,
+                gx_mean=gx_mean,
+                gz_mean=gz_mean,
+                floormap_path=floormap_path,
+                origin_px=origin_px,
+                scale=scale,
+                output_path=output_dir / "particle_filter.mp4",
+            )
     else:
         trajectory, step_lengths, t_at_steps = estimate_trajectory(
-            peaks, df_gyro, df_acc
+            peaks, df_gyro, df_acc, initial_direction, weinberg_k
         )
 
         print(f"Peaks detected: {len(peaks)}")
@@ -725,6 +851,6 @@ def run(
                 t_acc=t_acc,
                 low_lin_norm=df_acc["low_lin_norm"].to_numpy(),
             )
-            plot_step_vectors(trajectory, output_dir)
+            plot_step_vectors(trajectory, output_dir, df_acc=df_acc, peaks=peaks)
 
     return df_trajectory

@@ -6,6 +6,7 @@ from .config import (
     FLOORMAP_PATH,
     FLOORMAP_SCALE,
     INITIAL_DIRECTION,
+    USER_HEIGHT_M,
 )
 from .ping import ping as ping
 
@@ -14,6 +15,7 @@ _FLOORMAP_DEFAULT = FLOORMAP_PATH
 _ORIGIN_DEFAULT = FLOORMAP_ORIGIN_PX
 _SCALE_DEFAULT = FLOORMAP_SCALE
 _DIRECTION_DEFAULT = INITIAL_DIRECTION
+_HEIGHT_DEFAULT = USER_HEIGHT_M
 
 
 def _common_options(f: click.decorators.FC) -> click.decorators.FC:
@@ -27,6 +29,13 @@ def _common_options(f: click.decorators.FC) -> click.decorators.FC:
         default=_DIRECTION_DEFAULT,
         show_default=True,
         help="歩行開始方向のオフセット [度]",
+    )(f)
+    f = click.option(
+        "--height-m",
+        type=float,
+        default=_HEIGHT_DEFAULT,
+        show_default=True,
+        help="歩幅推定に使うユーザー身長 [m]",
     )(f)
     f = click.option(
         "--scale",
@@ -73,6 +82,7 @@ def _run_pdr(
     origin_px: tuple[int, int],
     scale: float,
     direction: float,
+    height_m: float,
     no_plot: bool,
 ) -> None:
     from .analyze.pdr import load_sensor_data  # noqa: PLC0415
@@ -88,6 +98,7 @@ def _run_pdr(
         origin_px=origin_px,
         scale=scale,
         initial_direction=direction,
+        height_m=height_m,
     )
 
 
@@ -99,10 +110,11 @@ def run(
     origin_px: tuple[int, int],
     scale: float,
     direction: float,
+    height_m: float,
     no_plot: bool,
 ) -> None:
     """決定論的 PDR で歩行軌跡を推定する。"""
-    _run_pdr(data_dir, floormap, origin_px, scale, direction, no_plot)
+    _run_pdr(data_dir, floormap, origin_px, scale, direction, height_m, no_plot)
 
 
 @cli.command()
@@ -113,13 +125,20 @@ def pdr(
     origin_px: tuple[int, int],
     scale: float,
     direction: float,
+    height_m: float,
     no_plot: bool,
 ) -> None:
     """決定論的 PDR で歩行軌跡を推定する（run の別名）。"""
-    _run_pdr(data_dir, floormap, origin_px, scale, direction, no_plot)
+    _run_pdr(data_dir, floormap, origin_px, scale, direction, height_m, no_plot)
 
 
 @cli.command()
+@click.option(
+    "--save-animation",
+    is_flag=True,
+    default=False,
+    help="--no-plot 指定時もパーティクルフィルタのアニメーションを保存",
+)
 @_common_options
 def particle(
     data_dir: str,
@@ -127,7 +146,9 @@ def particle(
     origin_px: tuple[int, int],
     scale: float,
     direction: float,
+    height_m: float,
     no_plot: bool,
+    save_animation: bool,
 ) -> None:
     """パーティクルフィルタ + マップマッチングで歩行軌跡を推定する。"""
     from .analyze.pdr import load_sensor_data  # noqa: PLC0415
@@ -138,11 +159,13 @@ def particle(
         df_acc=df_acc,
         df_gyro=df_gyro,
         plot=not no_plot,
+        save_animation=True if save_animation else None,
         use_particle_filter=True,
         floormap_path=floormap,
         origin_px=origin_px,
         scale=scale,
         initial_direction=direction,
+        height_m=height_m,
     )
 
 

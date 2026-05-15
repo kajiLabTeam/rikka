@@ -4,6 +4,9 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
+from matplotlib.axes import Axes
+from numpy.typing import NDArray
 
 from ..config import DATA_DIR
 from .pdr import detect_steps, load_sensor_data, process_sensor_data
@@ -256,15 +259,107 @@ def plot_step_lengths(
     plt.show()
 
 
+def _get_step_acceleration_points(
+    df_acc: pd.DataFrame | None,
+    peaks: np.ndarray | None,
+    step_no: int,
+    window: int = 50,
+) -> NDArray[np.float64] | None:
+    """ステップに対応する水平加速度点群を返す。"""
+    if df_acc is None or peaks is None or len(peaks) == 0:
+        return None
+
+    accel_columns = (
+        ("h_y", "h_z") if {"h_y", "h_z"} <= set(df_acc.columns) else ("lin_y", "lin_z")
+    )
+    if not set(accel_columns) <= set(df_acc.columns):
+        return None
+
+    step_index = step_no - 1
+    if step_index >= len(peaks):
+        return None
+
+    peak = int(peaks[step_index])
+    if step_index + 1 < len(peaks):
+        start = peak
+        end = int(peaks[step_index + 1])
+    else:
+        start = max(0, peak - window)
+        end = min(len(df_acc), peak + window + 1)
+
+    if end <= start:
+        return None
+
+    points = np.asarray(
+        df_acc.iloc[start:end][list(accel_columns)].to_numpy(dtype=float),
+        dtype=np.float64,
+    )
+    points = points[np.isfinite(points).all(axis=1)]
+    if len(points) == 0:
+        return None
+    return points
+
+
+def _project_acceleration_to_step_axes(
+    points: NDArray[np.float64],
+    dx: float,
+    dy: float,
+) -> NDArray[np.float64] | None:
+    """水平加速度をステップの進行方向・横方向へ射影する。"""
+    length = float(np.hypot(dx, dy))
+    if length <= 1e-12:
+        return None
+
+    forward_axis = np.array([dx / length, dy / length], dtype=np.float64)
+    lateral_axis = np.array([-forward_axis[1], forward_axis[0]], dtype=np.float64)
+    forward_acc = points @ forward_axis
+    lateral_acc = points @ lateral_axis
+    return np.column_stack([forward_acc, lateral_acc])
+
+
+def _plot_no_acceleration_data(ax: Axes) -> None:
+    """加速度データがない場合のプレースホルダーを描画する。"""
+    ax.text(
+        0.5,
+        0.5,
+        "No acceleration data",
+        transform=ax.transAxes,
+        ha="center",
+        va="center",
+        color="0.45",
+        fontsize=10,
+    )
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+
+def _set_symmetric_accel_limits(ax: Axes, projected_accel: NDArray[np.float64]) -> None:
+    """加速度分布を読みやすくするため、外れ値に強い対称軸範囲を設定する。"""
+    limit = float(np.percentile(np.abs(projected_accel), 98))
+    if limit <= 1e-12:
+        limit = 1.0
+    limit = max(1.0, np.ceil(limit * 2) / 2)
+    ax.set_xlim(-limit, limit)
+    ax.set_ylim(-limit, limit)
+
+
 def plot_step_vectors(
     trajectory: list[list[float]],
     output_dir: Path | None = None,
+    *,
+    df_acc: pd.DataFrame | None = None,
+    peaks: np.ndarray | None = None,
 ) -> None:
     """各ステップの変位ベクトルを個別画像として保存する。
+
+    ``df_acc`` と ``peaks`` が渡された場合は、同じステップ区間の水平加速度を
+    進行方向・横方向へ射影し、時系列と2D分布を併せて描画する。
 
     Args:
         trajectory: 各ステップの [x, y] 座標リスト（原点を含む）
         output_dir: PNG 保存先ディレクトリ（None なら保存しない）
+        df_acc: 処理済み加速度DataFrame
+        peaks: ステップピークのインデックス配列
     """
     points = np.asarray(trajectory, dtype=float)
     if len(points) < 2:
@@ -297,23 +392,34 @@ def plot_step_vectors(
         original_step_numbers, vectors, lengths, colors, strict=True
     ):
         heading = float(np.degrees(np.arctan2(dy, dx)))
+        accel_points = _get_step_acceleration_points(df_acc, peaks, int(step_no))
+        projected_accel = (
+            _project_acceleration_to_step_axes(accel_points, float(dx), float(dy))
+            if accel_points is not None
+            else None
+        )
 
-        fig, ax = plt.subplots(figsize=(6, 6))
-        ax.set_aspect("equal", adjustable="box")
-        ax.set_xlim(-limit, limit)
-        ax.set_ylim(-limit, limit)
-        ax.set_xticks(major_ticks)
-        ax.set_yticks(major_ticks)
-        ax.set_xticks(minor_ticks, minor=True)
-        ax.set_yticks(minor_ticks, minor=True)
-        ax.grid(which="major", color="0.82", linestyle="--", linewidth=1.0)
-        ax.grid(which="minor", color="0.9", linestyle="--", linewidth=0.8)
-        ax.axhline(0, color="0.35", linewidth=1.0)
-        ax.axvline(0, color="0.35", linewidth=1.0)
-        ax.plot([0.0, dx], [0.0, dy], color=color, linewidth=3.0, alpha=0.9)
-        ax.scatter(0.0, 0.0, color="0.2", s=28, zorder=3, label="start")
-        ax.scatter(dx, dy, color=color, s=40, zorder=3, label="end")
-        ax.annotate(
+        fig = plt.figure(figsize=(12, 6), constrained_layout=True)
+        gs = fig.add_gridspec(2, 2, width_ratios=[1.15, 1.0])
+        ax_vector = fig.add_subplot(gs[:, 0])
+        ax_timeseries = fig.add_subplot(gs[0, 1])
+        ax_distribution = fig.add_subplot(gs[1, 1])
+
+        ax_vector.set_aspect("equal", adjustable="box")
+        ax_vector.set_xlim(-limit, limit)
+        ax_vector.set_ylim(-limit, limit)
+        ax_vector.set_xticks(major_ticks)
+        ax_vector.set_yticks(major_ticks)
+        ax_vector.set_xticks(minor_ticks, minor=True)
+        ax_vector.set_yticks(minor_ticks, minor=True)
+        ax_vector.grid(which="major", color="0.82", linestyle="--", linewidth=1.0)
+        ax_vector.grid(which="minor", color="0.9", linestyle="--", linewidth=0.8)
+        ax_vector.axhline(0, color="0.35", linewidth=1.0)
+        ax_vector.axvline(0, color="0.35", linewidth=1.0)
+        ax_vector.plot([0.0, dx], [0.0, dy], color=color, linewidth=3.0, alpha=0.9)
+        ax_vector.scatter(0.0, 0.0, color="0.2", s=28, zorder=3, label="start")
+        ax_vector.scatter(dx, dy, color=color, s=40, zorder=3, label="end")
+        ax_vector.annotate(
             "",
             xy=(dx, dy),
             xytext=(dx * 0.82, dy * 0.82),
@@ -325,25 +431,96 @@ def plot_step_vectors(
                 "shrinkB": 0,
             },
         )
-        ax.text(
+        ax_vector.text(
             0.98,
             0.97,
             f"dx={dx:.3f} m\n"
             f"dy={dy:.3f} m\n"
             f"length={length:.3f} m\n"
             f"heading={heading:.1f}°",
-            transform=ax.transAxes,
+            transform=ax_vector.transAxes,
             fontsize=10,
             verticalalignment="top",
             horizontalalignment="right",
             bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.75},
         )
-        ax.set_xlabel("dx [m]")
-        ax.set_ylabel("dy [m]")
-        ax.set_title(f"Step {step_no:03d} Displacement Vector")
-        ax.tick_params(labelsize=8)
-        ax.legend(loc="upper left", fontsize=9)
-        plt.tight_layout()
+        ax_vector.set_xlabel("dx [m]")
+        ax_vector.set_ylabel("dy [m]")
+        ax_vector.set_title(f"Step {step_no:03d} Displacement")
+        ax_vector.tick_params(labelsize=8)
+        ax_vector.legend(loc="upper left", fontsize=9)
+
+        if projected_accel is None:
+            _plot_no_acceleration_data(ax_timeseries)
+            _plot_no_acceleration_data(ax_distribution)
+        else:
+            phase = np.linspace(0.0, 100.0, len(projected_accel))
+            forward_acc = projected_accel[:, 0]
+            lateral_acc = projected_accel[:, 1]
+
+            ax_timeseries.plot(
+                phase,
+                forward_acc,
+                color="steelblue",
+                linewidth=1.4,
+                label="forward",
+            )
+            ax_timeseries.plot(
+                phase,
+                lateral_acc,
+                color="darkorange",
+                linewidth=1.4,
+                label="lateral",
+            )
+            ax_timeseries.axhline(0.0, color="0.35", linewidth=0.8)
+            ax_timeseries.set_title("Acceleration over Step")
+            ax_timeseries.set_xlabel("step phase [%]")
+            ax_timeseries.set_ylabel("acceleration [m/s²]")
+            ax_timeseries.grid(True, linewidth=0.4)
+            ax_timeseries.legend(loc="upper right", fontsize=8)
+
+            ax_distribution.plot(
+                forward_acc,
+                lateral_acc,
+                color="0.55",
+                linewidth=0.9,
+                alpha=0.45,
+                zorder=1,
+            )
+            ax_distribution.scatter(
+                forward_acc,
+                lateral_acc,
+                c=phase,
+                cmap="viridis",
+                s=18,
+                alpha=0.9,
+                zorder=2,
+            )
+            ax_distribution.scatter(
+                forward_acc[0],
+                lateral_acc[0],
+                color="0.2",
+                s=28,
+                zorder=3,
+                label="start",
+            )
+            ax_distribution.scatter(
+                forward_acc[-1],
+                lateral_acc[-1],
+                color="crimson",
+                s=32,
+                zorder=3,
+                label="end",
+            )
+            ax_distribution.axhline(0.0, color="0.35", linewidth=0.8)
+            ax_distribution.axvline(0.0, color="0.35", linewidth=0.8)
+            ax_distribution.set_aspect("equal", adjustable="box")
+            _set_symmetric_accel_limits(ax_distribution, projected_accel)
+            ax_distribution.set_title("Acceleration Distribution (color=phase)")
+            ax_distribution.set_xlabel("forward acceleration [m/s²]")
+            ax_distribution.set_ylabel("lateral acceleration [m/s²]")
+            ax_distribution.grid(True, linewidth=0.4)
+            ax_distribution.legend(loc="upper right", fontsize=8)
 
         if save_dir is not None:
             save_path = save_dir / f"step_{step_no:03d}.png"
