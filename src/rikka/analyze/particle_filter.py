@@ -18,23 +18,69 @@ from ..config import (
     INITIAL_DIRECTION,
     PF_NUM_PARTICLES,
     PF_SIGMA_HEADING,
+    PF_SIGMA_INIT_HEADING,
     PF_SIGMA_STEP_LENGTH_RATIO,
     STEP_LENGTH_METHOD,
+    WEINBERG_K,
 )
 from .pdr import (
     _compute_pixel_coords,
     _estimate_initial_forward_angle,
+    _sample_gyro_angle,
+    _step_mid_index,
+    _step_mid_time,
     estimate_step_length,
     estimate_step_length_forward,
 )
 
 
-def _systematic_resample(weights: np.ndarray) -> np.ndarray:
+def _systematic_resample(weights: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     """系統リサンプリングでインデックス配列を返す。O(N)・分散最小。"""
     n = len(weights)
-    positions = (np.arange(n) + np.random.uniform(0, 1)) / n
+    positions = (np.arange(n) + rng.uniform(0, 1)) / n
     cumsum = np.cumsum(weights)
     return np.searchsorted(cumsum, positions)
+
+
+def _normalize_floormap_gray(map_raw: np.ndarray) -> np.ndarray:
+    """フロアマップ画像を 0..255 のグレースケール配列に正規化する。"""
+    map_arr: np.ndarray = np.asarray(map_raw, dtype=float)
+    if map_arr.ndim == 3:
+        map_arr = np.mean(map_arr[:, :, :3], axis=2)
+    if map_arr.size == 0:
+        return map_arr
+    if float(np.nanmax(map_arr)) <= 1.0:
+        map_arr = map_arr * 255.0
+    return np.asarray(np.clip(map_arr, 0.0, 255.0), dtype=float)
+
+
+def _reconstruct_resampled_paths(
+    position_history: list[np.ndarray],
+    resample_history: list[np.ndarray],
+) -> np.ndarray:
+    """リサンプリング祖先をたどって最終粒子群の経路を復元する。"""
+    if not position_history:
+        return np.empty((0, 0, 2), dtype=float)
+
+    n_particles = position_history[0].shape[0]
+    n_steps = len(position_history) - 1
+    if len(resample_history) != n_steps:
+        raise ValueError("position_history と resample_history の長さが一致しません")
+
+    paths = np.empty((n_particles, n_steps + 1, 2), dtype=float)
+    if n_steps == 0:
+        paths[:, 0, :] = position_history[0]
+        return paths
+
+    lineage = resample_history[-1].astype(int, copy=True)
+    paths[:, n_steps, :] = position_history[n_steps][lineage]
+
+    for step in range(n_steps - 1, 0, -1):
+        lineage = resample_history[step - 1][lineage]
+        paths[:, step, :] = position_history[step][lineage]
+
+    paths[:, 0, :] = position_history[0][lineage]
+    return paths
 
 
 def run_particle_filter(
@@ -48,8 +94,10 @@ def run_particle_filter(
     scale: float = FLOORMAP_SCALE,
     initial_direction: float = INITIAL_DIRECTION,
     n_particles: int = PF_NUM_PARTICLES,
+    sigma_init_heading: float = PF_SIGMA_INIT_HEADING,
     sigma_heading: float = PF_SIGMA_HEADING,
     sigma_sl_ratio: float = PF_SIGMA_STEP_LENGTH_RATIO,
+    weinberg_k: float = WEINBERG_K,
 ) -> tuple[list[list[float]], list[float], np.ndarray]:
     """パーティクルフィルタでマップマッチング付き歩行軌跡を推定する。
 
@@ -64,8 +112,10 @@ def run_particle_filter(
         scale: 1ピクセルあたりのメートル数
         initial_direction: 歩行開始方向のオフセット [度]
         n_particles: パーティクル数
+        sigma_init_heading: 粒子ごとの初期方位ばらつき [rad]
         sigma_heading: ステップごとの方位角ノイズ [rad]
         sigma_sl_ratio: ステップ長ノイズの比率
+        weinberg_k: Weinbergモデルのスケール係数
 
     Returns:
         tuple: (加重平均軌跡の座標リスト, 各ステップの決定論的歩幅リスト,
@@ -74,22 +124,19 @@ def run_particle_filter(
     rng = np.random.default_rng()
 
     # フロアマップをグレースケールで読み込み
-    map_raw = plt.imread(Path(floormap_path))
-    if map_raw.ndim == 3:
-        map_gray = np.mean(map_raw[:, :, :3], axis=2) * 255.0
-    else:
-        map_gray = map_raw * 255.0
+    map_gray = _normalize_floormap_gray(plt.imread(Path(floormap_path)))
     map_h, map_w = map_gray.shape
 
     # 全パーティクルを原点で初期化（[x, y] の2次元状態）
     particles = np.zeros((n_particles, 2))
+    heading_bias = rng.normal(0, sigma_init_heading, n_particles)
     weights = np.ones(n_particles) / n_particles
 
-    mean_trajectory: list[list[float]] = [[0.0, 0.0]]
     step_lengths: list[float] = []
+    position_history: list[np.ndarray] = [particles.copy()]
+    resample_history: list[np.ndarray] = []
     all_particles_list: list[np.ndarray] = [particles.copy()]  # ステップ0（原点）
 
-    low_angle = df_gyro["low_angle"]
     direction_offset = float(np.deg2rad(initial_direction))
 
     phi_0 = (
@@ -99,31 +146,33 @@ def run_particle_filter(
     )
 
     for i, p in enumerate(peaks):
-        if p >= len(low_angle):
+        if p >= len(df_acc):
             continue
         if STEP_LENGTH_METHOD == "forward" and i + 1 >= len(peaks):
             continue
 
         # estimate_trajectory と同一のサンプリングインデックス計算
-        if i + 1 < len(peaks) and peaks[i + 1] < len(low_angle):
-            mid_idx = (int(p) + int(peaks[i + 1])) // 2
-        else:
-            mid_idx = int(p)
-
-        angle_det = low_angle.iloc[mid_idx] + direction_offset
-        if np.isnan(angle_det):
+        mid_idx = _step_mid_index(peaks, i)
+        angle_at_mid = _sample_gyro_angle(
+            df_gyro,
+            sample_index=mid_idx,
+            sample_time=_step_mid_time(df_acc, peaks, i),
+        )
+        if angle_at_mid is None:
             continue
+        angle_det = angle_at_mid + direction_offset
 
         if STEP_LENGTH_METHOD == "forward":
             sl_det = estimate_step_length_forward(df_acc, df_gyro, peaks, i, phi_0)
         else:
-            sl_det = estimate_step_length(df_acc, int(p))
+            sl_det = estimate_step_length(df_acc, int(p), k=weinberg_k)
 
         # 予測前の状態を保存（全壁レスキュー用）
         particles_before = particles.copy()
 
-        # 予測ステップ：各パーティクルに独立ノイズを加算（累積しない）
-        theta = angle_det + rng.normal(0, sigma_heading, n_particles)
+        # 予測ステップ：粒子ごとの方位バイアスをランダムウォークとして累積
+        heading_bias += rng.normal(0, sigma_heading, n_particles)
+        theta = angle_det + heading_bias
         sl = np.clip(sl_det * (1 + rng.normal(0, sigma_sl_ratio, n_particles)), 0, None)
         particles[:, 0] += sl * np.cos(theta)
         particles[:, 1] += sl * np.sin(theta)
@@ -168,13 +217,15 @@ def run_particle_filter(
         if total < 1e-300:
             # レスキュー：予測前の位置から3倍のノイズで再試行
             particles = particles_before.copy()
-            theta_r = angle_det + rng.normal(0, sigma_heading * 3, n_particles)
+            theta_r = (
+                angle_det + heading_bias + rng.normal(0, sigma_heading * 3, n_particles)
+            )
             sl_r = np.clip(
                 sl_det * (1 + rng.normal(0, sigma_sl_ratio * 3, n_particles)), 0, None
             )
             particles[:, 0] += sl_r * np.cos(theta_r)
             particles[:, 1] += sl_r * np.sin(theta_r)
-            _, in_corridor = _eval_corridor(particles)
+            _, in_corridor = _eval_corridor(particles, prev_pts=particles_before)
             weights = in_corridor.astype(float)
             total = weights.sum()
             if total < 1e-300:
@@ -186,25 +237,20 @@ def run_particle_filter(
         else:
             weights /= total
 
-        # 通路パーティクルのみで加重平均を計算（壁パーティクルを mean に混入させない）
-        if in_corridor.any():
-            corridor_w = weights * in_corridor
-            corridor_w = corridor_w / corridor_w.sum()
-            mean_x = float(np.average(particles[:, 0], weights=corridor_w))
-            mean_y = float(np.average(particles[:, 1], weights=corridor_w))
-            mean_trajectory.append([mean_x, mean_y])
-        else:
-            # 通路パーティクルなし → 前ステップの位置を維持
-            mean_trajectory.append(list(mean_trajectory[-1]))
+        position_history.append(particles.copy())
         step_lengths.append(sl_det)
 
         # 系統リサンプリング
-        indices = _systematic_resample(weights)
+        indices = _systematic_resample(weights, rng)
         particles = particles[indices]
+        heading_bias = heading_bias[indices]
         weights[:] = 1.0 / n_particles
+        resample_history.append(indices)
         all_particles_list.append(particles.copy())
 
     all_particles = np.stack(all_particles_list)  # shape: (T+1, N, 2)
+    particle_paths = _reconstruct_resampled_paths(position_history, resample_history)
+    mean_trajectory = particle_paths.mean(axis=0).tolist()
     return mean_trajectory, step_lengths, all_particles
 
 

@@ -57,6 +57,9 @@ uv run rikka run [OPTIONS]
 
 # 例: フロアマップと起点を変更して実行
 uv run rikka run -f input/map.png --origin-px 1000 500 --no-plot
+
+# 例: 身長 1.78m として Weinberg 歩幅係数を補正して実行
+uv run rikka run --height-m 1.78 --no-plot
 ```
 
 - 軌跡グラフ（`trajectory.png`）と歩幅グラフ（`step_lengths.png`）、CSV を `output/<timestamp>/` に保存します。
@@ -73,10 +76,17 @@ uv run rikka pdr [OPTIONS]
 
 ```sh
 uv run rikka particle
+
+# グラフ表示とアニメーション保存を無効化して実行
+uv run rikka particle --no-plot
+
+# グラフ表示なしでアニメーションだけ保存
+uv run rikka particle --no-plot --save-animation
 ```
 
 - マップマッチングでパーティクルを通路内に収束させながら軌跡を推定します。
 - `pf_trajectory.png`・`step_lengths.png`・`particle_filter.mp4`（または `.gif`）を出力します。
+- `--no-plot` を指定するとグラフ表示とアニメーション保存を行いません。
 - MP4 出力には `ffmpeg` が必要です（`brew install ffmpeg`）。
 
 #### センサーデータの可視化
@@ -92,7 +102,7 @@ uv run rikka sensor
 引数なしで呼び出し、`"Hello, rikka"` が返れば接続・インポートが正常に動作しています。
 
 ```python
-from rikka.server import ping
+from rikka import ping
 
 print(ping())  # → Hello, rikka
 ```
@@ -134,6 +144,15 @@ trajectory = run(df_acc=df_acc, df_gyro=df_gyro, use_particle_filter=True)
 # グラフ非表示（バッチ処理向け）
 trajectory = run(df_acc=df_acc, df_gyro=df_gyro, plot=False)
 
+# グラフ非表示でパーティクルフィルタのアニメーションだけ保存
+trajectory = run(
+    df_acc=df_acc,
+    df_gyro=df_gyro,
+    plot=False,
+    use_particle_filter=True,
+    save_animation=True,
+)
+
 # フロアマップを外部から指定
 trajectory = run(
     df_acc=df_acc,
@@ -155,13 +174,18 @@ trajectory = run(
 |---|---|---|
 | `DATA_DIR` | 入力データフォルダのパス | `"input/..."` |
 | `FLOORMAP_PATH` | フロアマップ画像のパス | `"input/Floormap_building14_5floor.png"` |
-| `FLOORMAP_ORIGIN_PX` | 軌跡起点のピクセル座標 `(x, y)` | `(2050, 700)` |
+| `FLOORMAP_ORIGIN_PX` | 軌跡起点のピクセル座標 `(x, y)` | `(2050, 400)` |
 | `FLOORMAP_SCALE` | 1ピクセルあたりのメートル数 | `0.01`（1px = 1cm） |
 | `INITIAL_DIRECTION` | 歩行開始方向のオフセット [度] | `90.0` |
-| `STEP_LENGTH_METHOD` | 歩幅推定手法 `"weinberg"` or `"forward"` | `"forward"` |
-| `WEINBERG_K` | Weinberg モデルのスケール係数 | `0.47` |
+| `STEP_LENGTH_METHOD` | 歩幅推定手法 `"weinberg"` or `"forward"` | `"weinberg"` |
+| `USER_HEIGHT_M` | Weinberg モデルの身長補正に使うユーザー身長 [m] | `1.65` |
+| `WEINBERG_REFERENCE_HEIGHT_M` | `WEINBERG_REFERENCE_K` を校正した基準身長 [m] | `1.70` |
+| `WEINBERG_REFERENCE_K` | 基準身長での Weinberg モデルのスケール係数 | `0.47` |
+| `WEINBERG_K` | 身長補正後の Weinberg モデルのスケール係数 | `compute_weinberg_k(USER_HEIGHT_M)` |
 | `PF_NUM_PARTICLES` | パーティクル数 | `500` |
-| `PF_SIGMA_HEADING` | ステップごとの方位角ノイズ [rad] | `0.2` |
+| `PF_SIGMA_INIT_HEADING` | 初期方向ばらつき [rad] | `0.15` |
+| `PF_SIGMA_HEADING` | ステップごとの方位角ドリフト [rad] | `0.05` |
+| `PF_SIGMA_STEP_LENGTH_RATIO` | ステップ長ノイズ比率 | `0.08` |
 
 ---
 

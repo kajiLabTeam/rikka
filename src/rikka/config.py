@@ -10,7 +10,7 @@ DATA_DIR = "input/87steps_turn_Yamamoto"
 FLOORMAP_PATH = "input/Floormap_building14_5floor.png"
 # 軌跡の起点（原点）がフロアマップ上で対応するピクセル座標 (x_px, y_px)
 # 実際の歩行開始位置に合わせて調整すること
-FLOORMAP_ORIGIN_PX: tuple[int, int] = (2050, 700)
+FLOORMAP_ORIGIN_PX: tuple[int, int] = (2050, 400)
 # 1ピクセルあたりのメートル数（1px = 1cm = 0.01m）
 
 FLOORMAP_SCALE = 0.01
@@ -40,11 +40,25 @@ MAX_SEG_SAMPLES = 80
 # ノイズ・微小な動きとステップを区別する閾値
 PEAK_HEIGHT = 1.0
 
-# Weinberg モデルのスケール係数（校正が必要なパラメータ）
+# ユーザー身長 [m]
+# Weinbergモデルの歩幅スケールは身長におおむね比例すると仮定して補正する
+USER_HEIGHT_M = 1.65
+
+# Weinberg モデルの基準スケール係数（校正が必要なパラメータ）
 # 歩幅 = K × (a_max - a_min)^0.25 の K に相当する
-# ユーザーの体格・歩行スタイル・端末装着位置で個人差があるため、
-# 実測の数ステップで検証してキャリブレーションすることを推奨
-WEINBERG_K = 0.47
+# WEINBERG_REFERENCE_HEIGHT_M のユーザーで校正した値として扱う
+WEINBERG_REFERENCE_HEIGHT_M = 1.70
+WEINBERG_REFERENCE_K = 0.47
+
+
+def compute_weinberg_k(height_m: float = USER_HEIGHT_M) -> float:
+    """身長に応じた Weinberg モデルのスケール係数を返す。"""
+    if height_m <= 0:
+        raise ValueError("height_m は正の値を指定してください。")
+    return WEINBERG_REFERENCE_K * (height_m / WEINBERG_REFERENCE_HEIGHT_M)
+
+
+WEINBERG_K = compute_weinberg_k(USER_HEIGHT_M)
 
 # 歩幅推定用ウィンドウ（ステップピーク前後のサンプル数）
 # ±50サンプル = ±0.5秒 @ 100Hz
@@ -54,7 +68,7 @@ STEP_LENGTH_WINDOW = 50
 # 歩幅推定手法の選択
 # "weinberg": Weinbergモデル（経験則による max-min 振幅から推定）
 # "forward" : 方位方向射影積分（ジャイロから前進方向を自動推定し符号付き成分を2重積分）
-STEP_LENGTH_METHOD = "forward"
+STEP_LENGTH_METHOD = "weinberg"
 
 # 前進方向射影積分のユニバーサルスケール係数
 # 歩幅 = K_FORWARD × 振動変位
@@ -64,6 +78,6 @@ K_FORWARD = 9.0
 
 # パーティクルフィルタ設定
 PF_NUM_PARTICLES = 500
-PF_SIGMA_INIT_HEADING = 0.3  # 初期方向ばらつき [rad]（±17°）
-PF_SIGMA_HEADING = 0.2  # ステップごとの方位角ノイズ [rad/step]（±11°）
-PF_SIGMA_STEP_LENGTH_RATIO = 0.1  # ステップ長ノイズ比率（±10%）
+PF_SIGMA_INIT_HEADING = 0.15  # 初期方向ばらつき [rad]（±9°）
+PF_SIGMA_HEADING = 0.05  # ステップごとの方位角ドリフト [rad/step]（±3°）
+PF_SIGMA_STEP_LENGTH_RATIO = 0.08  # ステップ長ノイズ比率（±8%）
