@@ -148,9 +148,10 @@ def _sample_gyro_angle(
             if valid.any():
                 return float(np.interp(sample_time, times[valid], low_angle[valid]))
 
-    if len(low_angle) == 0 or sample_index < 0 or sample_index >= len(low_angle):
+    if len(low_angle) == 0:
         return None
-    angle = float(low_angle[sample_index])
+    clipped_index = min(max(sample_index, 0), len(low_angle) - 1)
+    angle = float(low_angle[clipped_index])
     if not np.isfinite(angle):
         return None
     return angle
