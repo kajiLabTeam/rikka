@@ -133,6 +133,12 @@ def pdr(
 
 
 @cli.command()
+@click.option(
+    "--save-animation",
+    is_flag=True,
+    default=False,
+    help="--no-plot 指定時もパーティクルフィルタのアニメーションを保存",
+)
 @_common_options
 def particle(
     data_dir: str,
@@ -142,6 +148,7 @@ def particle(
     direction: float,
     height_m: float,
     no_plot: bool,
+    save_animation: bool,
 ) -> None:
     """パーティクルフィルタ + マップマッチングで歩行軌跡を推定する。"""
     from .analyze.pdr import load_sensor_data  # noqa: PLC0415
@@ -152,6 +159,7 @@ def particle(
         df_acc=df_acc,
         df_gyro=df_gyro,
         plot=not no_plot,
+        save_animation=True if save_animation else None,
         use_particle_filter=True,
         floormap_path=floormap,
         origin_px=origin_px,
