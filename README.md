@@ -63,6 +63,7 @@ uv run rikka run --height-m 1.78 --no-plot
 ```
 
 - 軌跡グラフ（`trajectory.png`）と歩幅グラフ（`step_lengths.png`）、CSV を `output/<timestamp>/` に保存します。
+- `trajectory.csv` は `timestamp_s,x,y` 形式です。`timestamp_s` は最初の移動点からの経過秒です。
 
 #### PDR 軌跡推定（run の別名）
 

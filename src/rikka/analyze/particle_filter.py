@@ -30,6 +30,7 @@ from .pdr import (
     _sample_gyro_angle,
     _step_mid_index,
     _step_mid_time,
+    _time_at_index,
     estimate_step_length,
     estimate_step_length_forward,
 )
@@ -178,7 +179,7 @@ def run_particle_filter(
     sigma_heading: float = PF_SIGMA_HEADING,
     sigma_sl_ratio: float = PF_SIGMA_STEP_LENGTH_RATIO,
     weinberg_k: float = WEINBERG_K,
-) -> tuple[list[list[float]], list[float], np.ndarray]:
+) -> tuple[list[list[float]], list[float], list[float], np.ndarray]:
     """パーティクルフィルタでマップマッチング付き歩行軌跡を推定する。
 
     Args:
@@ -199,6 +200,7 @@ def run_particle_filter(
 
     Returns:
         tuple: (加重平均軌跡の座標リスト, 各ステップの決定論的歩幅リスト,
+            各ステップのピーク時刻リスト [s],
             全ステップのパーティクル位置 shape=(T, N, 2))
     """
     rng = np.random.default_rng()
@@ -213,6 +215,7 @@ def run_particle_filter(
     weights = np.ones(n_particles) / n_particles
 
     step_lengths: list[float] = []
+    t_at_steps: list[float] = []
     position_history: list[np.ndarray] = [particles.copy()]
     resample_history: list[np.ndarray] = []
     all_particles_list: list[np.ndarray] = [particles.copy()]  # ステップ0（原点）
@@ -319,6 +322,7 @@ def run_particle_filter(
 
         position_history.append(particles.copy())
         step_lengths.append(sl_det)
+        t_at_steps.append(_time_at_index(df_acc, int(p)))
 
         # 系統リサンプリング
         indices = _systematic_resample(weights, rng)
@@ -339,7 +343,7 @@ def run_particle_filter(
         origin_px,
         scale,
     )
-    return mean_trajectory, step_lengths, all_particles
+    return mean_trajectory, step_lengths, t_at_steps, all_particles
 
 
 def plot_particle_filter_trajectory(
