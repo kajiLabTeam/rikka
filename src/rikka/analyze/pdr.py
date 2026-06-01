@@ -513,7 +513,8 @@ def estimate_trajectory(
         else:
             step_length = estimate_step_length(df_acc, int(p), k=weinberg_k)
         step_lengths.append(step_length)
-        t_p = _time_at_index(df_acc, int(p))
+        t_index = int(peaks[i + 1]) if STEP_LENGTH_METHOD == "forward" else int(p)
+        t_p = _time_at_index(df_acc, t_index)
         t_at_steps.append(t_p)
         x = points[-1][0] + step_length * float(np.cos(angle))
         y = points[-1][1] + step_length * float(np.sin(angle))

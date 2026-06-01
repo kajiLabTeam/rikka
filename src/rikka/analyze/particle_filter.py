@@ -322,7 +322,8 @@ def run_particle_filter(
 
         position_history.append(particles.copy())
         step_lengths.append(sl_det)
-        t_at_steps.append(_time_at_index(df_acc, int(p)))
+        t_index = int(peaks[i + 1]) if STEP_LENGTH_METHOD == "forward" else int(p)
+        t_at_steps.append(_time_at_index(df_acc, t_index))
 
         # 系統リサンプリング
         indices = _systematic_resample(weights, rng)
