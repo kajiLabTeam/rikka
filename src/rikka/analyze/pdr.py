@@ -781,7 +781,14 @@ def run(
             )
 
             plot_step_lengths(step_lengths, output_dir)
-            plot_step_vectors(trajectory, output_dir, df_acc=df_acc, peaks=peaks)
+            plot_step_vectors(
+                trajectory,
+                output_dir,
+                df_acc=df_acc,
+                df_gyro=df_gyro,
+                peaks=peaks,
+                initial_direction=initial_direction,
+            )
 
         if should_save_animation:
             save_particle_animation(
@@ -851,6 +858,13 @@ def run(
                 t_acc=t_acc,
                 low_lin_norm=df_acc["low_lin_norm"].to_numpy(),
             )
-            plot_step_vectors(trajectory, output_dir, df_acc=df_acc, peaks=peaks)
+            plot_step_vectors(
+                trajectory,
+                output_dir,
+                df_acc=df_acc,
+                df_gyro=df_gyro,
+                peaks=peaks,
+                initial_direction=initial_direction,
+            )
 
     return df_trajectory
