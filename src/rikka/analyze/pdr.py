@@ -642,6 +642,35 @@ def _build_step_vectors_dataframe(trajectory: list[list[float]]) -> pd.DataFrame
     )
 
 
+def _build_trajectory_dataframe(
+    trajectory: list[list[float]],
+    t_at_steps: list[float],
+) -> pd.DataFrame:
+    """軌跡点列とステップ時刻から時刻付きDataFrameを作成する。"""
+    points = np.asarray(trajectory, dtype=float)
+    if points.ndim != 2 or points.shape[1] != 2:
+        raise ValueError("trajectory は [x, y] の点列である必要があります。")
+
+    if len(points) != len(t_at_steps) + 1:
+        raise ValueError(
+            "trajectory と t_at_steps の長さが一致しません: "
+            f"len(trajectory)={len(points)}, len(t_at_steps)={len(t_at_steps)}"
+        )
+    if len(t_at_steps) == 0:
+        return pd.DataFrame(columns=["timestamp_s", "x", "y"])
+
+    moved_points = points[1:]
+    first_step_time = t_at_steps[0]
+    timestamps = [float(t - first_step_time) for t in t_at_steps]
+    return pd.DataFrame(
+        {
+            "timestamp_s": timestamps,
+            "x": moved_points[:, 0],
+            "y": moved_points[:, 1],
+        }
+    )
+
+
 def run(
     df_acc: pd.DataFrame | None = None,
     df_gyro: pd.DataFrame | None = None,
@@ -689,7 +718,7 @@ def run(
             Weinbergモデルのスケール係数を補正するユーザー身長 [m]。
 
     Returns:
-        pd.DataFrame: 軌跡データ（列: x, y）
+        pd.DataFrame: 軌跡データ（列: timestamp_s, x, y）
 
     Raises:
         ValueError: ``df_acc`` と ``df_gyro`` の片方だけが渡された場合
@@ -730,7 +759,7 @@ def run(
             save_particle_animation,
         )
 
-        trajectory, step_lengths, all_particles = run_particle_filter(
+        trajectory, step_lengths, t_at_steps, all_particles = run_particle_filter(
             peaks,
             df_gyro,
             df_acc,
@@ -748,7 +777,10 @@ def run(
         for i, (x, y) in enumerate(trajectory):
             print(f"step {i}: ({x:.3f}, {y:.3f})")
 
-        df_trajectory = pd.DataFrame(trajectory, columns=["x", "y"])
+        df_trajectory = _build_trajectory_dataframe(
+            trajectory,
+            t_at_steps,
+        )
         output_path = output_dir / "trajectory.csv"
         df_trajectory.to_csv(output_path, index=False)
         print(f"Trajectory saved to {output_path}")
@@ -811,7 +843,10 @@ def run(
         for i, (x, y) in enumerate(trajectory):
             print(f"step {i}: ({x:.3f}, {y:.3f})")
 
-        df_trajectory = pd.DataFrame(trajectory, columns=["x", "y"])
+        df_trajectory = _build_trajectory_dataframe(
+            trajectory,
+            t_at_steps,
+        )
 
         # 軌跡データをoutputフォルダにCSVとして保存
         output_path = output_dir / "trajectory.csv"
