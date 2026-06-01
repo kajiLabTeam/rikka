@@ -134,6 +134,19 @@ def _step_mid_time(df_acc: pd.DataFrame, peaks: np.ndarray, i: int) -> float:
     return _time_at_index(df_acc, start)
 
 
+def _step_output_time(
+    df_acc: pd.DataFrame,
+    peaks: np.ndarray,
+    i: int,
+    step_length_method: str | None = None,
+) -> float:
+    """移動後座標に対応する時刻を返す。"""
+    method = STEP_LENGTH_METHOD if step_length_method is None else step_length_method
+    if method == "forward" and i + 1 < len(peaks):
+        return _time_at_index(df_acc, int(peaks[i + 1]))
+    return _time_at_index(df_acc, int(peaks[i]))
+
+
 def _sample_gyro_angle(
     df_gyro: pd.DataFrame,
     sample_index: int,
@@ -176,6 +189,12 @@ def _create_output_dir(
         return output_dir
 
     raise FileExistsError(f"出力ディレクトリ名が衝突しました: {base_path / timestamp}")
+
+
+def _validate_scale(scale: float) -> None:
+    """フロアマップ縮尺が正の値であることを確認する。"""
+    if scale <= 0:
+        raise ValueError("scale は正の値を指定してください。")
 
 
 def process_sensor_data(
@@ -475,7 +494,7 @@ def estimate_trajectory(
         tuple[list[list[float]], list[float], list[float]]:
             - 各ステップの [x, y] 座標リスト（原点を含む）
             - 各ステップの推定歩幅リスト [m]
-            - 各ステップのピーク時刻リスト [s]
+            - 各移動後座標に対応する時刻リスト [s]
     """
     points: list[list[float]] = [[0.0, 0.0]]
     step_lengths: list[float] = []
@@ -513,9 +532,7 @@ def estimate_trajectory(
         else:
             step_length = estimate_step_length(df_acc, int(p), k=weinberg_k)
         step_lengths.append(step_length)
-        t_index = int(peaks[i + 1]) if STEP_LENGTH_METHOD == "forward" else int(p)
-        t_p = _time_at_index(df_acc, t_index)
-        t_at_steps.append(t_p)
+        t_at_steps.append(_step_output_time(df_acc, peaks, i))
         x = points[-1][0] + step_length * float(np.cos(angle))
         y = points[-1][1] + step_length * float(np.sin(angle))
         points.append([x, y])
@@ -647,7 +664,7 @@ def _build_trajectory_dataframe(
     trajectory: list[list[float]],
     t_at_steps: list[float],
 ) -> pd.DataFrame:
-    """軌跡点列とステップ時刻から時刻付きDataFrameを作成する。"""
+    """軌跡点列と移動後座標の時刻から時刻付きDataFrameを作成する。"""
     points = np.asarray(trajectory, dtype=float)
     if points.ndim != 2 or points.shape[1] != 2:
         raise ValueError("trajectory は [x, y] の点列である必要があります。")
@@ -724,6 +741,7 @@ def run(
     Raises:
         ValueError: ``df_acc`` と ``df_gyro`` の片方だけが渡された場合
     """
+    _validate_scale(scale)
     output_dir = _create_output_dir()
     should_save_animation = plot if save_animation is None else save_animation
 

@@ -18,6 +18,17 @@ _DIRECTION_DEFAULT = INITIAL_DIRECTION
 _HEIGHT_DEFAULT = USER_HEIGHT_M
 
 
+def _validate_cli_scale(
+    _ctx: click.Context,
+    _param: click.Parameter,
+    value: float,
+) -> float:
+    """scale が正の値であることを確認する。"""
+    if value <= 0:
+        raise click.BadParameter("scale は正の値を指定してください。")
+    return value
+
+
 def _common_options(f: click.decorators.FC) -> click.decorators.FC:
     """run / particle コマンド共通オプションをまとめたデコレータ。"""
     f = click.option(
@@ -40,6 +51,7 @@ def _common_options(f: click.decorators.FC) -> click.decorators.FC:
     f = click.option(
         "--scale",
         type=float,
+        callback=_validate_cli_scale,
         default=_SCALE_DEFAULT,
         show_default=True,
         help="1ピクセルあたりのメートル数",

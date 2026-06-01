@@ -30,7 +30,7 @@ from .pdr import (
     _sample_gyro_angle,
     _step_mid_index,
     _step_mid_time,
-    _time_at_index,
+    _step_output_time,
     estimate_step_length,
     estimate_step_length_forward,
 )
@@ -322,8 +322,7 @@ def run_particle_filter(
 
         position_history.append(particles.copy())
         step_lengths.append(sl_det)
-        t_index = int(peaks[i + 1]) if STEP_LENGTH_METHOD == "forward" else int(p)
-        t_at_steps.append(_time_at_index(df_acc, t_index))
+        t_at_steps.append(_step_output_time(df_acc, peaks, i, STEP_LENGTH_METHOD))
 
         # 系統リサンプリング
         indices = _systematic_resample(weights, rng)
