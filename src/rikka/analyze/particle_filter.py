@@ -10,6 +10,7 @@ from matplotlib.animation import FuncAnimation
 from matplotlib.artist import Artist
 from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize
+from scipy.ndimage import distance_transform_edt
 
 from ..config import (
     FLOORMAP_ORIGIN_PX,
@@ -29,6 +30,7 @@ from .pdr import (
     _sample_gyro_angle,
     _step_mid_index,
     _step_mid_time,
+    _step_output_time,
     estimate_step_length,
     estimate_step_length_forward,
 )
@@ -52,6 +54,85 @@ def _normalize_floormap_gray(map_raw: np.ndarray) -> np.ndarray:
     if float(np.nanmax(map_arr)) <= 1.0:
         map_arr = map_arr * 255.0
     return np.asarray(np.clip(map_arr, 0.0, 255.0), dtype=float)
+
+
+def _pixel_y_sign(gx_mean: float, gz_mean: float) -> int:
+    """メートル座標とピクセル座標のY軸向きを返す。"""
+    if abs(gx_mean) > abs(gz_mean):
+        return -1 if gx_mean > 0 else 1
+    return -1 if gz_mean < 0 else 1
+
+
+def _compute_meter_coords(
+    px: np.ndarray,
+    py: np.ndarray,
+    gx_mean: float,
+    gz_mean: float,
+    origin_px: tuple[int, int],
+    scale: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """フロアマップのピクセル座標をメートル座標へ戻す。"""
+    y_sign = _pixel_y_sign(gx_mean, gz_mean)
+    xs = (px - origin_px[0]) * scale
+    ys = (py - origin_px[1]) * scale / y_sign
+    return xs, ys
+
+
+def _snap_trajectory_to_walkable_pixels(
+    trajectory: list[list[float]],
+    map_gray: np.ndarray,
+    gx_mean: float,
+    gz_mean: float,
+    origin_px: tuple[int, int],
+    scale: float,
+) -> list[list[float]]:
+    """壁上・範囲外の軌跡点を最近傍の歩行可能画素へ寄せる。"""
+    if len(trajectory) == 0:
+        return trajectory
+
+    walkable = map_gray > 128
+    if not walkable.any():
+        return trajectory
+
+    map_h, map_w = walkable.shape
+    points = np.asarray(trajectory, dtype=float)
+    px_f, py_f = _compute_pixel_coords(
+        points[:, 0], points[:, 1], gx_mean, gz_mean, origin_px, scale
+    )
+    pxi = np.round(px_f).astype(int)
+    pyi = np.round(py_f).astype(int)
+
+    in_bounds = (0 <= pxi) & (pxi < map_w) & (0 <= pyi) & (pyi < map_h)
+    needs_snap = ~in_bounds.copy()
+    if in_bounds.any():
+        needs_snap[in_bounds] = ~walkable[pyi[in_bounds], pxi[in_bounds]]
+
+    if not needs_snap.any():
+        return trajectory
+
+    _, nearest_indices = distance_transform_edt(~walkable, return_indices=True)
+    nearest_y = nearest_indices[0]
+    nearest_x = nearest_indices[1]
+
+    query_x = pxi.clip(0, map_w - 1)
+    query_y = pyi.clip(0, map_h - 1)
+    snap_x = query_x.copy()
+    snap_y = query_y.copy()
+    snap_x[needs_snap] = nearest_x[query_y[needs_snap], query_x[needs_snap]]
+    snap_y[needs_snap] = nearest_y[query_y[needs_snap], query_x[needs_snap]]
+
+    xs, ys = _compute_meter_coords(
+        snap_x.astype(float),
+        snap_y.astype(float),
+        gx_mean,
+        gz_mean,
+        origin_px,
+        scale,
+    )
+    snapped_points = points.copy()
+    snapped_points[needs_snap, 0] = xs[needs_snap]
+    snapped_points[needs_snap, 1] = ys[needs_snap]
+    return [[float(x), float(y)] for x, y in snapped_points]
 
 
 def _reconstruct_resampled_paths(
@@ -98,7 +179,7 @@ def run_particle_filter(
     sigma_heading: float = PF_SIGMA_HEADING,
     sigma_sl_ratio: float = PF_SIGMA_STEP_LENGTH_RATIO,
     weinberg_k: float = WEINBERG_K,
-) -> tuple[list[list[float]], list[float], np.ndarray]:
+) -> tuple[list[list[float]], list[float], list[float], np.ndarray]:
     """パーティクルフィルタでマップマッチング付き歩行軌跡を推定する。
 
     Args:
@@ -119,6 +200,7 @@ def run_particle_filter(
 
     Returns:
         tuple: (加重平均軌跡の座標リスト, 各ステップの決定論的歩幅リスト,
+            各ステップのピーク時刻リスト [s],
             全ステップのパーティクル位置 shape=(T, N, 2))
     """
     rng = np.random.default_rng()
@@ -133,6 +215,7 @@ def run_particle_filter(
     weights = np.ones(n_particles) / n_particles
 
     step_lengths: list[float] = []
+    t_at_steps: list[float] = []
     position_history: list[np.ndarray] = [particles.copy()]
     resample_history: list[np.ndarray] = []
     all_particles_list: list[np.ndarray] = [particles.copy()]  # ステップ0（原点）
@@ -239,6 +322,7 @@ def run_particle_filter(
 
         position_history.append(particles.copy())
         step_lengths.append(sl_det)
+        t_at_steps.append(_step_output_time(df_acc, peaks, i, STEP_LENGTH_METHOD))
 
         # 系統リサンプリング
         indices = _systematic_resample(weights, rng)
@@ -251,7 +335,15 @@ def run_particle_filter(
     all_particles = np.stack(all_particles_list)  # shape: (T+1, N, 2)
     particle_paths = _reconstruct_resampled_paths(position_history, resample_history)
     mean_trajectory = particle_paths.mean(axis=0).tolist()
-    return mean_trajectory, step_lengths, all_particles
+    mean_trajectory = _snap_trajectory_to_walkable_pixels(
+        mean_trajectory,
+        map_gray,
+        gx_mean,
+        gz_mean,
+        origin_px,
+        scale,
+    )
+    return mean_trajectory, step_lengths, t_at_steps, all_particles
 
 
 def plot_particle_filter_trajectory(

@@ -134,6 +134,19 @@ def _step_mid_time(df_acc: pd.DataFrame, peaks: np.ndarray, i: int) -> float:
     return _time_at_index(df_acc, start)
 
 
+def _step_output_time(
+    df_acc: pd.DataFrame,
+    peaks: np.ndarray,
+    i: int,
+    step_length_method: str | None = None,
+) -> float:
+    """移動後座標に対応する時刻を返す。"""
+    method = STEP_LENGTH_METHOD if step_length_method is None else step_length_method
+    if method == "forward" and i + 1 < len(peaks):
+        return _time_at_index(df_acc, int(peaks[i + 1]))
+    return _time_at_index(df_acc, int(peaks[i]))
+
+
 def _sample_gyro_angle(
     df_gyro: pd.DataFrame,
     sample_index: int,
@@ -176,6 +189,12 @@ def _create_output_dir(
         return output_dir
 
     raise FileExistsError(f"出力ディレクトリ名が衝突しました: {base_path / timestamp}")
+
+
+def _validate_scale(scale: float) -> None:
+    """フロアマップ縮尺が正の値であることを確認する。"""
+    if scale <= 0:
+        raise ValueError("scale は正の値を指定してください。")
 
 
 def process_sensor_data(
@@ -475,7 +494,7 @@ def estimate_trajectory(
         tuple[list[list[float]], list[float], list[float]]:
             - 各ステップの [x, y] 座標リスト（原点を含む）
             - 各ステップの推定歩幅リスト [m]
-            - 各ステップのピーク時刻リスト [s]
+            - 各移動後座標に対応する時刻リスト [s]
     """
     points: list[list[float]] = [[0.0, 0.0]]
     step_lengths: list[float] = []
@@ -513,8 +532,7 @@ def estimate_trajectory(
         else:
             step_length = estimate_step_length(df_acc, int(p), k=weinberg_k)
         step_lengths.append(step_length)
-        t_p = _time_at_index(df_acc, int(p))
-        t_at_steps.append(t_p)
+        t_at_steps.append(_step_output_time(df_acc, peaks, i))
         x = points[-1][0] + step_length * float(np.cos(angle))
         y = points[-1][1] + step_length * float(np.sin(angle))
         points.append([x, y])
@@ -642,6 +660,35 @@ def _build_step_vectors_dataframe(trajectory: list[list[float]]) -> pd.DataFrame
     )
 
 
+def _build_trajectory_dataframe(
+    trajectory: list[list[float]],
+    t_at_steps: list[float],
+) -> pd.DataFrame:
+    """軌跡点列と移動後座標の時刻から時刻付きDataFrameを作成する。"""
+    points = np.asarray(trajectory, dtype=float)
+    if points.ndim != 2 or points.shape[1] != 2:
+        raise ValueError("trajectory は [x, y] の点列である必要があります。")
+
+    if len(points) != len(t_at_steps) + 1:
+        raise ValueError(
+            "trajectory と t_at_steps の長さが一致しません: "
+            f"len(trajectory)={len(points)}, len(t_at_steps)={len(t_at_steps)}"
+        )
+    if len(t_at_steps) == 0:
+        return pd.DataFrame(columns=["timestamp_s", "x", "y"])
+
+    moved_points = points[1:]
+    first_step_time = t_at_steps[0]
+    timestamps = [float(t - first_step_time) for t in t_at_steps]
+    return pd.DataFrame(
+        {
+            "timestamp_s": timestamps,
+            "x": moved_points[:, 0],
+            "y": moved_points[:, 1],
+        }
+    )
+
+
 def run(
     df_acc: pd.DataFrame | None = None,
     df_gyro: pd.DataFrame | None = None,
@@ -689,11 +736,12 @@ def run(
             Weinbergモデルのスケール係数を補正するユーザー身長 [m]。
 
     Returns:
-        pd.DataFrame: 軌跡データ（列: x, y）
+        pd.DataFrame: 軌跡データ（列: timestamp_s, x, y）
 
     Raises:
         ValueError: ``df_acc`` と ``df_gyro`` の片方だけが渡された場合
     """
+    _validate_scale(scale)
     output_dir = _create_output_dir()
     should_save_animation = plot if save_animation is None else save_animation
 
@@ -730,7 +778,7 @@ def run(
             save_particle_animation,
         )
 
-        trajectory, step_lengths, all_particles = run_particle_filter(
+        trajectory, step_lengths, t_at_steps, all_particles = run_particle_filter(
             peaks,
             df_gyro,
             df_acc,
@@ -748,7 +796,10 @@ def run(
         for i, (x, y) in enumerate(trajectory):
             print(f"step {i}: ({x:.3f}, {y:.3f})")
 
-        df_trajectory = pd.DataFrame(trajectory, columns=["x", "y"])
+        df_trajectory = _build_trajectory_dataframe(
+            trajectory,
+            t_at_steps,
+        )
         output_path = output_dir / "trajectory.csv"
         df_trajectory.to_csv(output_path, index=False)
         print(f"Trajectory saved to {output_path}")
@@ -781,7 +832,14 @@ def run(
             )
 
             plot_step_lengths(step_lengths, output_dir)
-            plot_step_vectors(trajectory, output_dir, df_acc=df_acc, peaks=peaks)
+            plot_step_vectors(
+                trajectory,
+                output_dir,
+                df_acc=df_acc,
+                df_gyro=df_gyro,
+                peaks=peaks,
+                initial_direction=initial_direction,
+            )
 
         if should_save_animation:
             save_particle_animation(
@@ -804,7 +862,10 @@ def run(
         for i, (x, y) in enumerate(trajectory):
             print(f"step {i}: ({x:.3f}, {y:.3f})")
 
-        df_trajectory = pd.DataFrame(trajectory, columns=["x", "y"])
+        df_trajectory = _build_trajectory_dataframe(
+            trajectory,
+            t_at_steps,
+        )
 
         # 軌跡データをoutputフォルダにCSVとして保存
         output_path = output_dir / "trajectory.csv"
@@ -851,6 +912,13 @@ def run(
                 t_acc=t_acc,
                 low_lin_norm=df_acc["low_lin_norm"].to_numpy(),
             )
-            plot_step_vectors(trajectory, output_dir, df_acc=df_acc, peaks=peaks)
+            plot_step_vectors(
+                trajectory,
+                output_dir,
+                df_acc=df_acc,
+                df_gyro=df_gyro,
+                peaks=peaks,
+                initial_direction=initial_direction,
+            )
 
     return df_trajectory
