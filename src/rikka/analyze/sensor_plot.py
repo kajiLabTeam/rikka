@@ -5,11 +5,40 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib import font_manager
 from matplotlib.axes import Axes
 from numpy.typing import NDArray
 
-from ..config import DATA_DIR
+from ..config import DATA_DIR, INITIAL_DIRECTION, SAMPLING_RATE
 from .pdr import detect_steps, load_sensor_data, process_sensor_data
+
+StepAccelerationSamples = tuple[NDArray[np.float64], NDArray[np.float64]]
+_JAPANESE_FONT_CANDIDATES = (
+    "Hiragino Sans",
+    "Hiragino Maru Gothic Pro",
+    "Yu Gothic",
+    "Noto Sans CJK JP",
+    "Noto Sans JP",
+    "IPAexGothic",
+    "TakaoGothic",
+)
+_JAPANESE_FONT_CONFIGURED = False
+
+
+def _configure_japanese_font() -> None:
+    """Matplotlib で利用可能な日本語フォントを設定する。"""
+    global _JAPANESE_FONT_CONFIGURED  # noqa: PLW0603
+    if _JAPANESE_FONT_CONFIGURED:
+        return
+
+    available_fonts = {font.name for font in font_manager.fontManager.ttflist}
+    for font_name in _JAPANESE_FONT_CANDIDATES:
+        if font_name in available_fonts:
+            plt.rcParams["font.family"] = [font_name]
+            plt.rcParams["axes.unicode_minus"] = False
+            break
+
+    _JAPANESE_FONT_CONFIGURED = True
 
 
 def plot_sensor_data(data_dir: str | Path = DATA_DIR) -> None:
@@ -18,6 +47,8 @@ def plot_sensor_data(data_dir: str | Path = DATA_DIR) -> None:
     Args:
         data_dir: Accelerometer.csv と Gyroscope.csv が格納されたディレクトリ
     """
+    _configure_japanese_font()
+
     data_path = Path(data_dir)
     df_acc, df_gyro = load_sensor_data(data_path)
     df_acc, df_gyro = process_sensor_data(df_acc, df_gyro)
@@ -124,6 +155,8 @@ def plot_step_lengths(
         t_acc: 加速度データの時刻配列 [s]（時系列モード用）
         low_lin_norm: 平滑化線形加速度ノルム配列（時系列モード用）
     """
+    _configure_japanese_font()
+
     arr = np.array(step_lengths)
     n = len(arr)
     if n == 0:
@@ -259,19 +292,27 @@ def plot_step_lengths(
     plt.show()
 
 
-def _get_step_acceleration_points(
+def _dataframe_times(df: pd.DataFrame) -> NDArray[np.float64]:
+    """DataFrame の時刻配列を返す。利用できない場合は固定周期を使う。"""
+    if "t" in df.columns:
+        times = np.asarray(pd.to_numeric(df["t"], errors="coerce"), dtype=np.float64)
+        if len(times) == len(df) and np.isfinite(times).all():
+            if len(times) <= 1 or np.all(np.diff(times) > 0):
+                return times
+    return np.arange(len(df), dtype=np.float64) / SAMPLING_RATE
+
+
+def _get_step_acceleration_samples(
     df_acc: pd.DataFrame | None,
     peaks: np.ndarray | None,
     step_no: int,
     window: int = 50,
-) -> NDArray[np.float64] | None:
-    """ステップに対応する水平加速度点群を返す。"""
+) -> StepAccelerationSamples | None:
+    """ステップに対応する水平加速度点群と時刻配列を返す。"""
     if df_acc is None or peaks is None or len(peaks) == 0:
         return None
 
-    accel_columns = (
-        ("h_y", "h_z") if {"h_y", "h_z"} <= set(df_acc.columns) else ("lin_y", "lin_z")
-    )
+    accel_columns = ("h_y", "h_z")
     if not set(accel_columns) <= set(df_acc.columns):
         return None
 
@@ -290,30 +331,60 @@ def _get_step_acceleration_points(
     if end <= start:
         return None
 
+    times = _dataframe_times(df_acc)[start:end]
     points = np.asarray(
         df_acc.iloc[start:end][list(accel_columns)].to_numpy(dtype=float),
         dtype=np.float64,
     )
-    points = points[np.isfinite(points).all(axis=1)]
+    valid = np.isfinite(points).all(axis=1) & np.isfinite(times)
+    points = points[valid]
+    times = times[valid]
     if len(points) == 0:
         return None
-    return points
+    return points, times
 
 
 def _project_acceleration_to_step_axes(
-    points: NDArray[np.float64],
+    samples: StepAccelerationSamples,
+    df_gyro: pd.DataFrame | None,
     dx: float,
     dy: float,
+    initial_direction: float = INITIAL_DIRECTION,
 ) -> NDArray[np.float64] | None:
-    """水平加速度をステップの進行方向・横方向へ射影する。"""
+    """世界座標へ回転した水平加速度をステップの進行方向・横方向へ射影する。"""
     length = float(np.hypot(dx, dy))
     if length <= 1e-12:
         return None
+    if df_gyro is None or "low_angle" not in df_gyro.columns:
+        return None
+
+    points, sample_times = samples
+    if len(points) == 0 or len(sample_times) == 0:
+        return None
+
+    gyro_times = _dataframe_times(df_gyro)
+    low_angle = np.asarray(
+        pd.to_numeric(df_gyro["low_angle"], errors="coerce"), dtype=np.float64
+    )
+    valid_gyro = np.isfinite(gyro_times) & np.isfinite(low_angle)
+    if not valid_gyro.any():
+        return None
+
+    angles = np.interp(sample_times, gyro_times[valid_gyro], low_angle[valid_gyro])
+    angles = angles + float(np.deg2rad(initial_direction))
+
+    h_y = points[:, 0]
+    h_z = points[:, 1]
+    cos_a = np.cos(angles)
+    sin_a = np.sin(angles)
+    world_x = h_y * cos_a - h_z * sin_a
+    world_y = h_y * sin_a + h_z * cos_a
 
     forward_axis = np.array([dx / length, dy / length], dtype=np.float64)
     lateral_axis = np.array([-forward_axis[1], forward_axis[0]], dtype=np.float64)
-    forward_acc = points @ forward_axis
-    lateral_acc = points @ lateral_axis
+    world_points = np.column_stack([world_x, world_y])
+    forward_acc = world_points @ forward_axis
+    lateral_acc = world_points @ lateral_axis
     return np.column_stack([forward_acc, lateral_acc])
 
 
@@ -322,7 +393,7 @@ def _plot_no_acceleration_data(ax: Axes) -> None:
     ax.text(
         0.5,
         0.5,
-        "No acceleration data",
+        "加速度データなし",
         transform=ax.transAxes,
         ha="center",
         va="center",
@@ -348,19 +419,26 @@ def plot_step_vectors(
     output_dir: Path | None = None,
     *,
     df_acc: pd.DataFrame | None = None,
+    df_gyro: pd.DataFrame | None = None,
     peaks: np.ndarray | None = None,
+    initial_direction: float = INITIAL_DIRECTION,
 ) -> None:
     """各ステップの変位ベクトルを個別画像として保存する。
 
-    ``df_acc`` と ``peaks`` が渡された場合は、同じステップ区間の水平加速度を
-    進行方向・横方向へ射影し、時系列と2D分布を併せて描画する。
+    ``df_acc``・``df_gyro``・``peaks`` が渡された場合は、同じステップ区間の
+    水平加速度を世界座標へ回転してから進行方向・横方向へ射影し、
+    時系列と2D分布を併せて描画する。
 
     Args:
         trajectory: 各ステップの [x, y] 座標リスト（原点を含む）
         output_dir: PNG 保存先ディレクトリ（None なら保存しない）
         df_acc: 処理済み加速度DataFrame
+        df_gyro: 処理済みジャイロDataFrame
         peaks: ステップピークのインデックス配列
+        initial_direction: 歩行開始方向のオフセット [度]
     """
+    _configure_japanese_font()
+
     points = np.asarray(trajectory, dtype=float)
     if len(points) < 2:
         return
@@ -392,10 +470,16 @@ def plot_step_vectors(
         original_step_numbers, vectors, lengths, colors, strict=True
     ):
         heading = float(np.degrees(np.arctan2(dy, dx)))
-        accel_points = _get_step_acceleration_points(df_acc, peaks, int(step_no))
+        accel_samples = _get_step_acceleration_samples(df_acc, peaks, int(step_no))
         projected_accel = (
-            _project_acceleration_to_step_axes(accel_points, float(dx), float(dy))
-            if accel_points is not None
+            _project_acceleration_to_step_axes(
+                accel_samples,
+                df_gyro,
+                float(dx),
+                float(dy),
+                initial_direction,
+            )
+            if accel_samples is not None
             else None
         )
 
@@ -417,8 +501,8 @@ def plot_step_vectors(
         ax_vector.axhline(0, color="0.35", linewidth=1.0)
         ax_vector.axvline(0, color="0.35", linewidth=1.0)
         ax_vector.plot([0.0, dx], [0.0, dy], color=color, linewidth=3.0, alpha=0.9)
-        ax_vector.scatter(0.0, 0.0, color="0.2", s=28, zorder=3, label="start")
-        ax_vector.scatter(dx, dy, color=color, s=40, zorder=3, label="end")
+        ax_vector.scatter(0.0, 0.0, color="0.2", s=28, zorder=3, label="開始")
+        ax_vector.scatter(dx, dy, color=color, s=40, zorder=3, label="終了")
         ax_vector.annotate(
             "",
             xy=(dx, dy),
@@ -434,19 +518,19 @@ def plot_step_vectors(
         ax_vector.text(
             0.98,
             0.97,
-            f"dx={dx:.3f} m\n"
-            f"dy={dy:.3f} m\n"
-            f"length={length:.3f} m\n"
-            f"heading={heading:.1f}°",
+            f"X変位={dx:.3f} m\n"
+            f"Y変位={dy:.3f} m\n"
+            f"歩幅={length:.3f} m\n"
+            f"方位={heading:.1f}°",
             transform=ax_vector.transAxes,
             fontsize=10,
             verticalalignment="top",
             horizontalalignment="right",
             bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.75},
         )
-        ax_vector.set_xlabel("dx [m]")
-        ax_vector.set_ylabel("dy [m]")
-        ax_vector.set_title(f"Step {step_no:03d} Displacement")
+        ax_vector.set_xlabel("X方向の変位 [m]")
+        ax_vector.set_ylabel("Y方向の変位 [m]")
+        ax_vector.set_title(f"ステップ {step_no:03d} の推定変位")
         ax_vector.tick_params(labelsize=8)
         ax_vector.legend(loc="upper left", fontsize=9)
 
@@ -463,19 +547,19 @@ def plot_step_vectors(
                 forward_acc,
                 color="steelblue",
                 linewidth=1.4,
-                label="forward",
+                label="進行方向",
             )
             ax_timeseries.plot(
                 phase,
                 lateral_acc,
                 color="darkorange",
                 linewidth=1.4,
-                label="lateral",
+                label="横方向",
             )
             ax_timeseries.axhline(0.0, color="0.35", linewidth=0.8)
-            ax_timeseries.set_title("Acceleration over Step")
-            ax_timeseries.set_xlabel("step phase [%]")
-            ax_timeseries.set_ylabel("acceleration [m/s²]")
+            ax_timeseries.set_title("進行方向基準の加速度時系列")
+            ax_timeseries.set_xlabel("ステップ内の進行度 [%]")
+            ax_timeseries.set_ylabel("加速度 [m/s²]")
             ax_timeseries.grid(True, linewidth=0.4)
             ax_timeseries.legend(loc="upper right", fontsize=8)
 
@@ -502,7 +586,7 @@ def plot_step_vectors(
                 color="0.2",
                 s=28,
                 zorder=3,
-                label="start",
+                label="開始",
             )
             ax_distribution.scatter(
                 forward_acc[-1],
@@ -510,15 +594,15 @@ def plot_step_vectors(
                 color="crimson",
                 s=32,
                 zorder=3,
-                label="end",
+                label="終了",
             )
             ax_distribution.axhline(0.0, color="0.35", linewidth=0.8)
             ax_distribution.axvline(0.0, color="0.35", linewidth=0.8)
             ax_distribution.set_aspect("equal", adjustable="box")
             _set_symmetric_accel_limits(ax_distribution, projected_accel)
-            ax_distribution.set_title("Acceleration Distribution (color=phase)")
-            ax_distribution.set_xlabel("forward acceleration [m/s²]")
-            ax_distribution.set_ylabel("lateral acceleration [m/s²]")
+            ax_distribution.set_title("進行方向基準の加速度分布（色=進行度）")
+            ax_distribution.set_xlabel("進行方向の加速度 [m/s²]")
+            ax_distribution.set_ylabel("横方向の加速度 [m/s²]")
             ax_distribution.grid(True, linewidth=0.4)
             ax_distribution.legend(loc="upper right", fontsize=8)
 
