@@ -1,5 +1,6 @@
 from datetime import datetime
 from pathlib import Path
+from typing import NamedTuple
 
 import matplotlib.cm as cm
 import matplotlib.pyplot as plt
@@ -10,18 +11,43 @@ from matplotlib.colors import Normalize
 from scipy.signal import find_peaks
 
 from ..config import (
+    ACCEL_HEADING_MIN_LINE_LENGTH,
+    ACCEL_HEADING_MIN_PEAK_DISTANCE,
+    ACCEL_HEADING_MIN_PEAK_NORM,
     DATA_DIR,
     FLOORMAP_ORIGIN_PX,
     FLOORMAP_PATH,
     FLOORMAP_SCALE,
+    GYRO_BIAS_METHOD,
+    GYRO_BIAS_MIN_CALIBRATION_SECONDS,
+    GYRO_BIAS_OUTLIER_MAD_SCALE,
+    GYRO_BIAS_STATIC_ACCEL_P95_WEIGHT,
+    GYRO_BIAS_STATIC_GYRO_STD_WEIGHT,
+    GYRO_BIAS_STATIC_MAX_ACCEL_P95,
+    GYRO_BIAS_STATIC_MAX_GYRO_STD,
+    GYRO_BIAS_STATIC_SEARCH_END_SECONDS,
+    GYRO_BIAS_STATIC_SEARCH_START_SECONDS,
+    GYRO_BIAS_STATIC_WALK_ONSET_MARGIN_S,
+    GYRO_BIAS_STATIC_WINDOW_SECONDS,
+    GYRO_BIAS_STATIC_WINDOW_STEP_SECONDS,
+    GYRO_BIAS_WALK_ONSET_MAX_INTERVAL_S,
+    GYRO_BIAS_WALK_ONSET_MIN_STEPS,
+    HEADING_METHOD,
     INITIAL_DIRECTION,
     K_FORWARD,
     MAX_SEG_SAMPLES,
+    MIN_SEG_SAMPLES,
+    MOTION_HEADING_CONFIDENCE_THRESHOLD,
+    MOTION_HEADING_MIN_DISPLACEMENT_M,
     PEAK_DISTANCE,
     PEAK_HEIGHT,
     SAMPLING_RATE,
+    SIDESTEP_LATERAL_RATIO,
+    STEP_DETECTION_METHOD,
     STEP_LENGTH_METHOD,
     STEP_LENGTH_WINDOW,
+    STEP_VERTICAL_SMOOTH_WINDOW,
+    STEP_VERTICAL_THRESHOLD_PERCENTILE,
     USER_HEIGHT_M,
     WEINBERG_K,
     WINDOW_ACC,
@@ -48,6 +74,92 @@ GYRO_COLUMNS = {
     "Y (rad/s)": "y",
     "Z (rad/s)": "z",
 }
+
+STEP_DETECTION_METHODS = ("peak", "paper_vertical_threshold")
+HEADING_METHODS = (
+    "gyro",
+    "accel_method1",
+    "accel_method2",
+    "gyro_accel_motion",
+)
+GYRO_BIAS_METHODS = ("prewalk_robust", "initial_robust", "quietest", "manual")
+
+
+class StepSegment(NamedTuple):
+    """1歩区間を表すインデックス範囲。"""
+
+    start_index: int
+    end_index: int
+    contact_index: int
+
+
+class StepDetectionResult(NamedTuple):
+    """ステップ検出結果。既存互換用ピーク列と論文方式用区間を併せて持つ。"""
+
+    method: str
+    peaks: np.ndarray
+    segments: tuple[StepSegment, ...]
+    threshold: float | None
+    polarity: int | None
+
+
+class StepHeading(NamedTuple):
+    """1歩ごとの方位候補と採用結果。角度はすべてラジアン。"""
+
+    step_index: int
+    timestamp_s: float
+    gyro_heading: float | None
+    accel_method1_heading: float | None
+    accel_method2_heading: float | None
+    selected_heading: float | None
+    source: str
+    confidence: float
+    angle_diff_method1: float | None
+    angle_diff_method2: float | None
+    segment_start_index: int | None
+    segment_end_index: int | None
+    peak1_index: int | None
+    peak2_index: int | None
+    body_heading: float | None
+    motion_heading: float | None
+    movement_type: str
+    forward_displacement: float | None
+    lateral_displacement: float | None
+    motion_confidence: float
+    motion_reject_reason: str | None
+
+
+class GyroBiasResult(NamedTuple):
+    """ジャイロバイアス推定結果と診断情報。"""
+
+    method: str
+    bias_rad_s: float
+    calibration_start_s: float | None
+    calibration_end_s: float | None
+    sample_count: int
+    kept_sample_count: int
+    raw_mean: float | None
+    robust_mean: float | None
+    median: float | None
+    mad: float | None
+    candidate_score: float | None
+    gyro_std: float | None
+    accel_p95: float | None
+    accel_max: float | None
+    search_start_s: float | None
+    search_end_s: float | None
+    fallback_reason: str | None
+
+
+class _GyroBiasStaticCandidate(NamedTuple):
+    """gyro bias 推定に使う静止候補窓。"""
+
+    start_s: float
+    end_s: float
+    score: float
+    gyro_std: float
+    accel_p95: float
+    accel_max: float
 
 
 def load_sensor_data(
@@ -197,8 +309,399 @@ def _validate_scale(scale: float) -> None:
         raise ValueError("scale は正の値を指定してください。")
 
 
+def _validate_gyro_bias_method(method: str) -> str:
+    """ジャイロバイアス推定手法名を検証する。"""
+    if method not in GYRO_BIAS_METHODS:
+        allowed = ", ".join(GYRO_BIAS_METHODS)
+        raise ValueError(
+            f"gyro_bias_method は {allowed} のいずれかを指定してください。"
+        )
+    return method
+
+
+def _time_mask(df: pd.DataFrame, start_s: float, end_s: float) -> np.ndarray:
+    """指定時刻範囲に含まれる行を表す mask を返す。"""
+    times = _time_values(df)
+    if times is None:
+        times = np.arange(len(df), dtype=float) / SAMPLING_RATE
+    return (times >= start_s) & (times <= end_s)
+
+
+def _robust_gyro_bias_from_mask(
+    df_gyro: pd.DataFrame,
+    mask: np.ndarray,
+    method: str,
+    fallback_reason: str | None = None,
+    candidate: _GyroBiasStaticCandidate | None = None,
+    search_start_s: float | None = None,
+    search_end_s: float | None = None,
+) -> GyroBiasResult | None:
+    """mask で指定した区間から外れ値に強い gyro bias を推定する。"""
+    if len(mask) != len(df_gyro) or not mask.any():
+        return None
+
+    values = np.asarray(pd.to_numeric(df_gyro["x"], errors="coerce"), dtype=float)
+    segment = values[mask]
+    segment = segment[np.isfinite(segment)]
+    if len(segment) == 0:
+        return None
+
+    median = float(np.nanmedian(segment))
+    mad = float(np.nanmedian(np.abs(segment - median)))
+    if mad <= 1e-12:
+        keep = np.isfinite(segment) & (np.abs(segment - median) <= 1e-12)
+    else:
+        robust_sigma = 1.4826 * mad
+        keep = np.abs(segment - median) <= GYRO_BIAS_OUTLIER_MAD_SCALE * robust_sigma
+    kept = segment[keep]
+    if len(kept) == 0:
+        return None
+
+    times = _time_values(df_gyro)
+    if times is None:
+        times = np.arange(len(df_gyro), dtype=float) / SAMPLING_RATE
+    selected_times = times[mask]
+    return GyroBiasResult(
+        method=method,
+        bias_rad_s=float(np.nanmean(kept)),
+        calibration_start_s=float(selected_times[0]) if len(selected_times) else None,
+        calibration_end_s=float(selected_times[-1]) if len(selected_times) else None,
+        sample_count=int(len(segment)),
+        kept_sample_count=int(len(kept)),
+        raw_mean=float(np.nanmean(segment)),
+        robust_mean=float(np.nanmean(kept)),
+        median=median,
+        mad=mad,
+        candidate_score=None if candidate is None else candidate.score,
+        gyro_std=None if candidate is None else candidate.gyro_std,
+        accel_p95=None if candidate is None else candidate.accel_p95,
+        accel_max=None if candidate is None else candidate.accel_max,
+        search_start_s=search_start_s,
+        search_end_s=search_end_s,
+        fallback_reason=fallback_reason,
+    )
+
+
+def _estimate_gyro_bias_quietest(
+    df_gyro: pd.DataFrame,
+    fallback_reason: str | None = None,
+) -> GyroBiasResult:
+    """既存方式: 全期間で分散最小の窓から gyro bias を推定する。"""
+    rolling_var = df_gyro["x"].rolling(window=WINDOW_GYRO).var()
+    values = np.asarray(pd.to_numeric(df_gyro["x"], errors="coerce"), dtype=float)
+    times = _time_values(df_gyro)
+    if times is None:
+        times = np.arange(len(df_gyro), dtype=float) / SAMPLING_RATE
+
+    if rolling_var.notna().any():
+        quiet_end = int(rolling_var.idxmin())
+        quiet_start = max(0, quiet_end - WINDOW_GYRO + 1)
+    else:
+        quiet_start = 0
+        quiet_end = len(values) - 1
+        fallback_reason = "quietest_all_samples"
+
+    segment = values[quiet_start : quiet_end + 1]
+    segment = segment[np.isfinite(segment)]
+    if len(segment) == 0:
+        return GyroBiasResult(
+            method="quietest",
+            bias_rad_s=0.0,
+            calibration_start_s=None,
+            calibration_end_s=None,
+            sample_count=0,
+            kept_sample_count=0,
+            raw_mean=None,
+            robust_mean=None,
+            median=None,
+            mad=None,
+            candidate_score=None,
+            gyro_std=None,
+            accel_p95=None,
+            accel_max=None,
+            search_start_s=None,
+            search_end_s=None,
+            fallback_reason="no_valid_gyro",
+        )
+
+    raw_mean = float(np.nanmean(segment))
+    median = float(np.nanmedian(segment))
+    mad = float(np.nanmedian(np.abs(segment - median)))
+    return GyroBiasResult(
+        method="quietest",
+        bias_rad_s=raw_mean,
+        calibration_start_s=float(times[quiet_start]) if len(times) else None,
+        calibration_end_s=float(times[quiet_end]) if len(times) else None,
+        sample_count=int(len(segment)),
+        kept_sample_count=int(len(segment)),
+        raw_mean=raw_mean,
+        robust_mean=raw_mean,
+        median=median,
+        mad=mad,
+        candidate_score=None,
+        gyro_std=None,
+        accel_p95=None,
+        accel_max=None,
+        search_start_s=None,
+        search_end_s=None,
+        fallback_reason=fallback_reason,
+    )
+
+
+def _estimate_gyro_bias_initial_robust(
+    df_gyro: pd.DataFrame,
+    fallback_reason: str | None = None,
+) -> GyroBiasResult | None:
+    """記録先頭の短い区間から gyro bias をロバスト推定する。"""
+    times = _time_values(df_gyro)
+    if times is None:
+        start_s = 0.0
+    elif len(times) == 0:
+        return None
+    else:
+        start_s = float(times[0])
+    end_s = start_s + GYRO_BIAS_MIN_CALIBRATION_SECONDS
+    return _robust_gyro_bias_from_mask(
+        df_gyro,
+        _time_mask(df_gyro, start_s, end_s),
+        method="initial_robust",
+        fallback_reason=fallback_reason,
+    )
+
+
+def _find_walk_onset_time(df_acc: pd.DataFrame) -> float | None:
+    """連続したステップ候補の先頭時刻を歩行開始として返す。"""
+    if "low_lin_norm" not in df_acc.columns:
+        return None
+    peaks, _ = find_peaks(
+        df_acc["low_lin_norm"].to_numpy(dtype=float),
+        distance=PEAK_DISTANCE,
+        height=PEAK_HEIGHT,
+    )
+    if len(peaks) < GYRO_BIAS_WALK_ONSET_MIN_STEPS:
+        return None
+
+    peak_times = np.asarray([_time_at_index(df_acc, int(peak)) for peak in peaks])
+    window = GYRO_BIAS_WALK_ONSET_MIN_STEPS
+    for start in range(0, len(peak_times) - window + 1):
+        intervals = np.diff(peak_times[start : start + window])
+        if np.all(intervals <= GYRO_BIAS_WALK_ONSET_MAX_INTERVAL_S):
+            return float(peak_times[start])
+    return None
+
+
+def _find_static_gyro_bias_candidate(
+    df_acc: pd.DataFrame,
+    df_gyro: pd.DataFrame,
+    search_start_s: float,
+    search_end_s: float,
+) -> _GyroBiasStaticCandidate | None:
+    """指定範囲内から gyro bias 推定用の静止窓を選ぶ。"""
+    if "low_lin_norm" not in df_acc.columns:
+        return None
+
+    window_s = GYRO_BIAS_STATIC_WINDOW_SECONDS
+    if search_end_s - search_start_s < window_s:
+        return None
+
+    max_start_s = search_end_s - window_s
+    step_s = GYRO_BIAS_STATIC_WINDOW_STEP_SECONDS
+    min_samples = max(3, int(GYRO_BIAS_MIN_CALIBRATION_SECONDS * SAMPLING_RATE))
+    best: _GyroBiasStaticCandidate | None = None
+
+    for start_s in np.arange(search_start_s, max_start_s + step_s * 0.5, step_s):
+        end_s = float(start_s + window_s)
+        gyro_mask = _time_mask(df_gyro, float(start_s), end_s)
+        acc_mask = _time_mask(df_acc, float(start_s), end_s)
+        if int(gyro_mask.sum()) < min_samples or int(acc_mask.sum()) < min_samples:
+            continue
+
+        gyro_segment = np.asarray(
+            pd.to_numeric(df_gyro.loc[gyro_mask, "x"], errors="coerce"),
+            dtype=float,
+        )
+        accel_segment = np.asarray(
+            pd.to_numeric(df_acc.loc[acc_mask, "low_lin_norm"], errors="coerce"),
+            dtype=float,
+        )
+        gyro_segment = gyro_segment[np.isfinite(gyro_segment)]
+        accel_segment = accel_segment[np.isfinite(accel_segment)]
+        if len(gyro_segment) < min_samples or len(accel_segment) < min_samples:
+            continue
+
+        gyro_std = float(np.nanstd(gyro_segment))
+        accel_p95 = float(np.nanpercentile(accel_segment, 95))
+        accel_max = float(np.nanmax(accel_segment))
+        if (
+            accel_p95 > GYRO_BIAS_STATIC_MAX_ACCEL_P95
+            or gyro_std > GYRO_BIAS_STATIC_MAX_GYRO_STD
+        ):
+            continue
+
+        score = (
+            GYRO_BIAS_STATIC_ACCEL_P95_WEIGHT * accel_p95
+            + GYRO_BIAS_STATIC_GYRO_STD_WEIGHT * gyro_std
+        )
+        candidate = _GyroBiasStaticCandidate(
+            start_s=float(start_s),
+            end_s=end_s,
+            score=float(score),
+            gyro_std=gyro_std,
+            accel_p95=accel_p95,
+            accel_max=accel_max,
+        )
+        if best is None or candidate.score < best.score:
+            best = candidate
+
+    return best
+
+
+def _estimate_gyro_bias_static_window(
+    df_acc: pd.DataFrame,
+    df_gyro: pd.DataFrame,
+    search_start_s: float,
+    search_end_s: float,
+    fallback_reason: str | None = None,
+) -> GyroBiasResult | None:
+    """探索範囲内の最良静止窓から gyro bias を推定する。"""
+    candidate = _find_static_gyro_bias_candidate(
+        df_acc,
+        df_gyro,
+        search_start_s,
+        search_end_s,
+    )
+    if candidate is None:
+        return None
+
+    return _robust_gyro_bias_from_mask(
+        df_gyro,
+        _time_mask(df_gyro, candidate.start_s, candidate.end_s),
+        method="prewalk_robust",
+        fallback_reason=fallback_reason,
+        candidate=candidate,
+        search_start_s=search_start_s,
+        search_end_s=search_end_s,
+    )
+
+
+def _startup_static_search_range(df_gyro: pd.DataFrame) -> tuple[float, float] | None:
+    """記録先頭側の静止探索範囲を返す。"""
+    times = _time_values(df_gyro)
+    if times is None:
+        first_time = 0.0
+    elif len(times) == 0:
+        return None
+    else:
+        first_time = float(times[0])
+
+    return (
+        first_time + GYRO_BIAS_STATIC_SEARCH_START_SECONDS,
+        first_time + GYRO_BIAS_STATIC_SEARCH_END_SECONDS,
+    )
+
+
+def _estimate_gyro_bias_prewalk_robust(
+    df_acc: pd.DataFrame,
+    df_gyro: pd.DataFrame,
+) -> GyroBiasResult | None:
+    """歩行開始前の静止サブウィンドウから gyro bias を推定する。"""
+    onset_time = _find_walk_onset_time(df_acc)
+    if onset_time is None:
+        return None
+
+    search_range = _startup_static_search_range(df_gyro)
+    if search_range is None:
+        return None
+    search_start_s, startup_end_s = search_range
+    search_end_s = min(
+        startup_end_s,
+        onset_time - GYRO_BIAS_STATIC_WALK_ONSET_MARGIN_S,
+    )
+
+    return _estimate_gyro_bias_static_window(
+        df_acc,
+        df_gyro,
+        search_start_s,
+        search_end_s,
+    )
+
+
+def estimate_gyro_bias(
+    df_acc: pd.DataFrame,
+    df_gyro: pd.DataFrame,
+    method: str = GYRO_BIAS_METHOD,
+    manual_bias: float | None = None,
+) -> GyroBiasResult:
+    """指定手法で gyro bias を推定する。"""
+    selected_method = _validate_gyro_bias_method(method)
+    if selected_method == "manual":
+        if manual_bias is None:
+            raise ValueError("gyro_bias_method='manual' では gyro_bias が必要です。")
+        return GyroBiasResult(
+            method="manual",
+            bias_rad_s=float(manual_bias),
+            calibration_start_s=None,
+            calibration_end_s=None,
+            sample_count=0,
+            kept_sample_count=0,
+            raw_mean=None,
+            robust_mean=float(manual_bias),
+            median=None,
+            mad=None,
+            candidate_score=None,
+            gyro_std=None,
+            accel_p95=None,
+            accel_max=None,
+            search_start_s=None,
+            search_end_s=None,
+            fallback_reason=None,
+        )
+
+    if selected_method == "quietest":
+        return _estimate_gyro_bias_quietest(df_gyro)
+
+    if selected_method == "initial_robust":
+        result = _estimate_gyro_bias_initial_robust(df_gyro)
+        return (
+            result
+            if result is not None
+            else _estimate_gyro_bias_quietest(
+                df_gyro,
+                fallback_reason="initial_robust_unavailable",
+            )
+        )
+
+    result = _estimate_gyro_bias_prewalk_robust(df_acc, df_gyro)
+    if result is not None:
+        return result
+    search_range = _startup_static_search_range(df_gyro)
+    if search_range is not None:
+        result = _estimate_gyro_bias_static_window(
+            df_acc,
+            df_gyro,
+            search_range[0],
+            search_range[1],
+            fallback_reason="prewalk_static_unavailable",
+        )
+        if result is not None:
+            return result
+    result = _estimate_gyro_bias_initial_robust(
+        df_gyro,
+        fallback_reason="startup_static_unavailable",
+    )
+    if result is not None:
+        return result
+    return _estimate_gyro_bias_quietest(
+        df_gyro,
+        fallback_reason="prewalk_and_initial_unavailable",
+    )
+
+
 def process_sensor_data(
-    df_acc: pd.DataFrame, df_gyro: pd.DataFrame
+    df_acc: pd.DataFrame,
+    df_gyro: pd.DataFrame,
+    gyro_bias_method: str | None = None,
+    gyro_bias: float | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """生センサーデータからノルム・重力推定・上下/水平加速度・角度を計算する。
 
@@ -275,21 +778,17 @@ def process_sensor_data(
         df_acc["h_x"] ** 2 + df_acc["h_y"] ** 2 + df_acc["h_z"] ** 2
     )
 
-    # 最小分散区間（静止期間）を自動検出してバイアスを推定する
-    # 全体 mean はターン動作の信号が混入するため使用しない
-    # 分散が最小のウィンドウが最も静止に近い区間
-    _rolling_var = df_gyro["x"].rolling(window=WINDOW_GYRO).var()
-    if _rolling_var.notna().any():
-        # rolling(window=W) のインデックス i は [i-W+1, i] の W 個を表す
-        _quiet_end = int(_rolling_var.idxmin())
-        _quiet_start = max(0, _quiet_end - WINDOW_GYRO + 1)
-        # 静止区間の平均値をドリフトオフセットとして使用 [rad/s]
-        gyro_bias = float(df_gyro["x"].iloc[_quiet_start : _quiet_end + 1].mean())
-    else:
-        # データ長が WINDOW_GYRO 未満で全 NaN になる場合
-        # 全サンプルの平均をフォールバックとして使用
-        gyro_bias = float(df_gyro["x"].mean())
-    gyro_rate = (df_gyro["x"] - gyro_bias).to_numpy(dtype=float)
+    bias_result = estimate_gyro_bias(
+        df_acc,
+        df_gyro,
+        method=GYRO_BIAS_METHOD if gyro_bias_method is None else gyro_bias_method,
+        manual_bias=gyro_bias,
+    )
+    gyro_rate = (df_gyro["x"] - bias_result.bias_rad_s).to_numpy(dtype=float)
+    df_gyro["gyro_rate"] = gyro_rate
+    df_gyro["gyro_bias"] = bias_result.bias_rad_s
+    df_gyro["gyro_bias_method"] = bias_result.method
+    df_gyro.attrs["gyro_bias_result"] = bias_result
     df_gyro["angle"] = np.cumsum(gyro_rate * _gyro_integration_dt(df_gyro))
     df_gyro["low_angle"] = (
         df_gyro["angle"].rolling(window=WINDOW_GYRO, center=True, min_periods=1).mean()
@@ -298,24 +797,201 @@ def process_sensor_data(
     return df_acc, df_gyro
 
 
-def detect_steps(df_acc: pd.DataFrame) -> np.ndarray:
-    """平滑化した線形加速度ノルムから歩行ステップのピークを検出する。
+def _validate_step_detection_method(method: str) -> str:
+    """ステップ検出手法名を検証する。"""
+    if method not in STEP_DETECTION_METHODS:
+        allowed = ", ".join(STEP_DETECTION_METHODS)
+        raise ValueError(
+            f"step_detection_method は {allowed} のいずれかを指定してください。"
+        )
+    return method
+
+
+def _detect_steps_by_peak(df_acc: pd.DataFrame) -> StepDetectionResult:
+    """既存方式: 平滑化線形加速度ノルムからステップピークを検出する。"""
+    peaks, _ = find_peaks(
+        df_acc["low_lin_norm"].to_numpy(),
+        distance=PEAK_DISTANCE,
+        height=PEAK_HEIGHT,
+    )
+    return StepDetectionResult(
+        method="peak",
+        peaks=np.asarray(peaks),
+        segments=(),
+        threshold=PEAK_HEIGHT,
+        polarity=None,
+    )
+
+
+def _threshold_groups(mask: np.ndarray) -> list[tuple[int, int]]:
+    """True が連続する範囲を [start, end) のリストで返す。"""
+    groups: list[tuple[int, int]] = []
+    start: int | None = None
+    for i, value in enumerate(mask):
+        if value and start is None:
+            start = i
+        elif not value and start is not None:
+            groups.append((start, i))
+            start = None
+    if start is not None:
+        groups.append((start, len(mask)))
+    return groups
+
+
+def _suppress_close_contacts(
+    contacts: list[tuple[int, float]],
+    min_distance: int = PEAK_DISTANCE,
+) -> list[tuple[int, float]]:
+    """近すぎる接地候補は強度が大きい方だけ残す。"""
+    if not contacts:
+        return []
+
+    kept: list[tuple[int, float]] = [contacts[0]]
+    for index, strength in contacts[1:]:
+        prev_index, prev_strength = kept[-1]
+        if index - prev_index < min_distance:
+            if strength > prev_strength:
+                kept[-1] = (index, strength)
+        else:
+            kept.append((index, strength))
+    return kept
+
+
+def _detect_steps_by_vertical_threshold(df_acc: pd.DataFrame) -> StepDetectionResult:
+    """論文方式に寄せて、上下加速度の接地閾値から1歩区間を抽出する。"""
+    values = np.asarray(pd.to_numeric(df_acc["v_acc"], errors="coerce"), dtype=float)
+    finite = np.isfinite(values)
+    if not finite.any():
+        return StepDetectionResult(
+            method="paper_vertical_threshold",
+            peaks=np.array([], dtype=int),
+            segments=(),
+            threshold=None,
+            polarity=None,
+        )
+
+    filled = values.copy()
+    median = float(np.nanmedian(filled[finite]))
+    filled[~finite] = median
+    smoothed = (
+        pd.Series(filled)
+        .rolling(window=STEP_VERTICAL_SMOOTH_WINDOW, center=True, min_periods=1)
+        .mean()
+        .to_numpy(dtype=float)
+    )
+
+    positive_span = float(np.nanpercentile(smoothed, 95))
+    negative_span = abs(float(np.nanpercentile(smoothed, 5)))
+    polarity = -1 if negative_span > positive_span else 1
+    raw_contact_signal = filled * polarity
+    contact_signal = smoothed * polarity
+    finite_contact = contact_signal[np.isfinite(contact_signal)]
+    threshold = float(
+        np.nanpercentile(finite_contact, STEP_VERTICAL_THRESHOLD_PERCENTILE)
+    )
+    baseline = float(np.nanmedian(finite_contact))
+    signal_max = float(np.nanmax(finite_contact))
+    if threshold <= baseline:
+        threshold = baseline + (signal_max - baseline) * 0.25
+    if signal_max <= baseline:
+        return StepDetectionResult(
+            method="paper_vertical_threshold",
+            peaks=np.array([], dtype=int),
+            segments=(),
+            threshold=threshold,
+            polarity=polarity,
+        )
+
+    groups = _threshold_groups(contact_signal >= threshold)
+    contacts: list[tuple[int, float]] = []
+    for start, end in groups:
+        if end <= start:
+            continue
+        segment = raw_contact_signal[start:end]
+        if not np.isfinite(segment).any():
+            continue
+        local_index = int(np.nanargmax(segment))
+        contact_index = start + local_index
+        contacts.append((contact_index, float(raw_contact_signal[contact_index])))
+
+    contacts = _suppress_close_contacts(contacts)
+    contact_indexes = [index for index, _strength in contacts]
+
+    segments: list[StepSegment] = []
+    for start_index, end_index in zip(
+        contact_indexes[:-1], contact_indexes[1:], strict=False
+    ):
+        seg_len = end_index - start_index
+        if MIN_SEG_SAMPLES <= seg_len <= MAX_SEG_SAMPLES:
+            segments.append(
+                StepSegment(
+                    start_index=int(start_index),
+                    end_index=int(end_index),
+                    contact_index=int(end_index),
+                )
+            )
+
+    peaks = np.asarray([segment.contact_index for segment in segments], dtype=int)
+    return StepDetectionResult(
+        method="paper_vertical_threshold",
+        peaks=peaks,
+        segments=tuple(segments),
+        threshold=threshold,
+        polarity=polarity,
+    )
+
+
+def detect_step_result(
+    df_acc: pd.DataFrame,
+    method: str | None = None,
+) -> StepDetectionResult:
+    """指定方式でステップを検出し、互換ピーク列と区間情報を返す。"""
+    selected_method = _validate_step_detection_method(
+        STEP_DETECTION_METHOD if method is None else method
+    )
+    if selected_method == "paper_vertical_threshold":
+        return _detect_steps_by_vertical_threshold(df_acc)
+    return _detect_steps_by_peak(df_acc)
+
+
+def detect_steps(df_acc: pd.DataFrame, method: str | None = None) -> np.ndarray:
+    """指定方式でステップを検出し、既存互換のピーク配列だけを返す。
 
     ``low_lin_norm`` 列に対してピーク検出を行い，ステップに対応するインデックスを返す。
     ピーク間距離 ``PEAK_DISTANCE`` と最小高さ ``PEAK_HEIGHT`` でフィルタリングする。
 
     Args:
         df_acc (pd.DataFrame): ``low_lin_norm`` 列を含む加速度DataFrame
+        method: ステップ検出手法。省略時は ``STEP_DETECTION_METHOD`` を使用。
 
     Returns:
         np.ndarray: ステップピークのインデックス配列
     """
-    peaks, _ = find_peaks(
-        df_acc["low_lin_norm"].to_numpy(),
-        distance=PEAK_DISTANCE,
-        height=PEAK_HEIGHT,
-    )
-    return np.asarray(peaks)
+    return detect_step_result(df_acc, method).peaks
+
+
+class _AccelHeadingResult(NamedTuple):
+    """加速度方位候補の内部計算結果。"""
+
+    method1_heading: float | None
+    method2_heading: float | None
+    confidence: float
+    segment_start_index: int | None
+    segment_end_index: int | None
+    peak1_index: int | None
+    peak2_index: int | None
+
+
+class _MotionHeadingResult(NamedTuple):
+    """ジャイロで世界座標へ回転した水平加速度から推定した移動方向。"""
+
+    body_heading: float | None
+    motion_heading: float | None
+    movement_type: str
+    forward_displacement: float | None
+    lateral_displacement: float | None
+    confidence: float
+    reject_reason: str | None
 
 
 def estimate_step_length(
@@ -467,13 +1143,438 @@ def estimate_step_length_forward(
     return K_FORWARD * osc_disp
 
 
-def estimate_trajectory(
+def _validate_heading_method(method: str) -> str:
+    """方位推定手法名を検証する。"""
+    if method not in HEADING_METHODS:
+        allowed = ", ".join(HEADING_METHODS)
+        raise ValueError(f"heading_method は {allowed} のいずれかを指定してください。")
+    return method
+
+
+def _normalize_angle(angle: float) -> float:
+    """角度を [-pi, pi) に正規化する。"""
+    return float((angle + np.pi) % (2 * np.pi) - np.pi)
+
+
+def _abs_angle_diff(angle_a: float | None, angle_b: float | None) -> float | None:
+    """2つの角度差の絶対値を返す。どちらかが None なら None。"""
+    if angle_a is None or angle_b is None:
+        return None
+    return abs(_normalize_angle(angle_a - angle_b))
+
+
+def _score_ratio(value: float, target: float) -> float:
+    """target 以上を 1.0 とする 0..1 スコアを返す。"""
+    if target <= 0:
+        return 1.0
+    return float(np.clip(value / target, 0.0, 1.0))
+
+
+def _step_segment_bounds(
+    peaks: np.ndarray,
+    i: int,
+    n_samples: int,
+    step_segments: tuple[StepSegment, ...] = (),
+) -> tuple[int, int] | None:
+    """加速度方位推定に使うステップ区間を返す。"""
+    if i < len(step_segments):
+        segment = step_segments[i]
+        return segment.start_index, segment.end_index
+    if i + 1 < len(peaks):
+        return int(peaks[i]), int(peaks[i + 1])
+    if i < len(peaks):
+        peak = int(peaks[i])
+        return (
+            max(0, peak - STEP_LENGTH_WINDOW),
+            min(n_samples, peak + STEP_LENGTH_WINDOW + 1),
+        )
+    return None
+
+
+def _dataframe_times_or_sample_index(df: pd.DataFrame) -> np.ndarray:
+    """DataFrame の時刻列が使えない場合は固定サンプリング周期の時刻を返す。"""
+    times = _time_values(df)
+    if times is not None:
+        return times
+    return np.arange(len(df), dtype=float) / SAMPLING_RATE
+
+
+def _integrate_motion_with_zero_velocity(
+    acc_x: np.ndarray,
+    acc_y: np.ndarray,
+    times: np.ndarray,
+) -> tuple[float, float]:
+    """水平加速度を2重積分し、ステップ両端の速度を0に揃える。"""
+    if len(acc_x) < 3 or len(acc_y) < 3 or len(times) < 3:
+        return 0.0, 0.0
+    dt = np.diff(times, prepend=times[0])
+    dt[0] = 0.0
+    if not np.isfinite(dt).all() or np.any(dt < 0):
+        dt = np.full(len(times), 1.0 / SAMPLING_RATE)
+        dt[0] = 0.0
+
+    velocity_x = np.cumsum(acc_x * dt)
+    velocity_y = np.cumsum(acc_y * dt)
+    velocity_x -= np.linspace(velocity_x[0], velocity_x[-1], len(velocity_x))
+    velocity_y -= np.linspace(velocity_y[0], velocity_y[-1], len(velocity_y))
+
+    return (
+        float(np.sum(velocity_x * dt)),
+        float(np.sum(velocity_y * dt)),
+    )
+
+
+def _classify_movement_type(
+    forward_displacement: float,
+    lateral_displacement: float,
+) -> str:
+    """体の向きに対する移動タイプを返す。"""
+    forward_abs = abs(forward_displacement)
+    lateral_abs = abs(lateral_displacement)
+    if lateral_abs >= SIDESTEP_LATERAL_RATIO * max(forward_abs, 1e-12):
+        return "sidestep"
+    if forward_abs >= lateral_abs:
+        return "forward"
+    return "unknown"
+
+
+def _estimate_motion_heading_from_horizontal_accel(
+    df_acc: pd.DataFrame,
+    df_gyro: pd.DataFrame,
+    peaks: np.ndarray,
+    i: int,
+    body_heading: float | None,
+    direction_offset: float,
+    step_segments: tuple[StepSegment, ...] = (),
+) -> _MotionHeadingResult:
+    """ジャイロで向きを固定し、水平加速度から世界座標上の移動方向を推定する。"""
+    if body_heading is None:
+        return _MotionHeadingResult(None, None, "unknown", None, None, 0.0, "no_gyro")
+    if "low_angle" not in df_gyro.columns:
+        return _MotionHeadingResult(
+            body_heading,
+            None,
+            "unknown",
+            None,
+            None,
+            0.0,
+            "no_gyro_angle",
+        )
+
+    bounds = _step_segment_bounds(peaks, i, len(df_acc), step_segments)
+    if bounds is None:
+        return _MotionHeadingResult(
+            body_heading,
+            None,
+            "unknown",
+            None,
+            None,
+            0.0,
+            "no_step_bounds",
+        )
+    start, end = bounds
+    if end - start < 3:
+        return _MotionHeadingResult(
+            body_heading,
+            None,
+            "unknown",
+            None,
+            None,
+            0.0,
+            "short_segment",
+        )
+
+    h_y = np.asarray(pd.to_numeric(df_acc["h_y"].iloc[start:end], errors="coerce"))
+    h_z = np.asarray(pd.to_numeric(df_acc["h_z"].iloc[start:end], errors="coerce"))
+    sample_times = _dataframe_times_or_sample_index(df_acc)[start:end]
+    valid_acc = np.isfinite(h_y) & np.isfinite(h_z) & np.isfinite(sample_times)
+    if int(valid_acc.sum()) < 3:
+        return _MotionHeadingResult(
+            body_heading,
+            None,
+            "unknown",
+            None,
+            None,
+            0.0,
+            "no_horizontal_accel",
+        )
+
+    h_y = h_y[valid_acc].astype(float)
+    h_z = h_z[valid_acc].astype(float)
+    sample_times = sample_times[valid_acc].astype(float)
+
+    gyro_times = _dataframe_times_or_sample_index(df_gyro)
+    low_angle = np.asarray(
+        pd.to_numeric(df_gyro["low_angle"], errors="coerce"),
+        dtype=float,
+    )
+    valid_gyro = np.isfinite(gyro_times) & np.isfinite(low_angle)
+    if not valid_gyro.any():
+        return _MotionHeadingResult(
+            body_heading,
+            None,
+            "unknown",
+            None,
+            None,
+            0.0,
+            "no_gyro_angle",
+        )
+
+    angles = np.interp(sample_times, gyro_times[valid_gyro], low_angle[valid_gyro])
+    angles = angles + direction_offset
+    world_x = h_y * np.cos(angles) - h_z * np.sin(angles)
+    world_y = h_y * np.sin(angles) + h_z * np.cos(angles)
+    disp_x, disp_y = _integrate_motion_with_zero_velocity(
+        world_x,
+        world_y,
+        sample_times,
+    )
+    displacement_norm = float(np.hypot(disp_x, disp_y))
+    if displacement_norm <= 1e-12:
+        return _MotionHeadingResult(
+            body_heading,
+            None,
+            "unknown",
+            0.0,
+            0.0,
+            0.0,
+            "zero_motion",
+        )
+
+    motion_heading = _normalize_angle(float(np.arctan2(disp_y, disp_x)))
+    body_axis = np.array([np.cos(body_heading), np.sin(body_heading)], dtype=float)
+    lateral_axis = np.array([-body_axis[1], body_axis[0]], dtype=float)
+    displacement = np.array([disp_x, disp_y], dtype=float)
+    forward_displacement = float(displacement @ body_axis)
+    lateral_displacement = float(displacement @ lateral_axis)
+    movement_type = _classify_movement_type(
+        forward_displacement,
+        lateral_displacement,
+    )
+    confidence = _score_ratio(
+        displacement_norm,
+        MOTION_HEADING_MIN_DISPLACEMENT_M,
+    )
+    reject_reason = (
+        None
+        if confidence >= MOTION_HEADING_CONFIDENCE_THRESHOLD
+        else "low_motion_confidence"
+    )
+    return _MotionHeadingResult(
+        body_heading=body_heading,
+        motion_heading=motion_heading,
+        movement_type=movement_type,
+        forward_displacement=forward_displacement,
+        lateral_displacement=lateral_displacement,
+        confidence=confidence,
+        reject_reason=reject_reason,
+    )
+
+
+def _select_two_accel_peaks(norm: np.ndarray) -> tuple[int, int] | None:
+    """平面加速度ノルムから方位推定用の2つの極大点を選ぶ。"""
+    if len(norm) < 2 or not np.isfinite(norm).any():
+        return None
+
+    safe_norm = np.where(np.isfinite(norm), norm, -np.inf)
+    peak_indexes, _ = find_peaks(
+        safe_norm,
+        distance=max(1, ACCEL_HEADING_MIN_PEAK_DISTANCE),
+    )
+    candidates = list(peak_indexes)
+
+    # 端点にピークが出るデータでは find_peaks が拾えないため、強い点を補助候補にする。
+    for index in np.argsort(safe_norm)[::-1]:
+        int_index = int(index)
+        if safe_norm[int_index] == -np.inf:
+            continue
+        if int_index not in candidates:
+            candidates.append(int_index)
+        if len(candidates) >= 4:
+            break
+
+    selected: list[int] = []
+    for index in sorted(candidates, key=lambda idx: safe_norm[idx], reverse=True):
+        if all(index != existing for existing in selected):
+            selected.append(int(index))
+        if len(selected) == 2:
+            break
+
+    if len(selected) < 2:
+        return None
+    peak_a, peak_b = sorted(selected[:2])
+    return peak_a, peak_b
+
+
+def _estimate_accel_headings(
+    df_acc: pd.DataFrame,
+    peaks: np.ndarray,
+    i: int,
+    direction_offset: float,
+    step_segments: tuple[StepSegment, ...] = (),
+) -> _AccelHeadingResult:
+    """論文手法1/2の加速度平面成分方位と信頼度を返す。"""
+    bounds = _step_segment_bounds(peaks, i, len(df_acc), step_segments)
+    if bounds is None:
+        return _AccelHeadingResult(None, None, 0.0, None, None, None, None)
+
+    start, end = bounds
+    if end <= start:
+        return _AccelHeadingResult(None, None, 0.0, start, end, None, None)
+
+    h_y = df_acc["h_y"].iloc[start:end].to_numpy(dtype=float)
+    h_z = df_acc["h_z"].iloc[start:end].to_numpy(dtype=float)
+    valid = np.isfinite(h_y) & np.isfinite(h_z)
+    if valid.sum() < 3:
+        return _AccelHeadingResult(None, None, 0.0, start, end, None, None)
+
+    h_y_safe = np.where(valid, h_y, np.nan)
+    h_z_safe = np.where(valid, h_z, np.nan)
+    norm = np.sqrt(h_y_safe**2 + h_z_safe**2)
+    selected = _select_two_accel_peaks(norm)
+    if selected is None:
+        return _AccelHeadingResult(None, None, 0.0, start, end, None, None)
+
+    local_peak1, local_peak2 = selected
+    peak1_index = start + local_peak1
+    peak2_index = start + local_peak2
+    point1 = np.array([h_y_safe[local_peak1], h_z_safe[local_peak1]], dtype=float)
+    point2 = np.array([h_y_safe[local_peak2], h_z_safe[local_peak2]], dtype=float)
+    if not np.isfinite(point1).all() or not np.isfinite(point2).all():
+        return _AccelHeadingResult(
+            None, None, 0.0, start, end, peak1_index, peak2_index
+        )
+
+    norm1 = float(norm[local_peak1])
+    norm2 = float(norm[local_peak2])
+    line_length = float(np.linalg.norm(point2 - point1))
+    peak_distance = abs(local_peak2 - local_peak1)
+    seg_len = end - start
+
+    if line_length <= 1e-12:
+        return _AccelHeadingResult(
+            None, None, 0.0, start, end, peak1_index, peak2_index
+        )
+
+    # 手法1: 時間的に早い極大値方向。手法2: ノルムが大きい極大値方向。
+    method1_vec = point1 - point2
+    method2_vec = point1 - point2 if norm1 >= norm2 else point2 - point1
+    method1_heading = _normalize_angle(
+        float(np.arctan2(method1_vec[1], method1_vec[0])) + direction_offset
+    )
+    method2_heading = _normalize_angle(
+        float(np.arctan2(method2_vec[1], method2_vec[0])) + direction_offset
+    )
+
+    strength_score = _score_ratio(min(norm1, norm2), ACCEL_HEADING_MIN_PEAK_NORM)
+    separation_score = _score_ratio(peak_distance, ACCEL_HEADING_MIN_PEAK_DISTANCE)
+    line_length_score = _score_ratio(line_length, ACCEL_HEADING_MIN_LINE_LENGTH)
+    duration_score = 1.0 if MIN_SEG_SAMPLES <= seg_len <= MAX_SEG_SAMPLES else 0.0
+    confidence = strength_score * separation_score * line_length_score * duration_score
+
+    return _AccelHeadingResult(
+        method1_heading=method1_heading,
+        method2_heading=method2_heading,
+        confidence=float(confidence),
+        segment_start_index=start,
+        segment_end_index=end,
+        peak1_index=peak1_index,
+        peak2_index=peak2_index,
+    )
+
+
+def resolve_step_heading(
+    peaks: np.ndarray,
+    df_gyro: pd.DataFrame,
+    df_acc: pd.DataFrame,
+    i: int,
+    initial_direction: float = INITIAL_DIRECTION,
+    heading_method: str = HEADING_METHOD,
+    step_segments: tuple[StepSegment, ...] = (),
+) -> StepHeading:
+    """指定ステップのジャイロ/加速度/移動方向方位を解決する。"""
+    selected_method = _validate_heading_method(heading_method)
+    direction_offset = float(np.deg2rad(initial_direction))
+    mid_idx = _step_mid_index(peaks, i)
+    mid_time = _step_mid_time(df_acc, peaks, i)
+    gyro_base = _sample_gyro_angle(df_gyro, sample_index=mid_idx, sample_time=mid_time)
+    gyro_heading = (
+        None if gyro_base is None else _normalize_angle(gyro_base + direction_offset)
+    )
+    accel_heading = _estimate_accel_headings(
+        df_acc, peaks, i, direction_offset, step_segments
+    )
+    motion_heading = _estimate_motion_heading_from_horizontal_accel(
+        df_acc,
+        df_gyro,
+        peaks,
+        i,
+        gyro_heading,
+        direction_offset,
+        step_segments,
+    )
+
+    selected_heading: float | None
+    if selected_method == "accel_method1" and accel_heading.method1_heading is not None:
+        selected_heading = accel_heading.method1_heading
+        source = "accel_method1"
+    elif (
+        selected_method == "accel_method2" and accel_heading.method2_heading is not None
+    ):
+        selected_heading = accel_heading.method2_heading
+        source = "accel_method2"
+    elif selected_method == "gyro_accel_motion":
+        if (
+            motion_heading.motion_heading is not None
+            and motion_heading.confidence >= MOTION_HEADING_CONFIDENCE_THRESHOLD
+        ):
+            selected_heading = motion_heading.motion_heading
+            source = "gyro_accel_motion"
+        else:
+            selected_heading = gyro_heading
+            source = "gyro" if gyro_heading is not None else "none"
+    else:
+        selected_heading = gyro_heading
+        source = "gyro" if gyro_heading is not None else "none"
+
+    if selected_heading is None and accel_heading.method1_heading is not None:
+        selected_heading = accel_heading.method1_heading
+        source = "accel_method1"
+
+    return StepHeading(
+        step_index=i + 1,
+        timestamp_s=_step_output_time(df_acc, peaks, i),
+        gyro_heading=gyro_heading,
+        accel_method1_heading=accel_heading.method1_heading,
+        accel_method2_heading=accel_heading.method2_heading,
+        selected_heading=selected_heading,
+        source=source,
+        confidence=accel_heading.confidence,
+        angle_diff_method1=_abs_angle_diff(gyro_heading, accel_heading.method1_heading),
+        angle_diff_method2=_abs_angle_diff(gyro_heading, accel_heading.method2_heading),
+        segment_start_index=accel_heading.segment_start_index,
+        segment_end_index=accel_heading.segment_end_index,
+        peak1_index=accel_heading.peak1_index,
+        peak2_index=accel_heading.peak2_index,
+        body_heading=motion_heading.body_heading,
+        motion_heading=motion_heading.motion_heading,
+        movement_type=motion_heading.movement_type,
+        forward_displacement=motion_heading.forward_displacement,
+        lateral_displacement=motion_heading.lateral_displacement,
+        motion_confidence=motion_heading.confidence,
+        motion_reject_reason=motion_heading.reject_reason,
+    )
+
+
+def estimate_trajectory_with_headings(
     peaks: np.ndarray,
     df_gyro: pd.DataFrame,
     df_acc: pd.DataFrame,
     initial_direction: float = INITIAL_DIRECTION,
     weinberg_k: float = WEINBERG_K,
-) -> tuple[list[list[float]], list[float], list[float]]:
+    heading_method: str = HEADING_METHOD,
+    step_segments: tuple[StepSegment, ...] = (),
+) -> tuple[list[list[float]], list[float], list[float], list[StepHeading]]:
     """ステップピークとジャイロスコープ角度から2次元軌跡を推定する。
 
     各ステップピーク時刻の平滑化角度（``low_angle``）と
@@ -499,8 +1600,7 @@ def estimate_trajectory(
     points: list[list[float]] = [[0.0, 0.0]]
     step_lengths: list[float] = []
     t_at_steps: list[float] = []
-    # 度 → ラジアン変換してオフセットとして使用
-    direction_offset = float(np.deg2rad(initial_direction))
+    step_headings: list[StepHeading] = []
 
     # forward 手法用: 初期前進角をデータから自動推定
     phi_0 = (
@@ -514,29 +1614,49 @@ def estimate_trajectory(
             continue
         if STEP_LENGTH_METHOD == "forward" and i + 1 >= len(peaks):
             continue  # 次ピークなし：区間定義不可のためスキップ
-        # 次のピークとの中点（swing 中盤）でサンプリング
-        # 着地衝撃によるジャイロ揺らぎを避け、安定した進行方向角を得るため
-        mid_idx = _step_mid_index(peaks, i)
-        angle_at_mid = _sample_gyro_angle(
+        step_heading = resolve_step_heading(
+            peaks,
             df_gyro,
-            sample_index=mid_idx,
-            sample_time=_step_mid_time(df_acc, peaks, i),
+            df_acc,
+            i,
+            initial_direction=initial_direction,
+            heading_method=heading_method,
+            step_segments=step_segments,
         )
-        if angle_at_mid is None:
-            # NaN のステップを軌跡から除外して伝播を防ぐ
-            # rolling 端部でデータ不足の場合に発生
+        if step_heading.selected_heading is None:
             continue
-        angle = angle_at_mid + direction_offset
         if STEP_LENGTH_METHOD == "forward":
             step_length = estimate_step_length_forward(df_acc, df_gyro, peaks, i, phi_0)
         else:
             step_length = estimate_step_length(df_acc, int(p), k=weinberg_k)
         step_lengths.append(step_length)
         t_at_steps.append(_step_output_time(df_acc, peaks, i))
-        x = points[-1][0] + step_length * float(np.cos(angle))
-        y = points[-1][1] + step_length * float(np.sin(angle))
+        step_headings.append(step_heading)
+        x = points[-1][0] + step_length * float(np.cos(step_heading.selected_heading))
+        y = points[-1][1] + step_length * float(np.sin(step_heading.selected_heading))
         points.append([x, y])
 
+    return points, step_lengths, t_at_steps, step_headings
+
+
+def estimate_trajectory(
+    peaks: np.ndarray,
+    df_gyro: pd.DataFrame,
+    df_acc: pd.DataFrame,
+    initial_direction: float = INITIAL_DIRECTION,
+    weinberg_k: float = WEINBERG_K,
+) -> tuple[list[list[float]], list[float], list[float]]:
+    """従来互換の決定論的PDR軌跡推定を行う。"""
+    points, step_lengths, t_at_steps, _step_headings = (
+        estimate_trajectory_with_headings(
+            peaks,
+            df_gyro,
+            df_acc,
+            initial_direction=initial_direction,
+            weinberg_k=weinberg_k,
+            heading_method="gyro",
+        )
+    )
     return points, step_lengths, t_at_steps
 
 
@@ -689,6 +1809,168 @@ def _build_trajectory_dataframe(
     )
 
 
+def _build_step_segments_dataframe(
+    df_acc: pd.DataFrame,
+    segments: tuple[StepSegment, ...],
+) -> pd.DataFrame:
+    """ステップ区間情報をCSV保存用DataFrameに変換する。"""
+    columns = [
+        "step",
+        "start_index",
+        "end_index",
+        "contact_index",
+        "start_time_s",
+        "end_time_s",
+        "duration_s",
+    ]
+    if len(segments) == 0:
+        return pd.DataFrame(columns=columns)
+
+    rows = []
+    for step, segment in enumerate(segments, start=1):
+        start_time = _time_at_index(df_acc, segment.start_index)
+        end_time = _time_at_index(df_acc, segment.end_index)
+        rows.append(
+            {
+                "step": step,
+                "start_index": segment.start_index,
+                "end_index": segment.end_index,
+                "contact_index": segment.contact_index,
+                "start_time_s": start_time,
+                "end_time_s": end_time,
+                "duration_s": end_time - start_time,
+            }
+        )
+    return pd.DataFrame(rows, columns=columns)
+
+
+def _angle_to_deg(angle: float | None) -> float | None:
+    """ラジアン角を度へ変換する。None はそのまま返す。"""
+    if angle is None:
+        return None
+    return float(np.degrees(angle))
+
+
+def _build_gyro_bias_dataframe(df_gyro: pd.DataFrame) -> pd.DataFrame:
+    """ジャイロバイアス診断情報をCSV保存用DataFrameに変換する。"""
+    columns = [
+        "method",
+        "bias_rad_s",
+        "calibration_start_s",
+        "calibration_end_s",
+        "sample_count",
+        "kept_sample_count",
+        "raw_mean",
+        "robust_mean",
+        "median",
+        "mad",
+        "candidate_score",
+        "gyro_std",
+        "accel_p95",
+        "accel_max",
+        "search_start_s",
+        "search_end_s",
+        "fallback_reason",
+    ]
+    result = df_gyro.attrs.get("gyro_bias_result")
+    if isinstance(result, GyroBiasResult):
+        return pd.DataFrame(
+            [
+                {
+                    "method": result.method,
+                    "bias_rad_s": result.bias_rad_s,
+                    "calibration_start_s": result.calibration_start_s,
+                    "calibration_end_s": result.calibration_end_s,
+                    "sample_count": result.sample_count,
+                    "kept_sample_count": result.kept_sample_count,
+                    "raw_mean": result.raw_mean,
+                    "robust_mean": result.robust_mean,
+                    "median": result.median,
+                    "mad": result.mad,
+                    "candidate_score": result.candidate_score,
+                    "gyro_std": result.gyro_std,
+                    "accel_p95": result.accel_p95,
+                    "accel_max": result.accel_max,
+                    "search_start_s": result.search_start_s,
+                    "search_end_s": result.search_end_s,
+                    "fallback_reason": result.fallback_reason,
+                }
+            ],
+            columns=columns,
+        )
+
+    return pd.DataFrame(columns=columns)
+
+
+def _build_step_headings_dataframe(step_headings: list[StepHeading]) -> pd.DataFrame:
+    """ステップ方位候補と採用結果をCSV保存用DataFrameに変換する。"""
+    columns = [
+        "step",
+        "timestamp_s",
+        "gyro_heading_deg",
+        "body_heading_deg",
+        "accel_method1_heading_deg",
+        "accel_method2_heading_deg",
+        "motion_heading_deg",
+        "selected_heading_deg",
+        "source",
+        "movement_type",
+        "confidence",
+        "motion_confidence",
+        "angle_diff_method1_deg",
+        "angle_diff_method2_deg",
+        "forward_displacement",
+        "lateral_displacement",
+        "motion_reject_reason",
+        "segment_start_index",
+        "segment_end_index",
+        "peak1_index",
+        "peak2_index",
+    ]
+    rows = [
+        {
+            "step": heading.step_index,
+            "timestamp_s": heading.timestamp_s,
+            "gyro_heading_deg": _angle_to_deg(heading.gyro_heading),
+            "body_heading_deg": _angle_to_deg(heading.body_heading),
+            "accel_method1_heading_deg": _angle_to_deg(heading.accel_method1_heading),
+            "accel_method2_heading_deg": _angle_to_deg(heading.accel_method2_heading),
+            "motion_heading_deg": _angle_to_deg(heading.motion_heading),
+            "selected_heading_deg": _angle_to_deg(heading.selected_heading),
+            "source": heading.source,
+            "movement_type": heading.movement_type,
+            "confidence": heading.confidence,
+            "motion_confidence": heading.motion_confidence,
+            "angle_diff_method1_deg": _angle_to_deg(heading.angle_diff_method1),
+            "angle_diff_method2_deg": _angle_to_deg(heading.angle_diff_method2),
+            "forward_displacement": heading.forward_displacement,
+            "lateral_displacement": heading.lateral_displacement,
+            "motion_reject_reason": heading.motion_reject_reason,
+            "segment_start_index": heading.segment_start_index,
+            "segment_end_index": heading.segment_end_index,
+            "peak1_index": heading.peak1_index,
+            "peak2_index": heading.peak2_index,
+        }
+        for heading in step_headings
+    ]
+    return pd.DataFrame(rows, columns=columns)
+
+
+def _step_plot_signal(
+    df_acc: pd.DataFrame,
+    step_detection: StepDetectionResult,
+) -> tuple[np.ndarray, str, float | None]:
+    """ステップ検出方式に対応する可視化用信号を返す。"""
+    if step_detection.method == "paper_vertical_threshold":
+        polarity = 1 if step_detection.polarity is None else step_detection.polarity
+        return (
+            df_acc["v_acc"].to_numpy(dtype=float) * polarity,
+            "vertical contact signal",
+            step_detection.threshold,
+        )
+    return df_acc["low_lin_norm"].to_numpy(dtype=float), "low_lin_norm", None
+
+
 def run(
     df_acc: pd.DataFrame | None = None,
     df_gyro: pd.DataFrame | None = None,
@@ -700,6 +1982,10 @@ def run(
     scale: float = FLOORMAP_SCALE,
     initial_direction: float = INITIAL_DIRECTION,
     height_m: float = USER_HEIGHT_M,
+    step_detection_method: str | None = None,
+    heading_method: str | None = None,
+    gyro_bias_method: str | None = None,
+    gyro_bias: float | None = None,
 ) -> pd.DataFrame:
     """PDRのメインパイプラインを実行する。
 
@@ -734,6 +2020,14 @@ def run(
             歩行開始方向のオフセット [度]。デフォルトは ``INITIAL_DIRECTION``。
         height_m (float):
             Weinbergモデルのスケール係数を補正するユーザー身長 [m]。
+        step_detection_method:
+            ステップ検出手法。``None`` のときは設定値を使用する。
+        heading_method:
+            方位推定手法。``None`` のときは設定値を使用する。
+        gyro_bias_method:
+            ジャイロバイアス推定手法。``None`` のときは設定値を使用する。
+        gyro_bias:
+            ``gyro_bias_method="manual"`` のときに使う手動バイアス [rad/s]。
 
     Returns:
         pd.DataFrame: 軌跡データ（列: timestamp_s, x, y）
@@ -754,10 +2048,48 @@ def run(
     if df_acc is None or df_gyro is None:
         raise RuntimeError("内部エラー: df_acc または df_gyro が None（到達不能）")
 
-    df_acc, df_gyro = process_sensor_data(df_acc, df_gyro)
-    peaks = detect_steps(df_acc)
+    selected_gyro_bias_method = _validate_gyro_bias_method(
+        GYRO_BIAS_METHOD if gyro_bias_method is None else gyro_bias_method
+    )
+    df_acc, df_gyro = process_sensor_data(
+        df_acc,
+        df_gyro,
+        gyro_bias_method=selected_gyro_bias_method,
+        gyro_bias=gyro_bias,
+    )
+    step_detection = detect_step_result(df_acc, step_detection_method)
+    peaks = step_detection.peaks
     weinberg_k = compute_weinberg_k(height_m)
+    selected_heading_method = _validate_heading_method(
+        HEADING_METHOD if heading_method is None else heading_method
+    )
     print(f"Weinberg K: {weinberg_k:.3f} (height={height_m:.2f} m)")
+    print(f"Heading method: {selected_heading_method}")
+    bias_result = df_gyro.attrs.get("gyro_bias_result")
+    if isinstance(bias_result, GyroBiasResult):
+        if bias_result.calibration_start_s is None:
+            window_text = "manual"
+        else:
+            window_text = (
+                f"{bias_result.calibration_start_s:.3f}-"
+                f"{bias_result.calibration_end_s:.3f}s"
+            )
+        print(
+            "Gyro bias: "
+            f"method={bias_result.method} "
+            f"bias={bias_result.bias_rad_s:.6f} rad/s "
+            f"window={window_text} "
+            f"fallback={bias_result.fallback_reason}"
+        )
+    if step_detection.threshold is None:
+        print(f"Step detection: {step_detection.method}")
+    else:
+        print(
+            "Step detection: "
+            f"{step_detection.method} "
+            f"threshold={step_detection.threshold:.3f} "
+            f"polarity={step_detection.polarity}"
+        )
 
     # 重力成分の平均を算出（Y軸反転の自動判定に使用）
     gx_mean = float(df_acc["gx"].mean())
@@ -771,6 +2103,11 @@ def run(
         f" → Y軸{'反転' if y_flipped else '非反転'}"
     )
 
+    df_gyro_bias = _build_gyro_bias_dataframe(df_gyro)
+    gyro_bias_path = output_dir / "gyro_bias.csv"
+    df_gyro_bias.to_csv(gyro_bias_path, index=False)
+    print(f"Gyro bias saved to {gyro_bias_path}")
+
     if use_particle_filter:
         from .particle_filter import (  # noqa: PLC0415
             plot_particle_filter_trajectory,
@@ -778,7 +2115,13 @@ def run(
             save_particle_animation,
         )
 
-        trajectory, step_lengths, t_at_steps, all_particles = run_particle_filter(
+        (
+            trajectory,
+            step_lengths,
+            t_at_steps,
+            all_particles,
+            step_headings,
+        ) = run_particle_filter(
             peaks,
             df_gyro,
             df_acc,
@@ -789,6 +2132,8 @@ def run(
             scale=scale,
             initial_direction=initial_direction,
             weinberg_k=weinberg_k,
+            heading_method=selected_heading_method,
+            step_segments=step_detection.segments,
         )
 
         print(f"Peaks detected: {len(peaks)}")
@@ -816,6 +2161,20 @@ def run(
         df_step_vectors.to_csv(step_vector_path, index=False)
         print(f"Step vectors saved to {step_vector_path}")
 
+        df_step_headings = _build_step_headings_dataframe(step_headings)
+        step_heading_path = output_dir / "step_headings.csv"
+        df_step_headings.to_csv(step_heading_path, index=False)
+        print(f"Step headings saved to {step_heading_path}")
+
+        if step_detection.method == "paper_vertical_threshold":
+            df_step_segments = _build_step_segments_dataframe(
+                df_acc,
+                step_detection.segments,
+            )
+            step_segment_path = output_dir / "step_segments.csv"
+            df_step_segments.to_csv(step_segment_path, index=False)
+            print(f"Step segments saved to {step_segment_path}")
+
         if plot:
             plot_particle_filter_trajectory(
                 trajectory,
@@ -831,13 +2190,31 @@ def run(
                 plot_step_vectors,
             )
 
-            plot_step_lengths(step_lengths, output_dir)
+            t_acc = (
+                df_acc["t"].to_numpy()
+                if "t" in df_acc.columns
+                else np.arange(len(df_acc)) / SAMPLING_RATE
+            )
+            step_signal, step_signal_label, step_signal_threshold = _step_plot_signal(
+                df_acc,
+                step_detection,
+            )
+            plot_step_lengths(
+                step_lengths,
+                output_dir,
+                t_at_steps=t_at_steps,
+                t_acc=t_acc,
+                step_signal=step_signal,
+                step_signal_label=step_signal_label,
+                step_signal_threshold=step_signal_threshold,
+            )
             plot_step_vectors(
                 trajectory,
                 output_dir,
                 df_acc=df_acc,
                 df_gyro=df_gyro,
                 peaks=peaks,
+                step_headings=step_headings,
                 initial_direction=initial_direction,
             )
 
@@ -853,8 +2230,16 @@ def run(
                 output_path=output_dir / "particle_filter.mp4",
             )
     else:
-        trajectory, step_lengths, t_at_steps = estimate_trajectory(
-            peaks, df_gyro, df_acc, initial_direction, weinberg_k
+        trajectory, step_lengths, t_at_steps, step_headings = (
+            estimate_trajectory_with_headings(
+                peaks,
+                df_gyro,
+                df_acc,
+                initial_direction,
+                weinberg_k,
+                heading_method=selected_heading_method,
+                step_segments=step_detection.segments,
+            )
         )
 
         print(f"Peaks detected: {len(peaks)}")
@@ -885,6 +2270,20 @@ def run(
         df_step_vectors.to_csv(step_vector_path, index=False)
         print(f"Step vectors saved to {step_vector_path}")
 
+        df_step_headings = _build_step_headings_dataframe(step_headings)
+        step_heading_path = output_dir / "step_headings.csv"
+        df_step_headings.to_csv(step_heading_path, index=False)
+        print(f"Step headings saved to {step_heading_path}")
+
+        if step_detection.method == "paper_vertical_threshold":
+            df_step_segments = _build_step_segments_dataframe(
+                df_acc,
+                step_detection.segments,
+            )
+            step_segment_path = output_dir / "step_segments.csv"
+            df_step_segments.to_csv(step_segment_path, index=False)
+            print(f"Step segments saved to {step_segment_path}")
+
         if plot:
             plot_trajectory(
                 trajectory,
@@ -905,12 +2304,18 @@ def run(
                 if "t" in df_acc.columns
                 else np.arange(len(df_acc)) / SAMPLING_RATE
             )
+            step_signal, step_signal_label, step_signal_threshold = _step_plot_signal(
+                df_acc,
+                step_detection,
+            )
             plot_step_lengths(
                 step_lengths,
                 output_dir,
                 t_at_steps=t_at_steps,
                 t_acc=t_acc,
-                low_lin_norm=df_acc["low_lin_norm"].to_numpy(),
+                step_signal=step_signal,
+                step_signal_label=step_signal_label,
+                step_signal_threshold=step_signal_threshold,
             )
             plot_step_vectors(
                 trajectory,
@@ -918,6 +2323,7 @@ def run(
                 df_acc=df_acc,
                 df_gyro=df_gyro,
                 peaks=peaks,
+                step_headings=step_headings,
                 initial_direction=initial_direction,
             )
 

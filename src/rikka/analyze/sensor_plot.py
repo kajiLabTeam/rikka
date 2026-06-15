@@ -10,7 +10,7 @@ from matplotlib.axes import Axes
 from numpy.typing import NDArray
 
 from ..config import DATA_DIR, INITIAL_DIRECTION, SAMPLING_RATE
-from .pdr import detect_steps, load_sensor_data, process_sensor_data
+from .pdr import StepHeading, detect_step_result, load_sensor_data, process_sensor_data
 
 StepAccelerationSamples = tuple[NDArray[np.float64], NDArray[np.float64]]
 _JAPANESE_FONT_CANDIDATES = (
@@ -41,18 +41,32 @@ def _configure_japanese_font() -> None:
     _JAPANESE_FONT_CONFIGURED = True
 
 
-def plot_sensor_data(data_dir: str | Path = DATA_DIR) -> None:
+def plot_sensor_data(
+    data_dir: str | Path = DATA_DIR,
+    step_detection_method: str | None = None,
+    gyro_bias_method: str | None = None,
+    gyro_bias: float | None = None,
+) -> None:
     """加速度・ジャイロデータをグラフ化して入力フォルダに保存する。
 
     Args:
         data_dir: Accelerometer.csv と Gyroscope.csv が格納されたディレクトリ
+        step_detection_method: ステップ検出手法。省略時は設定値を使用。
+        gyro_bias_method: ジャイロバイアス推定手法。省略時は設定値を使用。
+        gyro_bias: manual 指定時のジャイロバイアス [rad/s]。
     """
     _configure_japanese_font()
 
     data_path = Path(data_dir)
     df_acc, df_gyro = load_sensor_data(data_path)
-    df_acc, df_gyro = process_sensor_data(df_acc, df_gyro)
-    peaks = detect_steps(df_acc)
+    df_acc, df_gyro = process_sensor_data(
+        df_acc,
+        df_gyro,
+        gyro_bias_method=gyro_bias_method,
+        gyro_bias=gyro_bias,
+    )
+    step_detection = detect_step_result(df_acc, step_detection_method)
+    peaks = step_detection.peaks
 
     t_acc = df_acc["t"].to_numpy() if "t" in df_acc.columns else np.arange(len(df_acc))
     t_gyro = (
@@ -84,7 +98,7 @@ def plot_sensor_data(data_dir: str | Path = DATA_DIR) -> None:
         linewidth=1.5,
         label="low_lin_norm",
     )
-    if len(peaks) > 0:
+    if len(peaks) > 0 and step_detection.method == "peak":
         ax.scatter(
             t_acc[peaks],
             df_acc["low_lin_norm"].to_numpy()[peaks],
@@ -94,9 +108,49 @@ def plot_sensor_data(data_dir: str | Path = DATA_DIR) -> None:
             zorder=3,
             label=f"steps ({len(peaks)})",
         )
+    if step_detection.method == "paper_vertical_threshold":
+        ax2 = ax.twinx()
+        polarity = 1 if step_detection.polarity is None else step_detection.polarity
+        contact_signal = df_acc["v_acc"].to_numpy(dtype=float) * polarity
+        ax2.plot(
+            t_acc,
+            contact_signal,
+            color="darkorange",
+            linewidth=0.9,
+            alpha=0.75,
+            label="vertical contact signal",
+        )
+        if step_detection.threshold is not None:
+            ax2.axhline(
+                step_detection.threshold,
+                color="crimson",
+                linewidth=1.0,
+                linestyle="--",
+                label=f"threshold={step_detection.threshold:.2f}",
+            )
+        if len(peaks) > 0:
+            ax2.scatter(
+                t_acc[peaks],
+                contact_signal[peaks],
+                marker="^",
+                color="red",
+                s=40,
+                zorder=3,
+                label=f"contacts ({len(peaks)})",
+            )
+        ax2.set_ylabel("contact signal [m/s²]")
+        handles1, labels1 = ax.get_legend_handles_labels()
+        handles2, labels2 = ax2.get_legend_handles_labels()
+        ax.legend(
+            handles1 + handles2,
+            labels1 + labels2,
+            loc="upper right",
+            fontsize=8,
+        )
     ax.set_title("Linear Acceleration Norm [m/s²]")
     ax.set_ylabel("m/s²")
-    ax.legend(loc="upper right", fontsize=8)
+    if step_detection.method != "paper_vertical_threshold":
+        ax.legend(loc="upper right", fontsize=8)
     ax.grid(True, linewidth=0.4)
 
     # --- 3. 生ジャイロ ---
@@ -145,6 +199,9 @@ def plot_step_lengths(
     t_at_steps: list[float] | None = None,
     t_acc: np.ndarray | None = None,
     low_lin_norm: np.ndarray | None = None,
+    step_signal: np.ndarray | None = None,
+    step_signal_label: str = "low_lin_norm",
+    step_signal_threshold: float | None = None,
 ) -> None:
     """歩幅の折れ線グラフを描画し、平均・標準偏差をコンソールと図に出力する。
 
@@ -154,6 +211,9 @@ def plot_step_lengths(
         t_at_steps: 各ステップのピーク時刻 [s]（時系列モード用）
         t_acc: 加速度データの時刻配列 [s]（時系列モード用）
         low_lin_norm: 平滑化線形加速度ノルム配列（時系列モード用）
+        step_signal: ステップ検出に使った信号（指定時は low_lin_norm より優先）
+        step_signal_label: ``step_signal`` の凡例・軸ラベル名
+        step_signal_threshold: ステップ検出閾値（指定時に水平線を描画）
     """
     _configure_japanese_font()
 
@@ -170,7 +230,8 @@ def plot_step_lengths(
 
     stat_text = f"mean={mean:.3f} m\nstd={std:.3f} m\nn={n}"
 
-    if t_at_steps is not None and t_acc is not None and low_lin_norm is not None:
+    signal = step_signal if step_signal is not None else low_lin_norm
+    if t_at_steps is not None and t_acc is not None and signal is not None:
         # --- 時系列モード: x軸を時間、低周波加速度ノルムを背景に描画 ---
         t_steps = np.asarray(t_at_steps)
         if len(t_steps) != n:
@@ -181,17 +242,25 @@ def plot_step_lengths(
             )
         fig, ax = plt.subplots(figsize=(12, 4))
 
-        # 左y軸: low_lin_norm の連続時系列
+        # 左y軸: ステップ検出信号の連続時系列
         ax.plot(
             t_acc,
-            low_lin_norm,
+            signal,
             color="steelblue",
             linewidth=1.2,
-            label="low_lin_norm",
+            label=step_signal_label,
             alpha=0.85,
         )
+        if step_signal_threshold is not None:
+            ax.axhline(
+                step_signal_threshold,
+                color="crimson",
+                linewidth=1.0,
+                linestyle=":",
+                label=f"threshold={step_signal_threshold:.2f}",
+            )
         # 各ステップのピーク位置に▲マーカー
-        ln_at_steps = np.interp(t_steps, t_acc, low_lin_norm)
+        ln_at_steps = np.interp(t_steps, t_acc, signal)
         ax.scatter(
             t_steps,
             ln_at_steps,
@@ -202,8 +271,8 @@ def plot_step_lengths(
             label=f"steps ({n})",
         )
         ax.set_xlabel("Time [s]")
-        ax.set_ylabel("low_lin_norm [m/s²]")
-        ax.set_title("Step Length with Linear Acceleration Norm")
+        ax.set_ylabel(f"{step_signal_label} [m/s²]")
+        ax.set_title("Step Length with Step Detection Signal")
         ax.grid(True, linewidth=0.4)
 
         # 右y軸: 歩幅を各ステップ時刻に点でプロット
@@ -421,6 +490,7 @@ def plot_step_vectors(
     df_acc: pd.DataFrame | None = None,
     df_gyro: pd.DataFrame | None = None,
     peaks: np.ndarray | None = None,
+    step_headings: list[StepHeading] | None = None,
     initial_direction: float = INITIAL_DIRECTION,
 ) -> None:
     """各ステップの変位ベクトルを個別画像として保存する。
@@ -435,6 +505,7 @@ def plot_step_vectors(
         df_acc: 処理済み加速度DataFrame
         df_gyro: 処理済みジャイロDataFrame
         peaks: ステップピークのインデックス配列
+        step_headings: 各ステップの方位候補と採用結果
         initial_direction: 歩行開始方向のオフセット [度]
     """
     _configure_japanese_font()
@@ -460,6 +531,11 @@ def plot_step_vectors(
 
     cmap = plt.get_cmap("viridis")
     colors = cmap(np.linspace(0.08, 0.95, n))
+    heading_by_step = (
+        {heading.step_index: heading for heading in step_headings}
+        if step_headings is not None
+        else {}
+    )
 
     save_dir: Path | None = None
     if output_dir is not None:
@@ -470,6 +546,7 @@ def plot_step_vectors(
         original_step_numbers, vectors, lengths, colors, strict=True
     ):
         heading = float(np.degrees(np.arctan2(dy, dx)))
+        step_heading = heading_by_step.get(int(step_no))
         accel_samples = _get_step_acceleration_samples(df_acc, peaks, int(step_no))
         projected_accel = (
             _project_acceleration_to_step_axes(
@@ -515,13 +592,20 @@ def plot_step_vectors(
                 "shrinkB": 0,
             },
         )
+        heading_lines = ""
+        if step_heading is not None:
+            heading_lines = (
+                f"\n採用={step_heading.source}\n信頼度={step_heading.confidence:.2f}"
+            )
+
         ax_vector.text(
             0.98,
             0.97,
             f"X変位={dx:.3f} m\n"
             f"Y変位={dy:.3f} m\n"
             f"歩幅={length:.3f} m\n"
-            f"方位={heading:.1f}°",
+            f"方位={heading:.1f}°"
+            f"{heading_lines}",
             transform=ax_vector.transAxes,
             fontsize=10,
             verticalalignment="top",
