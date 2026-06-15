@@ -29,6 +29,7 @@ from .pdr import (
     StepSegment,
     _compute_pixel_coords,
     _estimate_initial_forward_angle,
+    _plot_heading_overlay,
     _step_output_time,
     estimate_step_length,
     estimate_step_length_forward,
@@ -361,6 +362,7 @@ def plot_particle_filter_trajectory(
     origin_px: tuple[int, int] = FLOORMAP_ORIGIN_PX,
     scale: float = FLOORMAP_SCALE,
     output_dir: Path | None = None,
+    step_headings: list[StepHeading] | None = None,
 ) -> None:
     """PF の加重平均軌跡をフロアマップ上にプロットする。
 
@@ -393,6 +395,15 @@ def plot_particle_filter_trajectory(
     sc = ax.scatter(px, py, c=np.arange(n), cmap=cmap, norm=norm, s=20, zorder=3)
     fig.colorbar(sc, ax=ax, label="Step")
     ax.plot(px[0], py[0], "go", markersize=10, label="Start", zorder=4)
+    _plot_heading_overlay(
+        ax,
+        trajectory,
+        step_headings,
+        gx_mean,
+        gz_mean,
+        origin_px,
+        scale,
+    )
 
     ax.set_title("Particle Filter Trajectory on Floormap")
     ax.legend()

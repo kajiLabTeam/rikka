@@ -594,8 +594,24 @@ def plot_step_vectors(
         )
         heading_lines = ""
         if step_heading is not None:
+            body_heading = (
+                np.degrees(step_heading.body_heading)
+                if step_heading.body_heading is not None
+                else None
+            )
+            motion_heading = (
+                np.degrees(step_heading.motion_heading)
+                if step_heading.motion_heading is not None
+                else None
+            )
+            body_text = "NA" if body_heading is None else f"{body_heading:.1f}°"
+            motion_text = "NA" if motion_heading is None else f"{motion_heading:.1f}°"
             heading_lines = (
-                f"\n採用={step_heading.source}\n信頼度={step_heading.confidence:.2f}"
+                f"\n採用={step_heading.source}"
+                f"\n移動種別={step_heading.movement_type}"
+                f"\n体方位={body_text}"
+                f"\n移動方位={motion_text}"
+                f"\n信頼度={step_heading.motion_confidence:.2f}"
             )
 
         ax_vector.text(
