@@ -3,19 +3,19 @@
 # Data directory path
 # Change this path to use different input data
 
-DATA_DIR = "input/87steps_turn_Yamamoto"
+DATA_DIR = "input/90steps_turn_elevator2"
 
 # フロアマップ設定
 # 背景として表示するフロアマップ画像のパス
 FLOORMAP_PATH = "input/Floormap_building14_5floor.png"
 # 軌跡の起点（原点）がフロアマップ上で対応するピクセル座標 (x_px, y_px)
 # 実際の歩行開始位置に合わせて調整すること
-FLOORMAP_ORIGIN_PX: tuple[int, int] = (2050, 400)
+FLOORMAP_ORIGIN_PX: tuple[int, int] = (2050, 600)
 # 1ピクセルあたりのメートル数（1px = 1cm = 0.01m）
 
 FLOORMAP_SCALE = 0.01
 # 軌跡の初期方向 [度]（0 = 右方向、90 = 上方向、反時計回りが正）
-INITIAL_DIRECTION = 90.0
+INITIAL_DIRECTION = 0.0
 
 # センサーのサンプリングレート [Hz]、角速度積分・時間換算に使用
 SAMPLING_RATE = 100
@@ -26,6 +26,28 @@ WINDOW_ACC = 80
 
 # ジャイロ LPF・静止区間検出のウィンドウサイズ（40サンプル = 0.4秒）
 WINDOW_GYRO = 40
+
+# ジャイロバイアス推定手法
+# "prewalk_robust": 歩行開始直前の区間からロバスト推定
+# "initial_robust": 記録先頭の短い区間からロバスト推定
+# "quietest"       : 既存方式（全期間で分散最小の窓を使用）
+# "manual"         : 指定値をそのまま使用
+GYRO_BIAS_METHOD = "prewalk_robust"
+GYRO_BIAS_PREWALK_MAX_SECONDS = 5.0
+GYRO_BIAS_MIN_CALIBRATION_SECONDS = 0.5
+GYRO_BIAS_WALK_ONSET_MIN_STEPS = 4
+GYRO_BIAS_WALK_ONSET_MAX_INTERVAL_S = 1.2
+GYRO_BIAS_CALIBRATION_MARGIN_S = 0.3
+GYRO_BIAS_OUTLIER_MAD_SCALE = 3.0
+GYRO_BIAS_STATIC_SEARCH_START_SECONDS = 0.5
+GYRO_BIAS_STATIC_SEARCH_END_SECONDS = 4.5
+GYRO_BIAS_STATIC_WALK_ONSET_MARGIN_S = 0.7
+GYRO_BIAS_STATIC_WINDOW_SECONDS = 1.0
+GYRO_BIAS_STATIC_WINDOW_STEP_SECONDS = 0.1
+GYRO_BIAS_STATIC_MAX_ACCEL_P95 = 1.0
+GYRO_BIAS_STATIC_MAX_GYRO_STD = 0.12
+GYRO_BIAS_STATIC_ACCEL_P95_WEIGHT = 1.0
+GYRO_BIAS_STATIC_GYRO_STD_WEIGHT = 1.0
 
 # ステップ間の最小サンプル数（50サンプル = 0.5秒）
 # 1ステップの最短継続時間を保証し、重複検出を防ぐ
@@ -39,6 +61,18 @@ MAX_SEG_SAMPLES = 80
 # ステップ検出の最小ピーク高さ [m/s²]
 # ノイズ・微小な動きとステップを区別する閾値
 PEAK_HEIGHT = 1.0
+
+# ステップ検出手法
+# "peak": 既存の線形加速度ノルムピーク検出
+# "paper_vertical_threshold": 論文方式に寄せた上下加速度閾値による1歩区間抽出
+STEP_DETECTION_METHOD = "peak"
+
+# 論文寄せステップ検出のパラメータ
+# 上下加速度の接地インパルス候補を軽く平滑化して閾値判定する
+STEP_VERTICAL_SMOOTH_WINDOW = 5
+STEP_VERTICAL_THRESHOLD_PERCENTILE = 85.0
+# ステップ区間の最小サンプル数（30サンプル = 0.3秒 @ 100Hz）
+MIN_SEG_SAMPLES = 30
 
 # ユーザー身長 [m]
 # Weinbergモデルの歩幅スケールは身長におおむね比例すると仮定して補正する
@@ -69,6 +103,24 @@ STEP_LENGTH_WINDOW = 50
 # "weinberg": Weinbergモデル（経験則による max-min 振幅から推定）
 # "forward" : 方位方向射影積分（ジャイロから前進方向を自動推定し符号付き成分を2重積分）
 STEP_LENGTH_METHOD = "weinberg"
+
+# 方位推定手法の選択
+# "gyro"          : 既存のジャイロ積分方位
+# "accel_method1" : 論文手法1（時間的に早い平面加速度極大値方向）
+# "accel_method2" : 論文手法2（ノルムが大きい平面加速度極大値方向）
+# "gyro_accel_motion": ジャイロを体の向き、水平加速度を移動方向として分離
+HEADING_METHOD = "gyro"
+
+# 加速度平面成分方位の信頼度パラメータ
+ACCEL_HEADING_MIN_PEAK_NORM = 1.0
+ACCEL_HEADING_MIN_PEAK_DISTANCE = 10
+ACCEL_HEADING_MIN_LINE_LENGTH = 1.0
+ACCEL_HEADING_CONFIDENCE_THRESHOLD = 0.6
+
+# ジャイロ基準の水平加速度移動方向推定パラメータ
+MOTION_HEADING_MIN_DISPLACEMENT_M = 1e-4
+MOTION_HEADING_CONFIDENCE_THRESHOLD = 0.6
+SIDESTEP_LATERAL_RATIO = 1.5
 
 # 前進方向射影積分のユニバーサルスケール係数
 # 歩幅 = K_FORWARD × 振動変位

@@ -179,6 +179,7 @@ trajectory = run(
 | `FLOORMAP_SCALE` | 1ピクセルあたりのメートル数 | `0.01`（1px = 1cm） |
 | `INITIAL_DIRECTION` | 歩行開始方向のオフセット [度] | `90.0` |
 | `STEP_LENGTH_METHOD` | 歩幅推定手法 `"weinberg"` or `"forward"` | `"weinberg"` |
+| `HEADING_METHOD` | 方位推定手法 `"gyro"`, `"accel_method1"`, `"accel_method2"`, `"gyro_accel_motion"` | `"gyro"` |
 | `USER_HEIGHT_M` | Weinberg モデルの身長補正に使うユーザー身長 [m] | `1.65` |
 | `WEINBERG_REFERENCE_HEIGHT_M` | `WEINBERG_REFERENCE_K` を校正した基準身長 [m] | `1.70` |
 | `WEINBERG_REFERENCE_K` | 基準身長での Weinberg モデルのスケール係数 | `0.47` |

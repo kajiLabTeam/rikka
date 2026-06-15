@@ -5,7 +5,10 @@ from .config import (
     FLOORMAP_ORIGIN_PX,
     FLOORMAP_PATH,
     FLOORMAP_SCALE,
+    GYRO_BIAS_METHOD,
+    HEADING_METHOD,
     INITIAL_DIRECTION,
+    STEP_DETECTION_METHOD,
     USER_HEIGHT_M,
 )
 from .ping import ping as ping
@@ -16,6 +19,17 @@ _ORIGIN_DEFAULT = FLOORMAP_ORIGIN_PX
 _SCALE_DEFAULT = FLOORMAP_SCALE
 _DIRECTION_DEFAULT = INITIAL_DIRECTION
 _HEIGHT_DEFAULT = USER_HEIGHT_M
+_STEP_DETECTION_DEFAULT = STEP_DETECTION_METHOD
+_STEP_DETECTION_CHOICES = ("peak", "paper_vertical_threshold")
+_HEADING_METHOD_DEFAULT = HEADING_METHOD
+_HEADING_METHOD_CHOICES = (
+    "gyro",
+    "accel_method1",
+    "accel_method2",
+    "gyro_accel_motion",
+)
+_GYRO_BIAS_METHOD_DEFAULT = GYRO_BIAS_METHOD
+_GYRO_BIAS_METHOD_CHOICES = ("prewalk_robust", "initial_robust", "quietest", "manual")
 
 
 def _validate_cli_scale(
@@ -33,6 +47,33 @@ def _common_options(f: click.decorators.FC) -> click.decorators.FC:
     """run / particle コマンド共通オプションをまとめたデコレータ。"""
     f = click.option(
         "--no-plot", is_flag=True, default=False, help="グラフ表示を無効化"
+    )(f)
+    f = click.option(
+        "--step-detection",
+        type=click.Choice(_STEP_DETECTION_CHOICES),
+        default=_STEP_DETECTION_DEFAULT,
+        show_default=True,
+        help="ステップ検出手法",
+    )(f)
+    f = click.option(
+        "--heading-method",
+        type=click.Choice(_HEADING_METHOD_CHOICES),
+        default=_HEADING_METHOD_DEFAULT,
+        show_default=True,
+        help="方位推定手法",
+    )(f)
+    f = click.option(
+        "--gyro-bias-method",
+        type=click.Choice(_GYRO_BIAS_METHOD_CHOICES),
+        default=_GYRO_BIAS_METHOD_DEFAULT,
+        show_default=True,
+        help="ジャイロバイアス推定手法",
+    )(f)
+    f = click.option(
+        "--gyro-bias",
+        type=float,
+        default=None,
+        help="manual 指定時のジャイロバイアス [rad/s]",
     )(f)
     f = click.option(
         "--direction",
@@ -95,6 +136,10 @@ def _run_pdr(
     scale: float,
     direction: float,
     height_m: float,
+    step_detection: str,
+    heading_method: str,
+    gyro_bias_method: str,
+    gyro_bias: float | None,
     no_plot: bool,
 ) -> None:
     from .analyze.pdr import load_sensor_data  # noqa: PLC0415
@@ -111,6 +156,10 @@ def _run_pdr(
         scale=scale,
         initial_direction=direction,
         height_m=height_m,
+        step_detection_method=step_detection,
+        heading_method=heading_method,
+        gyro_bias_method=gyro_bias_method,
+        gyro_bias=gyro_bias,
     )
 
 
@@ -123,10 +172,26 @@ def run(
     scale: float,
     direction: float,
     height_m: float,
+    step_detection: str,
+    heading_method: str,
+    gyro_bias_method: str,
+    gyro_bias: float | None,
     no_plot: bool,
 ) -> None:
     """決定論的 PDR で歩行軌跡を推定する。"""
-    _run_pdr(data_dir, floormap, origin_px, scale, direction, height_m, no_plot)
+    _run_pdr(
+        data_dir,
+        floormap,
+        origin_px,
+        scale,
+        direction,
+        height_m,
+        step_detection,
+        heading_method,
+        gyro_bias_method,
+        gyro_bias,
+        no_plot,
+    )
 
 
 @cli.command()
@@ -138,10 +203,26 @@ def pdr(
     scale: float,
     direction: float,
     height_m: float,
+    step_detection: str,
+    heading_method: str,
+    gyro_bias_method: str,
+    gyro_bias: float | None,
     no_plot: bool,
 ) -> None:
     """決定論的 PDR で歩行軌跡を推定する（run の別名）。"""
-    _run_pdr(data_dir, floormap, origin_px, scale, direction, height_m, no_plot)
+    _run_pdr(
+        data_dir,
+        floormap,
+        origin_px,
+        scale,
+        direction,
+        height_m,
+        step_detection,
+        heading_method,
+        gyro_bias_method,
+        gyro_bias,
+        no_plot,
+    )
 
 
 @cli.command()
@@ -159,6 +240,10 @@ def particle(
     scale: float,
     direction: float,
     height_m: float,
+    step_detection: str,
+    heading_method: str,
+    gyro_bias_method: str,
+    gyro_bias: float | None,
     no_plot: bool,
     save_animation: bool,
 ) -> None:
@@ -178,6 +263,10 @@ def particle(
         scale=scale,
         initial_direction=direction,
         height_m=height_m,
+        step_detection_method=step_detection,
+        heading_method=heading_method,
+        gyro_bias_method=gyro_bias_method,
+        gyro_bias=gyro_bias,
     )
 
 
@@ -190,11 +279,41 @@ def particle(
     show_default=True,
     help="入力データフォルダ",
 )
-def sensor(data_dir: str) -> None:
+@click.option(
+    "--step-detection",
+    type=click.Choice(_STEP_DETECTION_CHOICES),
+    default=_STEP_DETECTION_DEFAULT,
+    show_default=True,
+    help="ステップ検出手法",
+)
+@click.option(
+    "--gyro-bias-method",
+    type=click.Choice(_GYRO_BIAS_METHOD_CHOICES),
+    default=_GYRO_BIAS_METHOD_DEFAULT,
+    show_default=True,
+    help="ジャイロバイアス推定手法",
+)
+@click.option(
+    "--gyro-bias",
+    type=float,
+    default=None,
+    help="manual 指定時のジャイロバイアス [rad/s]",
+)
+def sensor(
+    data_dir: str,
+    step_detection: str,
+    gyro_bias_method: str,
+    gyro_bias: float | None,
+) -> None:
     """センサーデータをグラフ化して入力フォルダに保存する。"""
     from .analyze.sensor_plot import plot_sensor_data  # noqa: PLC0415
 
-    plot_sensor_data(data_dir)
+    plot_sensor_data(
+        data_dir,
+        step_detection_method=step_detection,
+        gyro_bias_method=gyro_bias_method,
+        gyro_bias=gyro_bias,
+    )
 
 
 def main() -> None:

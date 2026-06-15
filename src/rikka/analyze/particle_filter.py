@@ -25,14 +25,14 @@ from ..config import (
     WEINBERG_K,
 )
 from .pdr import (
+    StepHeading,
+    StepSegment,
     _compute_pixel_coords,
     _estimate_initial_forward_angle,
-    _sample_gyro_angle,
-    _step_mid_index,
-    _step_mid_time,
     _step_output_time,
     estimate_step_length,
     estimate_step_length_forward,
+    resolve_step_heading,
 )
 
 
@@ -179,7 +179,9 @@ def run_particle_filter(
     sigma_heading: float = PF_SIGMA_HEADING,
     sigma_sl_ratio: float = PF_SIGMA_STEP_LENGTH_RATIO,
     weinberg_k: float = WEINBERG_K,
-) -> tuple[list[list[float]], list[float], list[float], np.ndarray]:
+    heading_method: str = "gyro",
+    step_segments: tuple[StepSegment, ...] = (),
+) -> tuple[list[list[float]], list[float], list[float], np.ndarray, list[StepHeading]]:
     """パーティクルフィルタでマップマッチング付き歩行軌跡を推定する。
 
     Args:
@@ -197,11 +199,14 @@ def run_particle_filter(
         sigma_heading: ステップごとの方位角ノイズ [rad]
         sigma_sl_ratio: ステップ長ノイズの比率
         weinberg_k: Weinbergモデルのスケール係数
+        heading_method: 方位推定手法
+        step_segments: 論文寄せステップ検出の1歩区間
 
     Returns:
         tuple: (加重平均軌跡の座標リスト, 各ステップの決定論的歩幅リスト,
             各ステップのピーク時刻リスト [s],
-            全ステップのパーティクル位置 shape=(T, N, 2))
+            全ステップのパーティクル位置 shape=(T, N, 2),
+            各ステップの方位候補と採用結果)
     """
     rng = np.random.default_rng()
 
@@ -219,8 +224,7 @@ def run_particle_filter(
     position_history: list[np.ndarray] = [particles.copy()]
     resample_history: list[np.ndarray] = []
     all_particles_list: list[np.ndarray] = [particles.copy()]  # ステップ0（原点）
-
-    direction_offset = float(np.deg2rad(initial_direction))
+    step_headings: list[StepHeading] = []
 
     phi_0 = (
         _estimate_initial_forward_angle(df_acc, df_gyro, peaks)
@@ -234,16 +238,18 @@ def run_particle_filter(
         if STEP_LENGTH_METHOD == "forward" and i + 1 >= len(peaks):
             continue
 
-        # estimate_trajectory と同一のサンプリングインデックス計算
-        mid_idx = _step_mid_index(peaks, i)
-        angle_at_mid = _sample_gyro_angle(
+        step_heading = resolve_step_heading(
+            peaks,
             df_gyro,
-            sample_index=mid_idx,
-            sample_time=_step_mid_time(df_acc, peaks, i),
+            df_acc,
+            i,
+            initial_direction=initial_direction,
+            heading_method=heading_method,
+            step_segments=step_segments,
         )
-        if angle_at_mid is None:
+        if step_heading.selected_heading is None:
             continue
-        angle_det = angle_at_mid + direction_offset
+        angle_det = step_heading.selected_heading
 
         if STEP_LENGTH_METHOD == "forward":
             sl_det = estimate_step_length_forward(df_acc, df_gyro, peaks, i, phi_0)
@@ -323,6 +329,7 @@ def run_particle_filter(
         position_history.append(particles.copy())
         step_lengths.append(sl_det)
         t_at_steps.append(_step_output_time(df_acc, peaks, i, STEP_LENGTH_METHOD))
+        step_headings.append(step_heading)
 
         # 系統リサンプリング
         indices = _systematic_resample(weights, rng)
@@ -343,7 +350,7 @@ def run_particle_filter(
         origin_px,
         scale,
     )
-    return mean_trajectory, step_lengths, t_at_steps, all_particles
+    return mean_trajectory, step_lengths, t_at_steps, all_particles, step_headings
 
 
 def plot_particle_filter_trajectory(
