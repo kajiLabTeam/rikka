@@ -6,6 +6,7 @@ import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.axes import Axes
 from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize
 from scipy.signal import find_peaks
@@ -1608,7 +1609,6 @@ def estimate_trajectory_with_headings(
         if STEP_LENGTH_METHOD == "forward"
         else 0.0
     )
-
     for i, p in enumerate(peaks):
         if p >= len(df_acc):
             continue
@@ -1681,6 +1681,137 @@ def _compute_pixel_coords(
     return px, py
 
 
+def _pixel_vector_from_heading(
+    heading: float,
+    length_m: float,
+    gx_mean: float,
+    gz_mean: float,
+    scale: float,
+) -> tuple[float, float]:
+    """メートル座標の方位ベクトルをピクセル座標の差分に変換する。"""
+    y_sign = (
+        -1
+        if (
+            (abs(gx_mean) > abs(gz_mean) and gx_mean > 0)
+            or (abs(gz_mean) >= abs(gx_mean) and gz_mean < 0)
+        )
+        else 1
+    )
+    return (
+        length_m * float(np.cos(heading)) / scale,
+        y_sign * length_m * float(np.sin(heading)) / scale,
+    )
+
+
+def _plot_heading_overlay(
+    ax: Axes,
+    trajectory: list[list[float]],
+    step_headings: list[StepHeading] | None,
+    gx_mean: float,
+    gz_mean: float,
+    origin_px: tuple[int, int],
+    scale: float,
+) -> None:
+    """軌跡上に移動方向・体の向き・横歩き判定を重ねて描画する。"""
+    if step_headings is None or len(step_headings) == 0 or len(trajectory) < 2:
+        return
+
+    points = np.asarray(trajectory, dtype=float)
+    if points.ndim != 2 or points.shape[1] != 2:
+        return
+
+    px, py = _compute_pixel_coords(
+        points[:, 0],
+        points[:, 1],
+        gx_mean,
+        gz_mean,
+        origin_px,
+        scale,
+    )
+    step_count = min(len(step_headings), len(points) - 1)
+    if step_count <= 0:
+        return
+
+    lengths = np.linalg.norm(np.diff(points, axis=0), axis=1)
+    positive_lengths = lengths[lengths > 1e-12]
+    arrow_length_m = (
+        float(np.median(positive_lengths)) * 0.45
+        if len(positive_lengths) > 0
+        else max(scale * 30.0, 0.3)
+    )
+    arrow_length_m = max(arrow_length_m, scale * 24.0)
+
+    body_label_added = False
+    motion_label_added = False
+    sidestep_points: list[tuple[float, float]] = []
+    for i in range(step_count):
+        heading = step_headings[i]
+        start_x = float(px[i])
+        start_y = float(py[i])
+        if heading.selected_heading is not None:
+            dx, dy = _pixel_vector_from_heading(
+                heading.selected_heading,
+                arrow_length_m,
+                gx_mean,
+                gz_mean,
+                scale,
+            )
+            ax.arrow(
+                start_x,
+                start_y,
+                dx,
+                dy,
+                width=1.4,
+                head_width=10.0,
+                head_length=12.0,
+                length_includes_head=True,
+                color="dodgerblue",
+                alpha=0.85,
+                zorder=5,
+                label="Move heading" if not motion_label_added else None,
+            )
+            motion_label_added = True
+        if heading.body_heading is not None:
+            dx, dy = _pixel_vector_from_heading(
+                heading.body_heading,
+                arrow_length_m * 0.75,
+                gx_mean,
+                gz_mean,
+                scale,
+            )
+            ax.arrow(
+                start_x,
+                start_y,
+                dx,
+                dy,
+                width=0.9,
+                head_width=7.0,
+                head_length=9.0,
+                length_includes_head=True,
+                color="darkorange",
+                alpha=0.75,
+                zorder=6,
+                label="Body heading" if not body_label_added else None,
+            )
+            body_label_added = True
+        if heading.movement_type == "sidestep":
+            sidestep_points.append((float(px[i + 1]), float(py[i + 1])))
+
+    if sidestep_points:
+        sidestep_arr = np.asarray(sidestep_points, dtype=float)
+        ax.scatter(
+            sidestep_arr[:, 0],
+            sidestep_arr[:, 1],
+            marker="s",
+            s=52,
+            facecolors="none",
+            edgecolors="lime",
+            linewidths=1.8,
+            zorder=7,
+            label="Sidestep",
+        )
+
+
 def plot_trajectory(
     trajectory: list[list[float]],
     gx_mean: float = 0.0,
@@ -1689,6 +1820,7 @@ def plot_trajectory(
     origin_px: tuple[int, int] = FLOORMAP_ORIGIN_PX,
     scale: float = FLOORMAP_SCALE,
     output_dir: Path | None = None,
+    step_headings: list[StepHeading] | None = None,
 ) -> None:
     """推定した2次元歩行軌跡をフロアマップ上にプロットする。
 
@@ -1732,6 +1864,15 @@ def plot_trajectory(
     fig.colorbar(sc, ax=ax, label="Step")
     # 起点を強調表示
     ax.plot(px[0], py[0], "go", markersize=10, label="Start", zorder=4)
+    _plot_heading_overlay(
+        ax,
+        trajectory,
+        step_headings,
+        gx_mean,
+        gz_mean,
+        origin_px,
+        scale,
+    )
 
     ax.set_title("Walking Trajectory on Floormap")
     ax.legend()
@@ -2184,6 +2325,7 @@ def run(
                 origin_px=origin_px,
                 scale=scale,
                 output_dir=output_dir,
+                step_headings=step_headings,
             )
             from .sensor_plot import (  # noqa: PLC0415
                 plot_step_lengths,
@@ -2293,6 +2435,7 @@ def run(
                 origin_px=origin_px,
                 scale=scale,
                 output_dir=output_dir,
+                step_headings=step_headings,
             )
             from .sensor_plot import (  # noqa: PLC0415
                 plot_step_lengths,
