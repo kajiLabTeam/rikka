@@ -29,6 +29,7 @@ from .pdr import (
     StepSegment,
     _compute_pixel_coords,
     _estimate_initial_forward_angle,
+    _estimate_motion_heading_correction,
     _plot_heading_overlay,
     _step_output_time,
     estimate_step_length,
@@ -226,6 +227,13 @@ def run_particle_filter(
     resample_history: list[np.ndarray] = []
     all_particles_list: list[np.ndarray] = [particles.copy()]  # ステップ0（原点）
     step_headings: list[StepHeading] = []
+    motion_heading_correction = _estimate_motion_heading_correction(
+        df_acc,
+        df_gyro,
+        peaks,
+        initial_direction,
+        step_segments,
+    )
 
     phi_0 = (
         _estimate_initial_forward_angle(df_acc, df_gyro, peaks)
@@ -247,6 +255,7 @@ def run_particle_filter(
             initial_direction=initial_direction,
             heading_method=heading_method,
             step_segments=step_segments,
+            motion_heading_correction=motion_heading_correction,
         )
         if step_heading.selected_heading is None:
             continue

@@ -3,7 +3,7 @@
 # Data directory path
 # Change this path to use different input data
 
-DATA_DIR = "input/sidestep1"
+DATA_DIR = "input/90steps_turn_elevator2"
 
 # フロアマップ設定
 # 背景として表示するフロアマップ画像のパス
@@ -14,7 +14,8 @@ FLOORMAP_ORIGIN_PX: tuple[int, int] = (2050, 600)
 # 1ピクセルあたりのメートル数（1px = 1cm = 0.01m）
 
 FLOORMAP_SCALE = 0.01
-# 軌跡の初期方向 [度]（0 = 右方向、90 = 上方向、反時計回りが正）
+# 軌跡の初期方向 [度]（0 = +X、90 = +Y、反時計回りが正）
+# フロアマップ画像上の上下は端末姿勢から決まる Y 軸反転設定に依存する
 INITIAL_DIRECTION = 90.0
 
 # センサーのサンプリングレート [Hz]、角速度積分・時間換算に使用
@@ -121,6 +122,7 @@ ACCEL_HEADING_CONFIDENCE_THRESHOLD = 0.6
 MOTION_HEADING_MIN_DISPLACEMENT_M = 1e-4
 MOTION_HEADING_CONFIDENCE_THRESHOLD = 0.6
 SIDESTEP_LATERAL_RATIO = 1.5
+MOTION_HEADING_CALIBRATION_STEPS = 8
 
 # 前進方向射影積分のユニバーサルスケール係数
 # 歩幅 = K_FORWARD × 振動変位
