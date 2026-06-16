@@ -422,6 +422,68 @@ def test_resolve_step_heading_gyro_accel_motion_detects_sidestep() -> None:
     assert heading.lateral_displacement > 0
 
 
+def test_resolve_step_heading_applies_motion_heading_correction() -> None:
+    n_samples = 100
+    df_acc = pd.DataFrame(
+        {
+            "t": np.arange(n_samples, dtype=float) * 0.01,
+            "h_y": np.zeros(n_samples),
+            "h_z": np.zeros(n_samples),
+        }
+    )
+    df_acc.loc[20, "h_z"] = 10.0
+    df_gyro = pd.DataFrame(
+        {
+            "t": np.arange(n_samples, dtype=float) * 0.01,
+            "low_angle": np.zeros(n_samples),
+        }
+    )
+
+    heading = pdr.resolve_step_heading(
+        np.array([10, 70]),
+        df_gyro,
+        df_acc,
+        0,
+        initial_direction=0.0,
+        heading_method="gyro_accel_motion",
+        motion_heading_correction=np.pi / 2,
+    )
+
+    assert heading.source == "gyro_accel_motion"
+    assert heading.movement_type == "forward"
+    assert heading.selected_heading is not None
+    assert heading.forward_displacement is not None
+    np.testing.assert_allclose(heading.selected_heading, 0.0, atol=1e-12)
+    assert heading.forward_displacement > 0
+
+
+def test_estimate_motion_heading_correction_uses_initial_forward_steps() -> None:
+    n_samples = 220
+    df_acc = pd.DataFrame(
+        {
+            "t": np.arange(n_samples, dtype=float) * 0.01,
+            "h_y": np.zeros(n_samples),
+            "h_z": np.zeros(n_samples),
+        }
+    )
+    df_acc.loc[[20, 80, 140], "h_z"] = 10.0
+    df_gyro = pd.DataFrame(
+        {
+            "t": np.arange(n_samples, dtype=float) * 0.01,
+            "low_angle": np.zeros(n_samples),
+        }
+    )
+
+    correction = pdr._estimate_motion_heading_correction(
+        df_acc,
+        df_gyro,
+        np.array([10, 70, 130, 190]),
+        initial_direction=0.0,
+    )
+
+    np.testing.assert_allclose(correction, np.pi / 2, atol=1e-12)
+
+
 def test_resolve_step_heading_gyro_accel_motion_rotates_by_gyro_angle() -> None:
     n_samples = 100
     df_acc = pd.DataFrame(

@@ -38,6 +38,7 @@ from ..config import (
     K_FORWARD,
     MAX_SEG_SAMPLES,
     MIN_SEG_SAMPLES,
+    MOTION_HEADING_CALIBRATION_STEPS,
     MOTION_HEADING_CONFIDENCE_THRESHOLD,
     MOTION_HEADING_MIN_DISPLACEMENT_M,
     PEAK_DISTANCE,
@@ -1225,6 +1226,17 @@ def _integrate_motion_with_zero_velocity(
     )
 
 
+def _rotate_vector(
+    x: float,
+    y: float,
+    angle: float,
+) -> tuple[float, float]:
+    """2次元ベクトルを指定角度だけ回転する。"""
+    cos_a = float(np.cos(angle))
+    sin_a = float(np.sin(angle))
+    return x * cos_a - y * sin_a, x * sin_a + y * cos_a
+
+
 def _classify_movement_type(
     forward_displacement: float,
     lateral_displacement: float,
@@ -1247,6 +1259,7 @@ def _estimate_motion_heading_from_horizontal_accel(
     body_heading: float | None,
     direction_offset: float,
     step_segments: tuple[StepSegment, ...] = (),
+    motion_heading_correction: float = 0.0,
 ) -> _MotionHeadingResult:
     """ジャイロで向きを固定し、水平加速度から世界座標上の移動方向を推定する。"""
     if body_heading is None:
@@ -1330,6 +1343,8 @@ def _estimate_motion_heading_from_horizontal_accel(
         world_y,
         sample_times,
     )
+    if abs(motion_heading_correction) > 1e-12:
+        disp_x, disp_y = _rotate_vector(disp_x, disp_y, -motion_heading_correction)
     displacement_norm = float(np.hypot(disp_x, disp_y))
     if displacement_norm <= 1e-12:
         return _MotionHeadingResult(
@@ -1370,6 +1385,56 @@ def _estimate_motion_heading_from_horizontal_accel(
         confidence=confidence,
         reject_reason=reject_reason,
     )
+
+
+def _estimate_motion_heading_correction(
+    df_acc: pd.DataFrame,
+    df_gyro: pd.DataFrame,
+    peaks: np.ndarray,
+    initial_direction: float,
+    step_segments: tuple[StepSegment, ...] = (),
+) -> float:
+    """歩行開始直後の前進歩行から水平加速度方位の固定ずれを推定する。"""
+    if MOTION_HEADING_CALIBRATION_STEPS <= 0:
+        return 0.0
+
+    direction_offset = float(np.deg2rad(initial_direction))
+    sin_sum = 0.0
+    cos_sum = 0.0
+    count = 0
+    for i in range(min(len(peaks), MOTION_HEADING_CALIBRATION_STEPS)):
+        mid_idx = _step_mid_index(peaks, i)
+        mid_time = _step_mid_time(df_acc, peaks, i)
+        gyro_base = _sample_gyro_angle(
+            df_gyro,
+            sample_index=mid_idx,
+            sample_time=mid_time,
+        )
+        if gyro_base is None:
+            continue
+        body_heading = _normalize_angle(gyro_base + direction_offset)
+        motion = _estimate_motion_heading_from_horizontal_accel(
+            df_acc,
+            df_gyro,
+            peaks,
+            i,
+            body_heading,
+            direction_offset,
+            step_segments,
+        )
+        if (
+            motion.motion_heading is None
+            or motion.confidence < MOTION_HEADING_CONFIDENCE_THRESHOLD
+        ):
+            continue
+        diff = _normalize_angle(motion.motion_heading - body_heading)
+        sin_sum += float(np.sin(diff))
+        cos_sum += float(np.cos(diff))
+        count += 1
+
+    if count == 0 or float(np.hypot(sin_sum, cos_sum)) <= 1e-12:
+        return 0.0
+    return _normalize_angle(float(np.arctan2(sin_sum, cos_sum)))
 
 
 def _select_two_accel_peaks(norm: np.ndarray) -> tuple[int, int] | None:
@@ -1492,6 +1557,7 @@ def resolve_step_heading(
     initial_direction: float = INITIAL_DIRECTION,
     heading_method: str = HEADING_METHOD,
     step_segments: tuple[StepSegment, ...] = (),
+    motion_heading_correction: float = 0.0,
 ) -> StepHeading:
     """指定ステップのジャイロ/加速度/移動方向方位を解決する。"""
     selected_method = _validate_heading_method(heading_method)
@@ -1513,6 +1579,7 @@ def resolve_step_heading(
         gyro_heading,
         direction_offset,
         step_segments,
+        motion_heading_correction,
     )
 
     selected_heading: float | None
@@ -1602,6 +1669,13 @@ def estimate_trajectory_with_headings(
     step_lengths: list[float] = []
     t_at_steps: list[float] = []
     step_headings: list[StepHeading] = []
+    motion_heading_correction = _estimate_motion_heading_correction(
+        df_acc,
+        df_gyro,
+        peaks,
+        initial_direction,
+        step_segments,
+    )
 
     # forward 手法用: 初期前進角をデータから自動推定
     phi_0 = (
@@ -1622,6 +1696,7 @@ def estimate_trajectory_with_headings(
             initial_direction=initial_direction,
             heading_method=heading_method,
             step_segments=step_segments,
+            motion_heading_correction=motion_heading_correction,
         )
         if step_heading.selected_heading is None:
             continue
