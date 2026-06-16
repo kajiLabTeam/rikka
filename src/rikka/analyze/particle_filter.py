@@ -34,6 +34,7 @@ from .pdr import (
     _step_output_time,
     estimate_step_length,
     estimate_step_length_forward,
+    estimate_step_motion,
     resolve_step_heading,
 )
 
@@ -240,6 +241,7 @@ def run_particle_filter(
         if STEP_LENGTH_METHOD == "forward"
         else 0.0
     )
+    previous_heading: float | None = None
 
     for i, p in enumerate(peaks):
         if p >= len(df_acc):
@@ -259,12 +261,22 @@ def run_particle_filter(
         )
         if step_heading.selected_heading is None:
             continue
-        angle_det = step_heading.selected_heading
 
         if STEP_LENGTH_METHOD == "forward":
             sl_det = estimate_step_length_forward(df_acc, df_gyro, peaks, i, phi_0)
         else:
             sl_det = estimate_step_length(df_acc, int(p), k=weinberg_k)
+        step_motion = estimate_step_motion(step_heading, sl_det, previous_heading)
+        if step_motion is None:
+            continue
+        angle_det = step_motion.heading
+        sl_det = step_motion.length
+        step_heading = step_heading._replace(
+            selected_heading=step_motion.heading,
+            source="state_motion",
+            movement_type=step_motion.movement_type,
+            step_length_scale=step_motion.length_scale,
+        )
 
         # 予測前の状態を保存（全壁レスキュー用）
         particles_before = particles.copy()
@@ -340,6 +352,7 @@ def run_particle_filter(
         step_lengths.append(sl_det)
         t_at_steps.append(_step_output_time(df_acc, peaks, i, STEP_LENGTH_METHOD))
         step_headings.append(step_heading)
+        previous_heading = step_motion.heading
 
         # 系統リサンプリング
         indices = _systematic_resample(weights, rng)

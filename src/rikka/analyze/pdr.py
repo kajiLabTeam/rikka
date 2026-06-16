@@ -15,6 +15,7 @@ from ..config import (
     ACCEL_HEADING_MIN_LINE_LENGTH,
     ACCEL_HEADING_MIN_PEAK_DISTANCE,
     ACCEL_HEADING_MIN_PEAK_NORM,
+    BACKWARD_LENGTH_SCALE,
     DATA_DIR,
     FLOORMAP_ORIGIN_PX,
     FLOORMAP_PATH,
@@ -45,11 +46,14 @@ from ..config import (
     PEAK_HEIGHT,
     SAMPLING_RATE,
     SIDESTEP_LATERAL_RATIO,
+    SIDESTEP_LENGTH_SCALE,
     STEP_DETECTION_METHOD,
     STEP_LENGTH_METHOD,
     STEP_LENGTH_WINDOW,
     STEP_VERTICAL_SMOOTH_WINDOW,
     STEP_VERTICAL_THRESHOLD_PERCENTILE,
+    TURNING_LENGTH_SCALE,
+    TURNING_YAW_DELTA_THRESHOLD_DEG,
     USER_HEIGHT_M,
     WEINBERG_K,
     WINDOW_ACC,
@@ -129,6 +133,8 @@ class StepHeading(NamedTuple):
     lateral_displacement: float | None
     motion_confidence: float
     motion_reject_reason: str | None
+    step_length_scale: float = 1.0
+    yaw_delta: float | None = None
 
 
 class GyroBiasResult(NamedTuple):
@@ -994,6 +1000,16 @@ class _MotionHeadingResult(NamedTuple):
     lateral_displacement: float | None
     confidence: float
     reject_reason: str | None
+    yaw_delta: float | None = None
+
+
+class StepMotion(NamedTuple):
+    """状態別補正後の1歩の移動量。"""
+
+    heading: float
+    length: float
+    movement_type: str
+    length_scale: float
 
 
 def estimate_step_length(
@@ -1240,12 +1256,18 @@ def _rotate_vector(
 def _classify_movement_type(
     forward_displacement: float,
     lateral_displacement: float,
+    yaw_delta: float | None = None,
 ) -> str:
     """体の向きに対する移動タイプを返す。"""
+    if yaw_delta is not None and abs(yaw_delta) >= np.deg2rad(
+        TURNING_YAW_DELTA_THRESHOLD_DEG
+    ):
+        return "turning"
+
     forward_abs = abs(forward_displacement)
     lateral_abs = abs(lateral_displacement)
     if lateral_abs >= SIDESTEP_LATERAL_RATIO * max(forward_abs, 1e-12):
-        return "sidestep"
+        return "sidestep_left" if lateral_displacement > 0 else "sidestep_right"
     if forward_abs >= lateral_abs:
         return "forward"
     return "unknown"
@@ -1336,6 +1358,7 @@ def _estimate_motion_heading_from_horizontal_accel(
 
     angles = np.interp(sample_times, gyro_times[valid_gyro], low_angle[valid_gyro])
     angles = angles + direction_offset
+    yaw_delta = _normalize_angle(float(angles[-1] - angles[0]))
     world_x = h_y * np.cos(angles) - h_z * np.sin(angles)
     world_y = h_y * np.sin(angles) + h_z * np.cos(angles)
     disp_x, disp_y = _integrate_motion_with_zero_velocity(
@@ -1355,6 +1378,7 @@ def _estimate_motion_heading_from_horizontal_accel(
             0.0,
             0.0,
             "zero_motion",
+            yaw_delta,
         )
 
     motion_heading = _normalize_angle(float(np.arctan2(disp_y, disp_x)))
@@ -1366,6 +1390,7 @@ def _estimate_motion_heading_from_horizontal_accel(
     movement_type = _classify_movement_type(
         forward_displacement,
         lateral_displacement,
+        yaw_delta,
     )
     confidence = _score_ratio(
         displacement_norm,
@@ -1384,6 +1409,7 @@ def _estimate_motion_heading_from_horizontal_accel(
         lateral_displacement=lateral_displacement,
         confidence=confidence,
         reject_reason=reject_reason,
+        yaw_delta=yaw_delta,
     )
 
 
@@ -1435,6 +1461,58 @@ def _estimate_motion_heading_correction(
     if count == 0 or float(np.hypot(sin_sum, cos_sum)) <= 1e-12:
         return 0.0
     return _normalize_angle(float(np.arctan2(sin_sum, cos_sum)))
+
+
+def estimate_step_motion(
+    step_heading: StepHeading,
+    step_length: float,
+    previous_heading: float | None = None,
+) -> StepMotion | None:
+    """状態別に1歩の移動方位と歩幅を決める。"""
+    body_heading = (
+        step_heading.body_heading
+        if step_heading.body_heading is not None
+        else step_heading.gyro_heading
+    )
+    fallback_heading = (
+        step_heading.selected_heading
+        if step_heading.selected_heading is not None
+        else body_heading
+    )
+    if fallback_heading is None:
+        return None
+
+    movement_type = step_heading.movement_type
+    if movement_type == "forward":
+        heading = (
+            step_heading.motion_heading
+            if step_heading.motion_heading is not None
+            else fallback_heading
+        )
+        scale = 1.0
+    elif movement_type == "sidestep_left" and body_heading is not None:
+        heading = body_heading + np.pi / 2
+        scale = SIDESTEP_LENGTH_SCALE
+    elif movement_type == "sidestep_right" and body_heading is not None:
+        heading = body_heading - np.pi / 2
+        scale = SIDESTEP_LENGTH_SCALE
+    elif movement_type == "turning":
+        heading = previous_heading if previous_heading is not None else fallback_heading
+        scale = TURNING_LENGTH_SCALE
+    elif movement_type == "backward" and body_heading is not None:
+        heading = body_heading + np.pi
+        scale = BACKWARD_LENGTH_SCALE
+    else:
+        heading = fallback_heading
+        scale = 1.0
+        movement_type = "unknown" if movement_type == "backward" else movement_type
+
+    return StepMotion(
+        heading=_normalize_angle(float(heading)),
+        length=float(step_length * scale),
+        movement_type=movement_type,
+        length_scale=float(scale),
+    )
 
 
 def _select_two_accel_peaks(norm: np.ndarray) -> tuple[int, int] | None:
@@ -1631,6 +1709,7 @@ def resolve_step_heading(
         lateral_displacement=motion_heading.lateral_displacement,
         motion_confidence=motion_heading.confidence,
         motion_reject_reason=motion_heading.reject_reason,
+        yaw_delta=motion_heading.yaw_delta,
     )
 
 
@@ -1683,6 +1762,7 @@ def estimate_trajectory_with_headings(
         if STEP_LENGTH_METHOD == "forward"
         else 0.0
     )
+    previous_heading: float | None = None
     for i, p in enumerate(peaks):
         if p >= len(df_acc):
             continue
@@ -1704,11 +1784,25 @@ def estimate_trajectory_with_headings(
             step_length = estimate_step_length_forward(df_acc, df_gyro, peaks, i, phi_0)
         else:
             step_length = estimate_step_length(df_acc, int(p), k=weinberg_k)
-        step_lengths.append(step_length)
+        step_motion = estimate_step_motion(
+            step_heading,
+            step_length,
+            previous_heading,
+        )
+        if step_motion is None:
+            continue
+        step_heading = step_heading._replace(
+            selected_heading=step_motion.heading,
+            source="state_motion",
+            movement_type=step_motion.movement_type,
+            step_length_scale=step_motion.length_scale,
+        )
+        step_lengths.append(step_motion.length)
         t_at_steps.append(_step_output_time(df_acc, peaks, i))
         step_headings.append(step_heading)
-        x = points[-1][0] + step_length * float(np.cos(step_heading.selected_heading))
-        y = points[-1][1] + step_length * float(np.sin(step_heading.selected_heading))
+        previous_heading = step_motion.heading
+        x = points[-1][0] + step_motion.length * float(np.cos(step_motion.heading))
+        y = points[-1][1] + step_motion.length * float(np.sin(step_motion.heading))
         points.append([x, y])
 
     return points, step_lengths, t_at_steps, step_headings
@@ -1849,7 +1943,7 @@ def _plot_heading_overlay(
         if heading.body_heading is not None:
             dx, dy = _pixel_vector_from_heading(
                 heading.body_heading,
-                arrow_length_m * 0.75,
+                arrow_length_m * 1.05,
                 gx_mean,
                 gz_mean,
                 scale,
@@ -1859,17 +1953,17 @@ def _plot_heading_overlay(
                 start_y,
                 dx,
                 dy,
-                width=0.9,
-                head_width=7.0,
-                head_length=9.0,
+                width=1.8,
+                head_width=12.0,
+                head_length=15.0,
                 length_includes_head=True,
-                color="darkorange",
-                alpha=0.75,
+                color="orangered",
+                alpha=0.95,
                 zorder=6,
                 label="Body heading" if not body_label_added else None,
             )
             body_label_added = True
-        if heading.movement_type == "sidestep":
+        if heading.movement_type in {"sidestep_left", "sidestep_right"}:
             sidestep_points.append((float(px[i + 1]), float(py[i + 1])))
 
     if sidestep_points:
@@ -2131,8 +2225,10 @@ def _build_step_headings_dataframe(step_headings: list[StepHeading]) -> pd.DataF
         "selected_heading_deg",
         "source",
         "movement_type",
+        "step_length_scale",
         "confidence",
         "motion_confidence",
+        "yaw_delta_deg",
         "angle_diff_method1_deg",
         "angle_diff_method2_deg",
         "forward_displacement",
@@ -2155,8 +2251,10 @@ def _build_step_headings_dataframe(step_headings: list[StepHeading]) -> pd.DataF
             "selected_heading_deg": _angle_to_deg(heading.selected_heading),
             "source": heading.source,
             "movement_type": heading.movement_type,
+            "step_length_scale": heading.step_length_scale,
             "confidence": heading.confidence,
             "motion_confidence": heading.motion_confidence,
+            "yaw_delta_deg": _angle_to_deg(heading.yaw_delta),
             "angle_diff_method1_deg": _angle_to_deg(heading.angle_diff_method1),
             "angle_diff_method2_deg": _angle_to_deg(heading.angle_diff_method2),
             "forward_displacement": heading.forward_displacement,

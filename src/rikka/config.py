@@ -3,7 +3,7 @@
 # Data directory path
 # Change this path to use different input data
 
-DATA_DIR = "input/90steps_turn_elevator2"
+DATA_DIR = "input/1turn_rightsidestep_3turn_leftsidestep"
 
 # フロアマップ設定
 # 背景として表示するフロアマップ画像のパス
@@ -123,6 +123,10 @@ MOTION_HEADING_MIN_DISPLACEMENT_M = 1e-4
 MOTION_HEADING_CONFIDENCE_THRESHOLD = 0.6
 SIDESTEP_LATERAL_RATIO = 1.5
 MOTION_HEADING_CALIBRATION_STEPS = 8
+SIDESTEP_LENGTH_SCALE = 0.6
+TURNING_LENGTH_SCALE = 0.3
+BACKWARD_LENGTH_SCALE = 0.8
+TURNING_YAW_DELTA_THRESHOLD_DEG = 35.0
 
 # 前進方向射影積分のユニバーサルスケール係数
 # 歩幅 = K_FORWARD × 振動変位
