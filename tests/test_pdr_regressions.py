@@ -412,7 +412,7 @@ def test_resolve_step_heading_gyro_accel_motion_detects_sidestep() -> None:
     )
 
     assert heading.source == "gyro_accel_motion"
-    assert heading.movement_type == "sidestep"
+    assert heading.movement_type == "sidestep_left"
     assert heading.motion_reject_reason is None
     assert heading.selected_heading is not None
     assert heading.motion_heading is not None
@@ -420,6 +420,106 @@ def test_resolve_step_heading_gyro_accel_motion_detects_sidestep() -> None:
     np.testing.assert_allclose(heading.body_heading, 0.0, atol=1e-12)
     np.testing.assert_allclose(heading.selected_heading, np.pi / 2, atol=1e-12)
     assert heading.lateral_displacement > 0
+
+
+def test_estimate_step_motion_uses_sidestep_left_adjustment() -> None:
+    n_samples = 100
+    df_acc = pd.DataFrame(
+        {
+            "t": np.arange(n_samples, dtype=float) * 0.01,
+            "h_y": np.zeros(n_samples),
+            "h_z": np.zeros(n_samples),
+        }
+    )
+    df_acc.loc[20, "h_z"] = 10.0
+    df_gyro = pd.DataFrame(
+        {
+            "t": np.arange(n_samples, dtype=float) * 0.01,
+            "low_angle": np.zeros(n_samples),
+        }
+    )
+
+    heading = pdr.resolve_step_heading(
+        np.array([10, 70]),
+        df_gyro,
+        df_acc,
+        0,
+        initial_direction=0.0,
+        heading_method="gyro",
+    )
+    motion = pdr.estimate_step_motion(heading, 1.0)
+
+    assert motion is not None
+    assert motion.movement_type == "sidestep_left"
+    np.testing.assert_allclose(motion.heading, np.pi / 2, atol=1e-12)
+    np.testing.assert_allclose(motion.length, pdr.SIDESTEP_LENGTH_SCALE, atol=1e-12)
+
+
+def test_estimate_step_motion_uses_sidestep_right_adjustment() -> None:
+    n_samples = 100
+    df_acc = pd.DataFrame(
+        {
+            "t": np.arange(n_samples, dtype=float) * 0.01,
+            "h_y": np.zeros(n_samples),
+            "h_z": np.zeros(n_samples),
+        }
+    )
+    df_acc.loc[20, "h_z"] = -10.0
+    df_gyro = pd.DataFrame(
+        {
+            "t": np.arange(n_samples, dtype=float) * 0.01,
+            "low_angle": np.zeros(n_samples),
+        }
+    )
+
+    heading = pdr.resolve_step_heading(
+        np.array([10, 70]),
+        df_gyro,
+        df_acc,
+        0,
+        initial_direction=0.0,
+        heading_method="gyro",
+    )
+    motion = pdr.estimate_step_motion(heading, 1.0)
+
+    assert motion is not None
+    assert motion.movement_type == "sidestep_right"
+    np.testing.assert_allclose(motion.heading, -np.pi / 2, atol=1e-12)
+    np.testing.assert_allclose(motion.length, pdr.SIDESTEP_LENGTH_SCALE, atol=1e-12)
+
+
+def test_estimate_step_motion_uses_turning_adjustment() -> None:
+    n_samples = 100
+    df_acc = pd.DataFrame(
+        {
+            "t": np.arange(n_samples, dtype=float) * 0.01,
+            "h_y": np.zeros(n_samples),
+            "h_z": np.zeros(n_samples),
+        }
+    )
+    df_acc.loc[20, "h_y"] = 10.0
+    df_gyro = pd.DataFrame(
+        {
+            "t": np.arange(n_samples, dtype=float) * 0.01,
+            "low_angle": np.linspace(0.0, 1.5, n_samples),
+        }
+    )
+
+    heading = pdr.resolve_step_heading(
+        np.array([10, 70]),
+        df_gyro,
+        df_acc,
+        0,
+        initial_direction=0.0,
+        heading_method="gyro",
+    )
+    previous_heading = 0.25
+    motion = pdr.estimate_step_motion(heading, 1.0, previous_heading)
+
+    assert motion is not None
+    assert motion.movement_type == "turning"
+    np.testing.assert_allclose(motion.heading, previous_heading, atol=1e-12)
+    np.testing.assert_allclose(motion.length, pdr.TURNING_LENGTH_SCALE, atol=1e-12)
 
 
 def test_resolve_step_heading_applies_motion_heading_correction() -> None:
