@@ -21,6 +21,9 @@ from ..config import (
     PF_SIGMA_HEADING,
     PF_SIGMA_INIT_HEADING,
     PF_SIGMA_STEP_LENGTH_RATIO,
+    SIDESTEP_LATERAL_RATIO,
+    SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
+    SIDESTEP_SMOOTHING_METHOD,
     STEP_LENGTH_METHOD,
     WEINBERG_K,
 )
@@ -29,9 +32,14 @@ from .pdr import (
     StepSegment,
     _compute_pixel_coords,
     _estimate_initial_forward_angle,
-    _estimate_motion_heading_correction,
     _plot_heading_overlay,
+    _resolve_motion_heading_correction,
+    _smooth_step_headings,
     _step_output_time,
+    _validate_motion_heading_correction,
+    _validate_non_negative_parameter,
+    _validate_positive_parameter,
+    _validate_sidestep_smoothing,
     estimate_step_length,
     estimate_step_length_forward,
     estimate_step_motion,
@@ -184,6 +192,10 @@ def run_particle_filter(
     weinberg_k: float = WEINBERG_K,
     heading_method: str = "gyro",
     step_segments: tuple[StepSegment, ...] = (),
+    sidestep_lateral_ratio: float = SIDESTEP_LATERAL_RATIO,
+    sidestep_min_lateral_displacement: float = SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
+    motion_heading_correction: str = "auto",
+    sidestep_smoothing: str = SIDESTEP_SMOOTHING_METHOD,
 ) -> tuple[list[list[float]], list[float], list[float], np.ndarray, list[StepHeading]]:
     """パーティクルフィルタでマップマッチング付き歩行軌跡を推定する。
 
@@ -204,6 +216,10 @@ def run_particle_filter(
         weinberg_k: Weinbergモデルのスケール係数
         heading_method: 方位推定手法
         step_segments: 論文寄せステップ検出の1歩区間
+        sidestep_lateral_ratio: 横歩き判定に使う横方向/前方向の最小比率
+        sidestep_min_lateral_displacement: 横歩き判定に必要な横方向変位の最小値
+        motion_heading_correction: 水平加速度移動方向の固定ずれ補正モード
+        sidestep_smoothing: 横歩き判定の平滑化モード
 
     Returns:
         tuple: (加重平均軌跡の座標リスト, 各ステップの決定論的歩幅リスト,
@@ -211,6 +227,18 @@ def run_particle_filter(
             全ステップのパーティクル位置 shape=(T, N, 2),
             各ステップの方位候補と採用結果)
     """
+    sidestep_lateral_ratio = _validate_positive_parameter(
+        "sidestep_lateral_ratio",
+        sidestep_lateral_ratio,
+    )
+    sidestep_min_lateral_displacement = _validate_non_negative_parameter(
+        "sidestep_min_lateral_displacement",
+        sidestep_min_lateral_displacement,
+    )
+    selected_motion_heading_correction = _validate_motion_heading_correction(
+        motion_heading_correction
+    )
+    selected_sidestep_smoothing = _validate_sidestep_smoothing(sidestep_smoothing)
     rng = np.random.default_rng()
 
     # フロアマップをグレースケールで読み込み
@@ -228,12 +256,13 @@ def run_particle_filter(
     resample_history: list[np.ndarray] = []
     all_particles_list: list[np.ndarray] = [particles.copy()]  # ステップ0（原点）
     step_headings: list[StepHeading] = []
-    motion_heading_correction = _estimate_motion_heading_correction(
+    motion_heading_correction_rad = _resolve_motion_heading_correction(
         df_acc,
         df_gyro,
         peaks,
         initial_direction,
         step_segments,
+        selected_motion_heading_correction,
     )
 
     phi_0 = (
@@ -241,8 +270,9 @@ def run_particle_filter(
         if STEP_LENGTH_METHOD == "forward"
         else 0.0
     )
-    previous_heading: float | None = None
-
+    raw_step_headings: list[StepHeading] = []
+    raw_step_lengths: list[float] = []
+    raw_step_times: list[float] = []
     for i, p in enumerate(peaks):
         if p >= len(df_acc):
             continue
@@ -257,7 +287,9 @@ def run_particle_filter(
             initial_direction=initial_direction,
             heading_method=heading_method,
             step_segments=step_segments,
-            motion_heading_correction=motion_heading_correction,
+            motion_heading_correction=motion_heading_correction_rad,
+            sidestep_lateral_ratio=sidestep_lateral_ratio,
+            sidestep_min_lateral_displacement=sidestep_min_lateral_displacement,
         )
         if step_heading.selected_heading is None:
             continue
@@ -266,6 +298,18 @@ def run_particle_filter(
             sl_det = estimate_step_length_forward(df_acc, df_gyro, peaks, i, phi_0)
         else:
             sl_det = estimate_step_length(df_acc, int(p), k=weinberg_k)
+        raw_step_headings.append(step_heading)
+        raw_step_lengths.append(sl_det)
+        raw_step_times.append(_step_output_time(df_acc, peaks, i, STEP_LENGTH_METHOD))
+
+    previous_heading: float | None = None
+
+    for step_heading, sl_det, step_time in zip(
+        _smooth_step_headings(raw_step_headings, selected_sidestep_smoothing),
+        raw_step_lengths,
+        raw_step_times,
+        strict=True,
+    ):
         step_motion = estimate_step_motion(step_heading, sl_det, previous_heading)
         if step_motion is None:
             continue
@@ -274,8 +318,8 @@ def run_particle_filter(
         step_heading = step_heading._replace(
             selected_heading=step_motion.heading,
             source="state_motion",
-            movement_type=step_motion.movement_type,
             step_length_scale=step_motion.length_scale,
+            trajectory_movement_type=step_motion.movement_type,
         )
 
         # 予測前の状態を保存（全壁レスキュー用）
@@ -350,7 +394,7 @@ def run_particle_filter(
 
         position_history.append(particles.copy())
         step_lengths.append(sl_det)
-        t_at_steps.append(_step_output_time(df_acc, peaks, i, STEP_LENGTH_METHOD))
+        t_at_steps.append(step_time)
         step_headings.append(step_heading)
         previous_heading = step_motion.heading
 
