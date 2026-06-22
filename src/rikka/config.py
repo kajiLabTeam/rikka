@@ -110,7 +110,7 @@ STEP_LENGTH_METHOD = "weinberg"
 # "accel_method1" : 論文手法1（時間的に早い平面加速度極大値方向）
 # "accel_method2" : 論文手法2（ノルムが大きい平面加速度極大値方向）
 # "gyro_accel_motion": ジャイロを体の向き、水平加速度を移動方向として分離
-HEADING_METHOD = "gyro"
+HEADING_METHOD = "gyro_accel_motion"
 
 # 加速度平面成分方位の信頼度パラメータ
 ACCEL_HEADING_MIN_PEAK_NORM = 1.0
@@ -121,7 +121,9 @@ ACCEL_HEADING_CONFIDENCE_THRESHOLD = 0.6
 # ジャイロ基準の水平加速度移動方向推定パラメータ
 MOTION_HEADING_MIN_DISPLACEMENT_M = 1e-4
 MOTION_HEADING_CONFIDENCE_THRESHOLD = 0.6
-SIDESTEP_LATERAL_RATIO = 1.5
+SIDESTEP_LATERAL_RATIO = 1.2
+SIDESTEP_MIN_LATERAL_DISPLACEMENT_M = 0.03
+SIDESTEP_SMOOTHING_METHOD = "isolated"
 MOTION_HEADING_CALIBRATION_STEPS = 8
 SIDESTEP_LENGTH_SCALE = 1
 TURNING_LENGTH_SCALE = 0.3

@@ -47,6 +47,8 @@ from ..config import (
     SAMPLING_RATE,
     SIDESTEP_LATERAL_RATIO,
     SIDESTEP_LENGTH_SCALE,
+    SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
+    SIDESTEP_SMOOTHING_METHOD,
     STEP_DETECTION_METHOD,
     STEP_LENGTH_METHOD,
     STEP_LENGTH_WINDOW,
@@ -89,6 +91,8 @@ HEADING_METHODS = (
     "gyro_accel_motion",
 )
 GYRO_BIAS_METHODS = ("prewalk_robust", "initial_robust", "quietest", "manual")
+MOTION_HEADING_CORRECTION_METHODS = ("auto", "none")
+SIDESTEP_SMOOTHING_METHODS = ("none", "isolated")
 
 
 class StepSegment(NamedTuple):
@@ -133,8 +137,12 @@ class StepHeading(NamedTuple):
     lateral_displacement: float | None
     motion_confidence: float
     motion_reject_reason: str | None
+    trajectory_movement_type: str | None = None
     step_length_scale: float = 1.0
     yaw_delta: float | None = None
+    motion_heading_correction: float = 0.0
+    sidestep_lateral_ratio: float = SIDESTEP_LATERAL_RATIO
+    sidestep_min_lateral_displacement: float = SIDESTEP_MIN_LATERAL_DISPLACEMENT_M
 
 
 class GyroBiasResult(NamedTuple):
@@ -1188,6 +1196,40 @@ def _score_ratio(value: float, target: float) -> float:
     return float(np.clip(value / target, 0.0, 1.0))
 
 
+def _validate_positive_parameter(name: str, value: float) -> float:
+    """正の解析パラメータであることを確認する。"""
+    if value <= 0:
+        raise ValueError(f"{name} は正の値を指定してください。")
+    return value
+
+
+def _validate_non_negative_parameter(name: str, value: float) -> float:
+    """0以上の解析パラメータであることを確認する。"""
+    if value < 0:
+        raise ValueError(f"{name} は0以上の値を指定してください。")
+    return value
+
+
+def _validate_motion_heading_correction(method: str) -> str:
+    """水平加速度移動方向の固定ずれ補正モードを検証する。"""
+    if method not in MOTION_HEADING_CORRECTION_METHODS:
+        allowed = ", ".join(MOTION_HEADING_CORRECTION_METHODS)
+        raise ValueError(
+            f"motion_heading_correction は {allowed} のいずれかを指定してください。"
+        )
+    return method
+
+
+def _validate_sidestep_smoothing(method: str) -> str:
+    """横歩き判定の平滑化モードを検証する。"""
+    if method not in SIDESTEP_SMOOTHING_METHODS:
+        allowed = ", ".join(SIDESTEP_SMOOTHING_METHODS)
+        raise ValueError(
+            f"sidestep_smoothing は {allowed} のいずれかを指定してください。"
+        )
+    return method
+
+
 def _step_segment_bounds(
     peaks: np.ndarray,
     i: int,
@@ -1257,6 +1299,8 @@ def _classify_movement_type(
     forward_displacement: float,
     lateral_displacement: float,
     yaw_delta: float | None = None,
+    sidestep_lateral_ratio: float = SIDESTEP_LATERAL_RATIO,
+    sidestep_min_lateral_displacement: float = SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
 ) -> str:
     """体の向きに対する移動タイプを返す。"""
     if yaw_delta is not None and abs(yaw_delta) >= np.deg2rad(
@@ -1266,7 +1310,10 @@ def _classify_movement_type(
 
     forward_abs = abs(forward_displacement)
     lateral_abs = abs(lateral_displacement)
-    if lateral_abs >= SIDESTEP_LATERAL_RATIO * max(forward_abs, 1e-12):
+    if (
+        lateral_abs >= sidestep_min_lateral_displacement
+        and lateral_abs >= sidestep_lateral_ratio * max(forward_abs, 1e-12)
+    ):
         return "sidestep_left" if lateral_displacement > 0 else "sidestep_right"
     if forward_abs >= lateral_abs:
         return "forward"
@@ -1282,6 +1329,8 @@ def _estimate_motion_heading_from_horizontal_accel(
     direction_offset: float,
     step_segments: tuple[StepSegment, ...] = (),
     motion_heading_correction: float = 0.0,
+    sidestep_lateral_ratio: float = SIDESTEP_LATERAL_RATIO,
+    sidestep_min_lateral_displacement: float = SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
 ) -> _MotionHeadingResult:
     """ジャイロで向きを固定し、水平加速度から世界座標上の移動方向を推定する。"""
     if body_heading is None:
@@ -1391,6 +1440,8 @@ def _estimate_motion_heading_from_horizontal_accel(
         forward_displacement,
         lateral_displacement,
         yaw_delta,
+        sidestep_lateral_ratio,
+        sidestep_min_lateral_displacement,
     )
     confidence = _score_ratio(
         displacement_norm,
@@ -1463,6 +1514,69 @@ def _estimate_motion_heading_correction(
     return _normalize_angle(float(np.arctan2(sin_sum, cos_sum)))
 
 
+def _resolve_motion_heading_correction(
+    df_acc: pd.DataFrame,
+    df_gyro: pd.DataFrame,
+    peaks: np.ndarray,
+    initial_direction: float,
+    step_segments: tuple[StepSegment, ...],
+    method: str,
+) -> float:
+    """指定モードに応じた水平加速度方位補正角を返す。"""
+    selected_method = _validate_motion_heading_correction(method)
+    if selected_method == "none":
+        return 0.0
+    return _estimate_motion_heading_correction(
+        df_acc,
+        df_gyro,
+        peaks,
+        initial_direction,
+        step_segments,
+    )
+
+
+def _is_sidestep_movement(movement_type: str) -> bool:
+    """横歩き系の移動タイプかどうかを返す。"""
+    return movement_type in {"sidestep_left", "sidestep_right"}
+
+
+def _lateral_forward_ratio(step_heading: StepHeading) -> float | None:
+    """横方向変位 / 前方向変位 の比を返す。"""
+    if (
+        step_heading.forward_displacement is None
+        or step_heading.lateral_displacement is None
+    ):
+        return None
+    return abs(step_heading.lateral_displacement) / max(
+        abs(step_heading.forward_displacement),
+        1e-12,
+    )
+
+
+def _smooth_step_headings(
+    step_headings: list[StepHeading],
+    method: str = "none",
+) -> list[StepHeading]:
+    """1歩だけ孤立した横歩き判定を抑制する。"""
+    selected_method = _validate_sidestep_smoothing(method)
+    if selected_method == "none" or len(step_headings) < 3:
+        return step_headings
+
+    smoothed = list(step_headings)
+    for i in range(1, len(step_headings) - 1):
+        current = step_headings[i]
+        prev_type = step_headings[i - 1].movement_type
+        next_type = step_headings[i + 1].movement_type
+        if (
+            _is_sidestep_movement(current.movement_type)
+            and prev_type == "forward"
+            and next_type == "forward"
+        ):
+            smoothed[i] = current._replace(trajectory_movement_type="forward")
+
+    return smoothed
+
+
 def estimate_step_motion(
     step_heading: StepHeading,
     step_length: float,
@@ -1482,7 +1596,11 @@ def estimate_step_motion(
     if fallback_heading is None:
         return None
 
-    movement_type = step_heading.movement_type
+    movement_type = (
+        step_heading.trajectory_movement_type
+        if step_heading.trajectory_movement_type is not None
+        else step_heading.movement_type
+    )
     if movement_type == "forward":
         heading = (
             step_heading.motion_heading
@@ -1636,9 +1754,19 @@ def resolve_step_heading(
     heading_method: str = HEADING_METHOD,
     step_segments: tuple[StepSegment, ...] = (),
     motion_heading_correction: float = 0.0,
+    sidestep_lateral_ratio: float = SIDESTEP_LATERAL_RATIO,
+    sidestep_min_lateral_displacement: float = SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
 ) -> StepHeading:
     """指定ステップのジャイロ/加速度/移動方向方位を解決する。"""
     selected_method = _validate_heading_method(heading_method)
+    sidestep_lateral_ratio = _validate_positive_parameter(
+        "sidestep_lateral_ratio",
+        sidestep_lateral_ratio,
+    )
+    sidestep_min_lateral_displacement = _validate_non_negative_parameter(
+        "sidestep_min_lateral_displacement",
+        sidestep_min_lateral_displacement,
+    )
     direction_offset = float(np.deg2rad(initial_direction))
     mid_idx = _step_mid_index(peaks, i)
     mid_time = _step_mid_time(df_acc, peaks, i)
@@ -1658,6 +1786,8 @@ def resolve_step_heading(
         direction_offset,
         step_segments,
         motion_heading_correction,
+        sidestep_lateral_ratio,
+        sidestep_min_lateral_displacement,
     )
 
     selected_heading: float | None
@@ -1710,6 +1840,9 @@ def resolve_step_heading(
         motion_confidence=motion_heading.confidence,
         motion_reject_reason=motion_heading.reject_reason,
         yaw_delta=motion_heading.yaw_delta,
+        motion_heading_correction=motion_heading_correction,
+        sidestep_lateral_ratio=sidestep_lateral_ratio,
+        sidestep_min_lateral_displacement=sidestep_min_lateral_displacement,
     )
 
 
@@ -1721,6 +1854,10 @@ def estimate_trajectory_with_headings(
     weinberg_k: float = WEINBERG_K,
     heading_method: str = HEADING_METHOD,
     step_segments: tuple[StepSegment, ...] = (),
+    sidestep_lateral_ratio: float = SIDESTEP_LATERAL_RATIO,
+    sidestep_min_lateral_displacement: float = SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
+    motion_heading_correction: str = "auto",
+    sidestep_smoothing: str = SIDESTEP_SMOOTHING_METHOD,
 ) -> tuple[list[list[float]], list[float], list[float], list[StepHeading]]:
     """ステップピークとジャイロスコープ角度から2次元軌跡を推定する。
 
@@ -1748,13 +1885,23 @@ def estimate_trajectory_with_headings(
     step_lengths: list[float] = []
     t_at_steps: list[float] = []
     step_headings: list[StepHeading] = []
-    motion_heading_correction = _estimate_motion_heading_correction(
+    sidestep_lateral_ratio = _validate_positive_parameter(
+        "sidestep_lateral_ratio",
+        sidestep_lateral_ratio,
+    )
+    sidestep_min_lateral_displacement = _validate_non_negative_parameter(
+        "sidestep_min_lateral_displacement",
+        sidestep_min_lateral_displacement,
+    )
+    motion_heading_correction_rad = _resolve_motion_heading_correction(
         df_acc,
         df_gyro,
         peaks,
         initial_direction,
         step_segments,
+        motion_heading_correction,
     )
+    selected_sidestep_smoothing = _validate_sidestep_smoothing(sidestep_smoothing)
 
     # forward 手法用: 初期前進角をデータから自動推定
     phi_0 = (
@@ -1762,6 +1909,9 @@ def estimate_trajectory_with_headings(
         if STEP_LENGTH_METHOD == "forward"
         else 0.0
     )
+    raw_step_headings: list[StepHeading] = []
+    raw_step_lengths: list[float] = []
+    raw_step_times: list[float] = []
     previous_heading: float | None = None
     for i, p in enumerate(peaks):
         if p >= len(df_acc):
@@ -1776,7 +1926,9 @@ def estimate_trajectory_with_headings(
             initial_direction=initial_direction,
             heading_method=heading_method,
             step_segments=step_segments,
-            motion_heading_correction=motion_heading_correction,
+            motion_heading_correction=motion_heading_correction_rad,
+            sidestep_lateral_ratio=sidestep_lateral_ratio,
+            sidestep_min_lateral_displacement=sidestep_min_lateral_displacement,
         )
         if step_heading.selected_heading is None:
             continue
@@ -1784,6 +1936,16 @@ def estimate_trajectory_with_headings(
             step_length = estimate_step_length_forward(df_acc, df_gyro, peaks, i, phi_0)
         else:
             step_length = estimate_step_length(df_acc, int(p), k=weinberg_k)
+        raw_step_headings.append(step_heading)
+        raw_step_lengths.append(step_length)
+        raw_step_times.append(_step_output_time(df_acc, peaks, i))
+
+    for step_heading, step_length, step_time in zip(
+        _smooth_step_headings(raw_step_headings, selected_sidestep_smoothing),
+        raw_step_lengths,
+        raw_step_times,
+        strict=True,
+    ):
         step_motion = estimate_step_motion(
             step_heading,
             step_length,
@@ -1794,11 +1956,11 @@ def estimate_trajectory_with_headings(
         step_heading = step_heading._replace(
             selected_heading=step_motion.heading,
             source="state_motion",
-            movement_type=step_motion.movement_type,
             step_length_scale=step_motion.length_scale,
+            trajectory_movement_type=step_motion.movement_type,
         )
         step_lengths.append(step_motion.length)
-        t_at_steps.append(_step_output_time(df_acc, peaks, i))
+        t_at_steps.append(step_time)
         step_headings.append(step_heading)
         previous_heading = step_motion.heading
         x = points[-1][0] + step_motion.length * float(np.cos(step_motion.heading))
@@ -2225,10 +2387,15 @@ def _build_step_headings_dataframe(step_headings: list[StepHeading]) -> pd.DataF
         "selected_heading_deg",
         "source",
         "movement_type",
+        "trajectory_movement_type",
         "step_length_scale",
         "confidence",
         "motion_confidence",
         "yaw_delta_deg",
+        "motion_heading_correction_deg",
+        "lateral_forward_ratio",
+        "sidestep_lateral_ratio",
+        "sidestep_min_lateral_displacement",
         "angle_diff_method1_deg",
         "angle_diff_method2_deg",
         "forward_displacement",
@@ -2251,10 +2418,19 @@ def _build_step_headings_dataframe(step_headings: list[StepHeading]) -> pd.DataF
             "selected_heading_deg": _angle_to_deg(heading.selected_heading),
             "source": heading.source,
             "movement_type": heading.movement_type,
+            "trajectory_movement_type": heading.trajectory_movement_type,
             "step_length_scale": heading.step_length_scale,
             "confidence": heading.confidence,
             "motion_confidence": heading.motion_confidence,
             "yaw_delta_deg": _angle_to_deg(heading.yaw_delta),
+            "motion_heading_correction_deg": _angle_to_deg(
+                heading.motion_heading_correction
+            ),
+            "lateral_forward_ratio": _lateral_forward_ratio(heading),
+            "sidestep_lateral_ratio": heading.sidestep_lateral_ratio,
+            "sidestep_min_lateral_displacement": (
+                heading.sidestep_min_lateral_displacement
+            ),
             "angle_diff_method1_deg": _angle_to_deg(heading.angle_diff_method1),
             "angle_diff_method2_deg": _angle_to_deg(heading.angle_diff_method2),
             "forward_displacement": heading.forward_displacement,
@@ -2300,6 +2476,10 @@ def run(
     heading_method: str | None = None,
     gyro_bias_method: str | None = None,
     gyro_bias: float | None = None,
+    sidestep_lateral_ratio: float = SIDESTEP_LATERAL_RATIO,
+    sidestep_min_lateral_displacement: float = SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
+    motion_heading_correction: str = "auto",
+    sidestep_smoothing: str = SIDESTEP_SMOOTHING_METHOD,
 ) -> pd.DataFrame:
     """PDRのメインパイプラインを実行する。
 
@@ -2342,6 +2522,14 @@ def run(
             ジャイロバイアス推定手法。``None`` のときは設定値を使用する。
         gyro_bias:
             ``gyro_bias_method="manual"`` のときに使う手動バイアス [rad/s]。
+        sidestep_lateral_ratio:
+            横歩き判定に使う横方向/前方向の最小比率。
+        sidestep_min_lateral_displacement:
+            横歩き判定に必要な横方向変位の最小値 [m]。
+        motion_heading_correction:
+            水平加速度移動方向の固定ずれ補正モード（``"auto"`` or ``"none"``）。
+        sidestep_smoothing:
+            横歩き判定の平滑化モード（``"none"`` or ``"isolated"``）。
 
     Returns:
         pd.DataFrame: 軌跡データ（列: timestamp_s, x, y）
@@ -2350,6 +2538,18 @@ def run(
         ValueError: ``df_acc`` と ``df_gyro`` の片方だけが渡された場合
     """
     _validate_scale(scale)
+    sidestep_lateral_ratio = _validate_positive_parameter(
+        "sidestep_lateral_ratio",
+        sidestep_lateral_ratio,
+    )
+    sidestep_min_lateral_displacement = _validate_non_negative_parameter(
+        "sidestep_min_lateral_displacement",
+        sidestep_min_lateral_displacement,
+    )
+    selected_motion_heading_correction = _validate_motion_heading_correction(
+        motion_heading_correction
+    )
+    selected_sidestep_smoothing = _validate_sidestep_smoothing(sidestep_smoothing)
     output_dir = _create_output_dir()
     should_save_animation = plot if save_animation is None else save_animation
 
@@ -2379,6 +2579,13 @@ def run(
     )
     print(f"Weinberg K: {weinberg_k:.3f} (height={height_m:.2f} m)")
     print(f"Heading method: {selected_heading_method}")
+    print(
+        "Sidestep detection: "
+        f"ratio={sidestep_lateral_ratio:.3f} "
+        f"min_lateral={sidestep_min_lateral_displacement:.3f} m "
+        f"motion_heading_correction={selected_motion_heading_correction} "
+        f"smoothing={selected_sidestep_smoothing}"
+    )
     bias_result = df_gyro.attrs.get("gyro_bias_result")
     if isinstance(bias_result, GyroBiasResult):
         if bias_result.calibration_start_s is None:
@@ -2448,6 +2655,10 @@ def run(
             weinberg_k=weinberg_k,
             heading_method=selected_heading_method,
             step_segments=step_detection.segments,
+            sidestep_lateral_ratio=sidestep_lateral_ratio,
+            sidestep_min_lateral_displacement=sidestep_min_lateral_displacement,
+            motion_heading_correction=selected_motion_heading_correction,
+            sidestep_smoothing=selected_sidestep_smoothing,
         )
 
         print(f"Peaks detected: {len(peaks)}")
@@ -2554,6 +2765,10 @@ def run(
                 weinberg_k,
                 heading_method=selected_heading_method,
                 step_segments=step_detection.segments,
+                sidestep_lateral_ratio=sidestep_lateral_ratio,
+                sidestep_min_lateral_displacement=sidestep_min_lateral_displacement,
+                motion_heading_correction=selected_motion_heading_correction,
+                sidestep_smoothing=selected_sidestep_smoothing,
             )
         )
 
