@@ -1,6 +1,9 @@
 import pytest
+from click.testing import CliRunner
 
+from rikka import cli
 from rikka.config import (
+    FORWARD_HEADING_SOURCE,
     HEADING_METHOD,
     SIDESTEP_LATERAL_RATIO,
     SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
@@ -27,6 +30,14 @@ def test_compute_weinberg_k_rejects_non_positive_height() -> None:
 
 def test_default_sidestep_detection_settings_match_selected_standard() -> None:
     assert HEADING_METHOD == "gyro_accel_motion"
+    assert FORWARD_HEADING_SOURCE == "body"
     assert SIDESTEP_LATERAL_RATIO == pytest.approx(1.2)
     assert SIDESTEP_MIN_LATERAL_DISPLACEMENT_M == pytest.approx(0.03)
-    assert SIDESTEP_SMOOTHING_METHOD == "isolated"
+    assert SIDESTEP_SMOOTHING_METHOD == "clustered"
+
+
+def test_run_help_includes_forward_heading_source_option() -> None:
+    result = CliRunner().invoke(cli, ["run", "--help"])
+
+    assert result.exit_code == 0
+    assert "--forward-heading-source" in result.output

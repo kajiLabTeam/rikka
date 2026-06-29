@@ -5,6 +5,7 @@ from .config import (
     FLOORMAP_ORIGIN_PX,
     FLOORMAP_PATH,
     FLOORMAP_SCALE,
+    FORWARD_HEADING_SOURCE,
     GYRO_BIAS_METHOD,
     HEADING_METHOD,
     INITIAL_DIRECTION,
@@ -38,7 +39,9 @@ _SIDESTEP_MIN_LATERAL_DISPLACEMENT_DEFAULT = SIDESTEP_MIN_LATERAL_DISPLACEMENT_M
 _MOTION_HEADING_CORRECTION_DEFAULT = "auto"
 _MOTION_HEADING_CORRECTION_CHOICES = ("auto", "none")
 _SIDESTEP_SMOOTHING_DEFAULT = SIDESTEP_SMOOTHING_METHOD
-_SIDESTEP_SMOOTHING_CHOICES = ("none", "isolated")
+_SIDESTEP_SMOOTHING_CHOICES = ("none", "isolated", "clustered")
+_FORWARD_HEADING_SOURCE_DEFAULT = FORWARD_HEADING_SOURCE
+_FORWARD_HEADING_SOURCE_CHOICES = ("body", "motion")
 
 
 def _validate_cli_scale(
@@ -85,6 +88,13 @@ def _common_options(f: click.decorators.FC) -> click.decorators.FC:
         default=_SIDESTEP_SMOOTHING_DEFAULT,
         show_default=True,
         help="横歩き判定の平滑化",
+    )(f)
+    f = click.option(
+        "--forward-heading-source",
+        type=click.Choice(_FORWARD_HEADING_SOURCE_CHOICES),
+        default=_FORWARD_HEADING_SOURCE_DEFAULT,
+        show_default=True,
+        help="forward 判定ステップの軌跡方位ソース",
     )(f)
     f = click.option(
         "--motion-heading-correction",
@@ -205,6 +215,7 @@ def _run_pdr(
     sidestep_min_lateral_displacement: float,
     motion_heading_correction: str,
     sidestep_smoothing: str,
+    forward_heading_source: str,
     no_plot: bool,
 ) -> None:
     from .analyze.pdr import load_sensor_data  # noqa: PLC0415
@@ -229,6 +240,7 @@ def _run_pdr(
         sidestep_min_lateral_displacement=sidestep_min_lateral_displacement,
         motion_heading_correction=motion_heading_correction,
         sidestep_smoothing=sidestep_smoothing,
+        forward_heading_source=forward_heading_source,
     )
 
 
@@ -249,6 +261,7 @@ def run(
     sidestep_min_lateral_displacement: float,
     motion_heading_correction: str,
     sidestep_smoothing: str,
+    forward_heading_source: str,
     no_plot: bool,
 ) -> None:
     """決定論的 PDR で歩行軌跡を推定する。"""
@@ -267,6 +280,7 @@ def run(
         sidestep_min_lateral_displacement,
         motion_heading_correction,
         sidestep_smoothing,
+        forward_heading_source,
         no_plot,
     )
 
@@ -288,6 +302,7 @@ def pdr(
     sidestep_min_lateral_displacement: float,
     motion_heading_correction: str,
     sidestep_smoothing: str,
+    forward_heading_source: str,
     no_plot: bool,
 ) -> None:
     """決定論的 PDR で歩行軌跡を推定する（run の別名）。"""
@@ -306,6 +321,7 @@ def pdr(
         sidestep_min_lateral_displacement,
         motion_heading_correction,
         sidestep_smoothing,
+        forward_heading_source,
         no_plot,
     )
 
@@ -333,6 +349,7 @@ def particle(
     sidestep_min_lateral_displacement: float,
     motion_heading_correction: str,
     sidestep_smoothing: str,
+    forward_heading_source: str,
     no_plot: bool,
     save_animation: bool,
 ) -> None:
@@ -360,6 +377,7 @@ def particle(
         sidestep_min_lateral_displacement=sidestep_min_lateral_displacement,
         motion_heading_correction=motion_heading_correction,
         sidestep_smoothing=sidestep_smoothing,
+        forward_heading_source=forward_heading_source,
     )
 
 

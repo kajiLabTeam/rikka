@@ -16,6 +16,7 @@ from ..config import (
     FLOORMAP_ORIGIN_PX,
     FLOORMAP_PATH,
     FLOORMAP_SCALE,
+    FORWARD_HEADING_SOURCE,
     INITIAL_DIRECTION,
     PF_NUM_PARTICLES,
     PF_SIGMA_HEADING,
@@ -36,6 +37,7 @@ from .pdr import (
     _resolve_motion_heading_correction,
     _smooth_step_headings,
     _step_output_time,
+    _validate_forward_heading_source,
     _validate_motion_heading_correction,
     _validate_non_negative_parameter,
     _validate_positive_parameter,
@@ -196,6 +198,7 @@ def run_particle_filter(
     sidestep_min_lateral_displacement: float = SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
     motion_heading_correction: str = "auto",
     sidestep_smoothing: str = SIDESTEP_SMOOTHING_METHOD,
+    forward_heading_source: str = FORWARD_HEADING_SOURCE,
 ) -> tuple[list[list[float]], list[float], list[float], np.ndarray, list[StepHeading]]:
     """パーティクルフィルタでマップマッチング付き歩行軌跡を推定する。
 
@@ -220,6 +223,7 @@ def run_particle_filter(
         sidestep_min_lateral_displacement: 横歩き判定に必要な横方向変位の最小値
         motion_heading_correction: 水平加速度移動方向の固定ずれ補正モード
         sidestep_smoothing: 横歩き判定の平滑化モード
+        forward_heading_source: forward 判定ステップの軌跡方位ソース
 
     Returns:
         tuple: (加重平均軌跡の座標リスト, 各ステップの決定論的歩幅リスト,
@@ -239,6 +243,9 @@ def run_particle_filter(
         motion_heading_correction
     )
     selected_sidestep_smoothing = _validate_sidestep_smoothing(sidestep_smoothing)
+    selected_forward_heading_source = _validate_forward_heading_source(
+        forward_heading_source
+    )
     rng = np.random.default_rng()
 
     # フロアマップをグレースケールで読み込み
@@ -310,7 +317,12 @@ def run_particle_filter(
         raw_step_times,
         strict=True,
     ):
-        step_motion = estimate_step_motion(step_heading, sl_det, previous_heading)
+        step_motion = estimate_step_motion(
+            step_heading,
+            sl_det,
+            previous_heading,
+            selected_forward_heading_source,
+        )
         if step_motion is None:
             continue
         angle_det = step_motion.heading
@@ -320,6 +332,7 @@ def run_particle_filter(
             source="state_motion",
             step_length_scale=step_motion.length_scale,
             trajectory_movement_type=step_motion.movement_type,
+            forward_heading_source=selected_forward_heading_source,
         )
 
         # 予測前の状態を保存（全壁レスキュー用）
