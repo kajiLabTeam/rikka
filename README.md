@@ -3,9 +3,10 @@
 スマートフォンの加速度計・ジャイロスコープ CSV から歩行軌跡を推定する
 PDR（Pedestrian Dead Reckoning）ライブラリです。
 
-現在の標準設定は、ジャイロを体の向き、水平加速度を移動方向として使う
-`gyro_accel_motion` です。横歩き判定は記録として残しつつ、孤立した横歩きは
-軌跡へは前進として反映する設定になっています。
+現在の標準設定は、ジャイロを体の向き、水平加速度を横歩き判定用の
+移動特徴として使う `gyro_accel_motion` です。通常歩行の軌跡方位は
+`body_heading` を使い、横歩き判定は記録として残しつつ、同方向にまとまった
+横歩きだけを軌跡へ反映します。
 
 ## セットアップ
 
@@ -47,7 +48,7 @@ input/
 現在の既定入力は次です。
 
 ```python
-DATA_DIR = "input/1turn_rightsidestep_3turn_leftsidestep"
+DATA_DIR = "input/1turn_rightsidestep_3turn_leftsidestep4"
 ```
 
 別データを使う場合は、CLI の `-d` で指定できます。
@@ -100,27 +101,29 @@ UV_CACHE_DIR=.uv-cache uv run rikka sensor
 
 | 項目 | 既定値 | 説明 |
 |---|---:|---|
-| `DATA_DIR` | `input/1turn_rightsidestep_3turn_leftsidestep` | 入力データ |
+| `DATA_DIR` | `input/1turn_rightsidestep_3turn_leftsidestep4` | 入力データ |
 | `FLOORMAP_PATH` | `input/Floormap_building14_5floor.png` | 背景マップ |
 | `FLOORMAP_ORIGIN_PX` | `(2050, 600)` | 軌跡の開始ピクセル |
 | `FLOORMAP_SCALE` | `0.01` | 1px あたりのメートル数 |
 | `INITIAL_DIRECTION` | `90.0` | 歩行開始方向 [deg] |
 | `STEP_DETECTION_METHOD` | `peak` | ステップ検出 |
 | `HEADING_METHOD` | `gyro_accel_motion` | 方位・移動方向推定 |
+| `FORWARD_HEADING_SOURCE` | `body` | 通常歩行の軌跡方位は体/端末方向を使用 |
 | `GYRO_BIAS_METHOD` | `prewalk_robust` | ジャイロバイアス推定 |
 | `USER_HEIGHT_M` | `1.65` | Weinberg 歩幅補正用の身長 |
 | `SIDESTEP_LATERAL_RATIO` | `1.2` | 横方向/前方向の比率がこの値以上で横歩き候補 |
 | `SIDESTEP_MIN_LATERAL_DISPLACEMENT_M` | `0.03` | 横歩き判定に必要な横方向変位 [m] |
-| `SIDESTEP_SMOOTHING_METHOD` | `isolated` | 孤立した横歩き判定は軌跡へ前進として反映 |
+| `SIDESTEP_SMOOTHING_METHOD` | `clustered` | 5歩窓で同方向横歩きが2回以上ある場合だけ軌跡へ横歩きとして反映 |
 | `SIDESTEP_LENGTH_SCALE` | `1` | 横歩き歩幅の倍率 |
 | `TURNING_LENGTH_SCALE` | `0.3` | 旋回中歩幅の倍率 |
 
 `gyro_accel_motion` では次を分けて扱います。
 
 - `body_heading`: ジャイロから推定した体/端末の向き
-- `motion_heading`: 水平加速度から推定した実移動方向
+- `motion_heading`: 水平加速度から推定した1歩ごとの移動方向特徴
 - `movement_type`: センサー上の判定結果
 - `trajectory_movement_type`: 軌跡計算に使った移動タイプ
+- `forward_heading_source`: `forward` 判定ステップの軌跡方位ソース
 
 ## 横歩き判定の見方
 
@@ -135,18 +138,32 @@ UV_CACHE_DIR=.uv-cache uv run rikka sensor
 | `body_heading_deg` | 体/端末の向き |
 | `motion_heading_deg` | 水平加速度から見た移動方向 |
 | `selected_heading_deg` | 実際に軌跡へ使った方位 |
+| `forward_heading_source` | `forward` 判定ステップの軌跡方位ソース |
 | `lateral_forward_ratio` | 横方向変位 / 前方向変位 |
 | `forward_displacement` | 体方向への変位特徴 |
 | `lateral_displacement` | 横方向への変位特徴 |
 | `motion_heading_correction_deg` | 水平加速度方向の補正角 |
 
-標準設定では、孤立した横歩き判定は `movement_type` には残りますが、
+標準設定では、単発の横歩き判定は `movement_type` には残りますが、
 `trajectory_movement_type="forward"` として軌跡には前進扱いで反映されます。
+一方、5歩窓で同方向の横歩きが2回以上ある場合は、横歩き区間として軌跡へ反映されます。
+また、`forward` 判定ステップは `body_heading` で軌跡へ積みます。
+旧挙動のように水平加速度由来の `motion_heading` で積む場合は次を指定します。
+
+```sh
+UV_CACHE_DIR=.uv-cache uv run rikka run --forward-heading-source motion
+```
 
 横歩き判定を軌跡へそのまま反映して比較したい場合:
 
 ```sh
 UV_CACHE_DIR=.uv-cache uv run rikka run --sidestep-smoothing none
+```
+
+旧方式の単発横歩き抑制と比較したい場合:
+
+```sh
+UV_CACHE_DIR=.uv-cache uv run rikka run --sidestep-smoothing isolated
 ```
 
 横歩き判定を増やす/減らす場合:
