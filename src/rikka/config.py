@@ -3,7 +3,7 @@
 # Data directory path
 # Change this path to use different input data
 
-DATA_DIR = "input/ryuki_1turn_rightsidestep_3turn_leftsidestep2"
+DATA_DIR = "input/1turn_rightsidestep_3turn_leftsidestep6"
 
 # フロアマップ設定
 # 背景として表示するフロアマップ画像のパス

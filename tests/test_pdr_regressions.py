@@ -770,7 +770,7 @@ def test_smooth_step_headings_clustered_suppresses_single_sidestep() -> None:
     ]
 
 
-def test_smooth_step_headings_clustered_keeps_same_direction_sidestep() -> None:
+def test_smooth_step_headings_clustered_suppresses_separated_same_direction() -> None:
     base = {
         "timestamp_s": 0.0,
         "gyro_heading": 0.0,
@@ -804,9 +804,137 @@ def test_smooth_step_headings_clustered_keeps_same_direction_sidestep() -> None:
 
     assert [heading.trajectory_movement_type for heading in smoothed] == [
         None,
+        "forward",
         None,
+        "forward",
         None,
+    ]
+
+
+def test_smooth_step_headings_clustered_keeps_consecutive_same_direction() -> None:
+    base = {
+        "timestamp_s": 0.0,
+        "gyro_heading": 0.0,
+        "accel_method1_heading": None,
+        "accel_method2_heading": None,
+        "selected_heading": 0.0,
+        "source": "gyro_accel_motion",
+        "confidence": 0.0,
+        "angle_diff_method1": None,
+        "angle_diff_method2": None,
+        "segment_start_index": None,
+        "segment_end_index": None,
+        "peak1_index": None,
+        "peak2_index": None,
+        "body_heading": 0.0,
+        "motion_heading": 0.0,
+        "forward_displacement": 0.02,
+        "lateral_displacement": -0.12,
+        "motion_confidence": 1.0,
+        "motion_reject_reason": None,
+    }
+    headings = [
+        pdr.StepHeading(step_index=1, movement_type="forward", **base),
+        pdr.StepHeading(step_index=2, movement_type="sidestep_right", **base),
+        pdr.StepHeading(step_index=3, movement_type="sidestep_right", **base),
+        pdr.StepHeading(step_index=4, movement_type="forward", **base),
+    ]
+
+    smoothed = pdr._smooth_step_headings(headings, method="clustered")
+
+    assert [heading.trajectory_movement_type for heading in smoothed] == [
         None,
+        "sidestep_right",
+        "sidestep_right",
+        None,
+    ]
+    np.testing.assert_allclose(smoothed[1].selected_heading, 0.0, atol=1e-12)
+    np.testing.assert_allclose(smoothed[2].selected_heading, 0.0, atol=1e-12)
+
+
+def test_smooth_step_headings_clustered_averages_motion_heading_across_wrap() -> None:
+    base = {
+        "timestamp_s": 0.0,
+        "gyro_heading": 0.0,
+        "accel_method1_heading": None,
+        "accel_method2_heading": None,
+        "selected_heading": 0.0,
+        "source": "gyro_accel_motion",
+        "confidence": 0.0,
+        "angle_diff_method1": None,
+        "angle_diff_method2": None,
+        "segment_start_index": None,
+        "segment_end_index": None,
+        "peak1_index": None,
+        "peak2_index": None,
+        "body_heading": 0.0,
+        "forward_displacement": 0.02,
+        "lateral_displacement": 0.12,
+        "motion_confidence": 1.0,
+        "motion_reject_reason": None,
+    }
+    headings = [
+        pdr.StepHeading(
+            step_index=1,
+            movement_type="sidestep_left",
+            motion_heading=np.deg2rad(170.0),
+            **base,
+        ),
+        pdr.StepHeading(
+            step_index=2,
+            movement_type="sidestep_left",
+            motion_heading=np.deg2rad(-170.0),
+            **base,
+        ),
+    ]
+
+    smoothed = pdr._smooth_step_headings(headings, method="clustered")
+
+    assert [heading.trajectory_movement_type for heading in smoothed] == [
+        "sidestep_left",
+        "sidestep_left",
+    ]
+    assert smoothed[0].selected_heading is not None
+    assert smoothed[1].selected_heading is not None
+    np.testing.assert_allclose(abs(smoothed[0].selected_heading), np.pi, atol=1e-12)
+    np.testing.assert_allclose(abs(smoothed[1].selected_heading), np.pi, atol=1e-12)
+
+
+def test_smooth_step_headings_clustered_requires_lateral_feature_strength() -> None:
+    base = {
+        "timestamp_s": 0.0,
+        "gyro_heading": 0.0,
+        "accel_method1_heading": None,
+        "accel_method2_heading": None,
+        "selected_heading": 0.0,
+        "source": "gyro_accel_motion",
+        "confidence": 0.0,
+        "angle_diff_method1": None,
+        "angle_diff_method2": None,
+        "segment_start_index": None,
+        "segment_end_index": None,
+        "peak1_index": None,
+        "peak2_index": None,
+        "body_heading": 0.0,
+        "motion_heading": 0.0,
+        "forward_displacement": 0.2,
+        "lateral_displacement": -0.02,
+        "motion_confidence": 1.0,
+        "motion_reject_reason": None,
+    }
+    headings = [
+        pdr.StepHeading(step_index=1, movement_type="forward", **base),
+        pdr.StepHeading(step_index=2, movement_type="sidestep_right", **base),
+        pdr.StepHeading(step_index=3, movement_type="sidestep_right", **base),
+        pdr.StepHeading(step_index=4, movement_type="forward", **base),
+    ]
+
+    smoothed = pdr._smooth_step_headings(headings, method="clustered")
+
+    assert [heading.trajectory_movement_type for heading in smoothed] == [
+        None,
+        "forward",
+        "forward",
         None,
     ]
 
@@ -836,9 +964,8 @@ def test_smooth_step_headings_clustered_requires_same_direction() -> None:
     headings = [
         pdr.StepHeading(step_index=1, movement_type="forward", **base),
         pdr.StepHeading(step_index=2, movement_type="sidestep_left", **base),
-        pdr.StepHeading(step_index=3, movement_type="forward", **base),
-        pdr.StepHeading(step_index=4, movement_type="sidestep_right", **base),
-        pdr.StepHeading(step_index=5, movement_type="forward", **base),
+        pdr.StepHeading(step_index=3, movement_type="sidestep_right", **base),
+        pdr.StepHeading(step_index=4, movement_type="forward", **base),
     ]
 
     smoothed = pdr._smooth_step_headings(headings, method="clustered")
@@ -846,9 +973,212 @@ def test_smooth_step_headings_clustered_requires_same_direction() -> None:
     assert [heading.trajectory_movement_type for heading in smoothed] == [
         None,
         "forward",
-        None,
         "forward",
         None,
+    ]
+
+
+def test_smooth_step_headings_clustered_uses_body_motion_lateral_evidence() -> None:
+    base = {
+        "timestamp_s": 0.0,
+        "gyro_heading": 0.0,
+        "accel_method1_heading": None,
+        "accel_method2_heading": None,
+        "selected_heading": 0.0,
+        "source": "gyro_accel_motion",
+        "confidence": 0.0,
+        "angle_diff_method1": None,
+        "angle_diff_method2": None,
+        "segment_start_index": None,
+        "segment_end_index": None,
+        "peak1_index": None,
+        "peak2_index": None,
+        "body_heading": 0.0,
+        "motion_confidence": 1.0,
+        "motion_reject_reason": None,
+    }
+    headings = [
+        pdr.StepHeading(
+            step_index=1,
+            movement_type="forward",
+            motion_heading=np.pi / 2,
+            forward_displacement=0.05,
+            lateral_displacement=0.08,
+            **base,
+        ),
+        pdr.StepHeading(
+            step_index=2,
+            movement_type="unknown",
+            motion_heading=np.deg2rad(100.0),
+            forward_displacement=0.04,
+            lateral_displacement=0.07,
+            **base,
+        ),
+    ]
+
+    smoothed = pdr._smooth_step_headings(headings, method="clustered")
+
+    assert [heading.trajectory_movement_type for heading in smoothed] == [
+        "sidestep_left",
+        "sidestep_left",
+    ]
+    assert [heading.sidestep_evidence_reason for heading in smoothed] == [
+        "body_motion_lateral",
+        "body_motion_lateral",
+    ]
+    assert [heading.sidestep_evidence_direction for heading in smoothed] == [
+        "left",
+        "left",
+    ]
+    assert [heading.sidestep_cluster_id for heading in smoothed] == [1, 1]
+    np.testing.assert_allclose(smoothed[0].selected_heading, np.deg2rad(95.0))
+    np.testing.assert_allclose(smoothed[1].selected_heading, np.deg2rad(95.0))
+
+
+def test_smooth_step_headings_clustered_includes_single_bridge_gap() -> None:
+    base = {
+        "timestamp_s": 0.0,
+        "gyro_heading": 0.0,
+        "accel_method1_heading": None,
+        "accel_method2_heading": None,
+        "selected_heading": 0.0,
+        "source": "gyro_accel_motion",
+        "confidence": 0.0,
+        "angle_diff_method1": None,
+        "angle_diff_method2": None,
+        "segment_start_index": None,
+        "segment_end_index": None,
+        "peak1_index": None,
+        "peak2_index": None,
+        "body_heading": 0.0,
+        "motion_confidence": 1.0,
+        "motion_reject_reason": None,
+    }
+    headings = [
+        pdr.StepHeading(
+            step_index=1,
+            movement_type="forward",
+            motion_heading=np.pi / 2,
+            forward_displacement=0.05,
+            lateral_displacement=-0.08,
+            **base,
+        ),
+        pdr.StepHeading(
+            step_index=2,
+            movement_type="forward",
+            motion_heading=0.0,
+            forward_displacement=0.2,
+            lateral_displacement=-0.04,
+            **base,
+        ),
+        pdr.StepHeading(
+            step_index=3,
+            movement_type="unknown",
+            motion_heading=np.deg2rad(100.0),
+            forward_displacement=0.04,
+            lateral_displacement=-0.07,
+            **base,
+        ),
+    ]
+
+    smoothed = pdr._smooth_step_headings(headings, method="clustered")
+
+    assert [heading.trajectory_movement_type for heading in smoothed] == [
+        "sidestep_right",
+        "sidestep_right",
+        "sidestep_right",
+    ]
+    assert smoothed[1].sidestep_evidence_reason == "bridge_gap"
+    np.testing.assert_allclose(smoothed[0].selected_heading, np.deg2rad(95.0))
+    np.testing.assert_allclose(smoothed[1].selected_heading, np.deg2rad(95.0))
+    np.testing.assert_allclose(smoothed[2].selected_heading, np.deg2rad(95.0))
+
+
+def test_smooth_step_headings_clustered_marks_strong_single_as_suspect() -> None:
+    heading = pdr.StepHeading(
+        step_index=1,
+        timestamp_s=0.0,
+        gyro_heading=0.0,
+        accel_method1_heading=None,
+        accel_method2_heading=None,
+        selected_heading=0.0,
+        source="gyro_accel_motion",
+        confidence=0.0,
+        angle_diff_method1=None,
+        angle_diff_method2=None,
+        segment_start_index=None,
+        segment_end_index=None,
+        peak1_index=None,
+        peak2_index=None,
+        body_heading=0.0,
+        motion_heading=np.deg2rad(-100.0),
+        movement_type="forward",
+        forward_displacement=0.02,
+        lateral_displacement=-0.09,
+        motion_confidence=1.0,
+        motion_reject_reason=None,
+    )
+
+    smoothed = pdr._smooth_step_headings([heading], method="clustered")
+
+    assert smoothed[0].trajectory_movement_type == "sidestep_suspect_right"
+    assert smoothed[0].sidestep_evidence_reason == "body_motion_lateral"
+    assert smoothed[0].sidestep_cluster_id is None
+    np.testing.assert_allclose(smoothed[0].selected_heading, np.deg2rad(-100.0))
+
+
+def test_sidestep_suspect_is_trajectory_sidestep_movement() -> None:
+    assert pdr._is_trajectory_sidestep_movement("sidestep_suspect_left")
+    assert pdr._is_trajectory_sidestep_movement("sidestep_suspect_right")
+    assert pdr._is_sidestep_suspect_movement("sidestep_suspect_left")
+    assert pdr._is_sidestep_suspect_movement("sidestep_suspect_right")
+    assert not pdr._is_sidestep_suspect_movement("sidestep_left")
+    assert not pdr._is_trajectory_sidestep_movement("forward")
+
+
+def test_smooth_step_headings_clustered_suppresses_alternating_evidence() -> None:
+    base = {
+        "timestamp_s": 0.0,
+        "gyro_heading": 0.0,
+        "accel_method1_heading": None,
+        "accel_method2_heading": None,
+        "selected_heading": 0.0,
+        "source": "gyro_accel_motion",
+        "confidence": 0.0,
+        "angle_diff_method1": None,
+        "angle_diff_method2": None,
+        "segment_start_index": None,
+        "segment_end_index": None,
+        "peak1_index": None,
+        "peak2_index": None,
+        "body_heading": 0.0,
+        "motion_confidence": 1.0,
+        "motion_reject_reason": None,
+    }
+    headings = [
+        pdr.StepHeading(
+            step_index=1,
+            movement_type="forward",
+            motion_heading=np.deg2rad(100.0),
+            forward_displacement=0.02,
+            lateral_displacement=0.09,
+            **base,
+        ),
+        pdr.StepHeading(
+            step_index=2,
+            movement_type="forward",
+            motion_heading=np.deg2rad(-100.0),
+            forward_displacement=0.02,
+            lateral_displacement=-0.09,
+            **base,
+        ),
+    ]
+
+    smoothed = pdr._smooth_step_headings(headings, method="clustered")
+
+    assert [heading.trajectory_movement_type for heading in smoothed] == [
+        "forward",
+        "forward",
     ]
 
 
@@ -923,6 +1253,108 @@ def test_estimate_step_motion_can_use_motion_heading_for_forward() -> None:
     np.testing.assert_allclose(motion.length, 1.0, atol=1e-12)
 
 
+def test_estimate_step_motion_sidestep_uses_confirmed_selected_heading() -> None:
+    heading = pdr.StepHeading(
+        step_index=1,
+        timestamp_s=0.0,
+        gyro_heading=0.0,
+        accel_method1_heading=None,
+        accel_method2_heading=None,
+        selected_heading=np.pi / 3,
+        source="gyro_accel_motion",
+        confidence=0.0,
+        angle_diff_method1=None,
+        angle_diff_method2=None,
+        segment_start_index=None,
+        segment_end_index=None,
+        peak1_index=None,
+        peak2_index=None,
+        body_heading=0.0,
+        motion_heading=np.pi / 3,
+        movement_type="sidestep_right",
+        forward_displacement=0.02,
+        lateral_displacement=-0.12,
+        motion_confidence=1.0,
+        motion_reject_reason=None,
+        trajectory_movement_type="sidestep_right",
+    )
+
+    motion = pdr.estimate_step_motion(heading, 1.0)
+
+    assert motion is not None
+    assert motion.movement_type == "sidestep_right"
+    np.testing.assert_allclose(motion.heading, np.pi / 3, atol=1e-12)
+    np.testing.assert_allclose(motion.length, pdr.SIDESTEP_LENGTH_SCALE, atol=1e-12)
+
+
+def test_estimate_step_motion_sidestep_falls_back_without_selected_heading() -> None:
+    heading = pdr.StepHeading(
+        step_index=1,
+        timestamp_s=0.0,
+        gyro_heading=0.0,
+        accel_method1_heading=None,
+        accel_method2_heading=None,
+        selected_heading=None,
+        source="gyro_accel_motion",
+        confidence=0.0,
+        angle_diff_method1=None,
+        angle_diff_method2=None,
+        segment_start_index=None,
+        segment_end_index=None,
+        peak1_index=None,
+        peak2_index=None,
+        body_heading=0.0,
+        motion_heading=None,
+        movement_type="sidestep_right",
+        forward_displacement=0.02,
+        lateral_displacement=-0.12,
+        motion_confidence=1.0,
+        motion_reject_reason=None,
+        trajectory_movement_type="sidestep_right",
+    )
+
+    motion = pdr.estimate_step_motion(heading, 1.0)
+
+    assert motion is not None
+    assert motion.movement_type == "sidestep_right"
+    np.testing.assert_allclose(motion.heading, -np.pi / 2, atol=1e-12)
+    np.testing.assert_allclose(motion.length, pdr.SIDESTEP_LENGTH_SCALE, atol=1e-12)
+
+
+def test_estimate_step_motion_sidestep_suspect_uses_motion_heading() -> None:
+    heading = pdr.StepHeading(
+        step_index=1,
+        timestamp_s=0.0,
+        gyro_heading=0.0,
+        accel_method1_heading=None,
+        accel_method2_heading=None,
+        selected_heading=None,
+        source="gyro_accel_motion",
+        confidence=0.0,
+        angle_diff_method1=None,
+        angle_diff_method2=None,
+        segment_start_index=None,
+        segment_end_index=None,
+        peak1_index=None,
+        peak2_index=None,
+        body_heading=0.0,
+        motion_heading=np.pi / 3,
+        movement_type="forward",
+        forward_displacement=0.02,
+        lateral_displacement=-0.12,
+        motion_confidence=1.0,
+        motion_reject_reason=None,
+        trajectory_movement_type="sidestep_suspect_right",
+    )
+
+    motion = pdr.estimate_step_motion(heading, 1.0)
+
+    assert motion is not None
+    assert motion.movement_type == "sidestep_suspect_right"
+    np.testing.assert_allclose(motion.heading, np.pi / 3, atol=1e-12)
+    np.testing.assert_allclose(motion.length, pdr.SIDESTEP_LENGTH_SCALE, atol=1e-12)
+
+
 def test_estimate_step_motion_forward_body_falls_back_without_body_heading() -> None:
     heading = pdr.StepHeading(
         step_index=1,
@@ -952,6 +1384,72 @@ def test_estimate_step_motion_forward_body_falls_back_without_body_heading() -> 
 
     assert motion is not None
     assert motion.movement_type == "forward"
+    np.testing.assert_allclose(motion.heading, np.pi / 4, atol=1e-12)
+    np.testing.assert_allclose(motion.length, 1.0, atol=1e-12)
+
+
+def test_estimate_step_motion_unknown_uses_body_heading() -> None:
+    heading = pdr.StepHeading(
+        step_index=1,
+        timestamp_s=0.0,
+        gyro_heading=0.0,
+        accel_method1_heading=None,
+        accel_method2_heading=None,
+        selected_heading=np.pi / 2,
+        source="gyro_accel_motion",
+        confidence=0.0,
+        angle_diff_method1=None,
+        angle_diff_method2=None,
+        segment_start_index=None,
+        segment_end_index=None,
+        peak1_index=None,
+        peak2_index=None,
+        body_heading=0.0,
+        motion_heading=np.pi / 2,
+        movement_type="unknown",
+        forward_displacement=0.05,
+        lateral_displacement=0.08,
+        motion_confidence=1.0,
+        motion_reject_reason=None,
+    )
+
+    motion = pdr.estimate_step_motion(heading, 1.0)
+
+    assert motion is not None
+    assert motion.movement_type == "unknown"
+    np.testing.assert_allclose(motion.heading, 0.0, atol=1e-12)
+    np.testing.assert_allclose(motion.length, 1.0, atol=1e-12)
+
+
+def test_estimate_step_motion_unknown_falls_back_without_body_heading() -> None:
+    heading = pdr.StepHeading(
+        step_index=1,
+        timestamp_s=0.0,
+        gyro_heading=None,
+        accel_method1_heading=None,
+        accel_method2_heading=None,
+        selected_heading=np.pi / 4,
+        source="gyro_accel_motion",
+        confidence=0.0,
+        angle_diff_method1=None,
+        angle_diff_method2=None,
+        segment_start_index=None,
+        segment_end_index=None,
+        peak1_index=None,
+        peak2_index=None,
+        body_heading=None,
+        motion_heading=np.pi / 2,
+        movement_type="unknown",
+        forward_displacement=0.05,
+        lateral_displacement=0.08,
+        motion_confidence=1.0,
+        motion_reject_reason=None,
+    )
+
+    motion = pdr.estimate_step_motion(heading, 1.0)
+
+    assert motion is not None
+    assert motion.movement_type == "unknown"
     np.testing.assert_allclose(motion.heading, np.pi / 4, atol=1e-12)
     np.testing.assert_allclose(motion.length, 1.0, atol=1e-12)
 
