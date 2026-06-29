@@ -606,9 +606,15 @@ def plot_step_vectors(
             )
             body_text = "NA" if body_heading is None else f"{body_heading:.1f}°"
             motion_text = "NA" if motion_heading is None else f"{motion_heading:.1f}°"
+            trajectory_type = (
+                step_heading.trajectory_movement_type
+                if step_heading.trajectory_movement_type is not None
+                else step_heading.movement_type
+            )
             heading_lines = (
                 f"\n採用={step_heading.source}"
                 f"\n移動種別={step_heading.movement_type}"
+                f"\n軌跡種別={trajectory_type}"
                 f"\n体方位={body_text}"
                 f"\n移動方位={motion_text}"
                 f"\n信頼度={step_heading.motion_confidence:.2f}"

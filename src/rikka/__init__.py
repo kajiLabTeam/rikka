@@ -42,6 +42,10 @@ _SIDESTEP_SMOOTHING_DEFAULT = SIDESTEP_SMOOTHING_METHOD
 _SIDESTEP_SMOOTHING_CHOICES = ("none", "isolated", "clustered")
 _FORWARD_HEADING_SOURCE_DEFAULT = FORWARD_HEADING_SOURCE
 _FORWARD_HEADING_SOURCE_CHOICES = ("body", "motion")
+_SIDESTEP_HEADING_SOURCE_DEFAULT = "motion"
+_SIDESTEP_HEADING_SOURCE_CHOICES = ("motion", "body_lateral", "blend")
+_SIDESTEP_SUSPECT_MODE_DEFAULT = "motion"
+_SIDESTEP_SUSPECT_MODE_CHOICES = ("motion", "body_lateral", "blend", "forward")
 
 
 def _validate_cli_scale(
@@ -95,6 +99,20 @@ def _common_options(f: click.decorators.FC) -> click.decorators.FC:
         default=_FORWARD_HEADING_SOURCE_DEFAULT,
         show_default=True,
         help="forward 判定ステップの軌跡方位ソース",
+    )(f)
+    f = click.option(
+        "--sidestep-heading-source",
+        type=click.Choice(_SIDESTEP_HEADING_SOURCE_CHOICES),
+        default=_SIDESTEP_HEADING_SOURCE_DEFAULT,
+        show_default=True,
+        help="確定横歩きステップの軌跡方位ソース",
+    )(f)
+    f = click.option(
+        "--sidestep-suspect-mode",
+        type=click.Choice(_SIDESTEP_SUSPECT_MODE_CHOICES),
+        default=_SIDESTEP_SUSPECT_MODE_DEFAULT,
+        show_default=True,
+        help="横歩き疑いステップの軌跡反映モード",
     )(f)
     f = click.option(
         "--motion-heading-correction",
@@ -216,6 +234,8 @@ def _run_pdr(
     motion_heading_correction: str,
     sidestep_smoothing: str,
     forward_heading_source: str,
+    sidestep_heading_source: str,
+    sidestep_suspect_mode: str,
     no_plot: bool,
 ) -> None:
     from .analyze.pdr import load_sensor_data  # noqa: PLC0415
@@ -241,6 +261,8 @@ def _run_pdr(
         motion_heading_correction=motion_heading_correction,
         sidestep_smoothing=sidestep_smoothing,
         forward_heading_source=forward_heading_source,
+        sidestep_heading_source=sidestep_heading_source,
+        sidestep_suspect_mode=sidestep_suspect_mode,
     )
 
 
@@ -262,6 +284,8 @@ def run(
     motion_heading_correction: str,
     sidestep_smoothing: str,
     forward_heading_source: str,
+    sidestep_heading_source: str,
+    sidestep_suspect_mode: str,
     no_plot: bool,
 ) -> None:
     """決定論的 PDR で歩行軌跡を推定する。"""
@@ -281,6 +305,8 @@ def run(
         motion_heading_correction,
         sidestep_smoothing,
         forward_heading_source,
+        sidestep_heading_source,
+        sidestep_suspect_mode,
         no_plot,
     )
 
@@ -303,6 +329,8 @@ def pdr(
     motion_heading_correction: str,
     sidestep_smoothing: str,
     forward_heading_source: str,
+    sidestep_heading_source: str,
+    sidestep_suspect_mode: str,
     no_plot: bool,
 ) -> None:
     """決定論的 PDR で歩行軌跡を推定する（run の別名）。"""
@@ -322,6 +350,8 @@ def pdr(
         motion_heading_correction,
         sidestep_smoothing,
         forward_heading_source,
+        sidestep_heading_source,
+        sidestep_suspect_mode,
         no_plot,
     )
 
@@ -350,6 +380,8 @@ def particle(
     motion_heading_correction: str,
     sidestep_smoothing: str,
     forward_heading_source: str,
+    sidestep_heading_source: str,
+    sidestep_suspect_mode: str,
     no_plot: bool,
     save_animation: bool,
 ) -> None:
@@ -378,6 +410,8 @@ def particle(
         motion_heading_correction=motion_heading_correction,
         sidestep_smoothing=sidestep_smoothing,
         forward_heading_source=forward_heading_source,
+        sidestep_heading_source=sidestep_heading_source,
+        sidestep_suspect_mode=sidestep_suspect_mode,
     )
 
 

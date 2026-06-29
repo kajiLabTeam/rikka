@@ -41,7 +41,9 @@ from .pdr import (
     _validate_motion_heading_correction,
     _validate_non_negative_parameter,
     _validate_positive_parameter,
+    _validate_sidestep_heading_source,
     _validate_sidestep_smoothing,
+    _validate_sidestep_suspect_mode,
     estimate_step_length,
     estimate_step_length_forward,
     estimate_step_motion,
@@ -199,6 +201,8 @@ def run_particle_filter(
     motion_heading_correction: str = "auto",
     sidestep_smoothing: str = SIDESTEP_SMOOTHING_METHOD,
     forward_heading_source: str = FORWARD_HEADING_SOURCE,
+    sidestep_heading_source: str = "motion",
+    sidestep_suspect_mode: str = "motion",
 ) -> tuple[list[list[float]], list[float], list[float], np.ndarray, list[StepHeading]]:
     """パーティクルフィルタでマップマッチング付き歩行軌跡を推定する。
 
@@ -245,6 +249,12 @@ def run_particle_filter(
     selected_sidestep_smoothing = _validate_sidestep_smoothing(sidestep_smoothing)
     selected_forward_heading_source = _validate_forward_heading_source(
         forward_heading_source
+    )
+    selected_sidestep_heading_source = _validate_sidestep_heading_source(
+        sidestep_heading_source
+    )
+    selected_sidestep_suspect_mode = _validate_sidestep_suspect_mode(
+        sidestep_suspect_mode
     )
     rng = np.random.default_rng()
 
@@ -312,7 +322,11 @@ def run_particle_filter(
     previous_heading: float | None = None
 
     for step_heading, sl_det, step_time in zip(
-        _smooth_step_headings(raw_step_headings, selected_sidestep_smoothing),
+        _smooth_step_headings(
+            raw_step_headings,
+            selected_sidestep_smoothing,
+            selected_sidestep_suspect_mode,
+        ),
         raw_step_lengths,
         raw_step_times,
         strict=True,
@@ -322,6 +336,8 @@ def run_particle_filter(
             sl_det,
             previous_heading,
             selected_forward_heading_source,
+            selected_sidestep_heading_source,
+            selected_sidestep_suspect_mode,
         )
         if step_motion is None:
             continue
