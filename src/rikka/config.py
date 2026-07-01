@@ -3,7 +3,7 @@
 # Data directory path
 # Change this path to use different input data
 
-DATA_DIR = "input/1turn_rightsidestep_3turn_leftsidestep6"
+DATA_DIR = "input/1turn_rightsidestep_3turn_leftsidestep5"
 
 # フロアマップ設定
 # 背景として表示するフロアマップ画像のパス
@@ -80,7 +80,7 @@ MIN_SEG_SAMPLES = 30
 # ryuki身長1.7m
 # natsuki身長1.68m
 
-USER_HEIGHT_M = 1.7
+USER_HEIGHT_M = 1.68
 
 # Weinberg モデルの基準スケール係数（校正が必要なパラメータ）
 # 歩幅 = K × (a_max - a_min)^0.25 の K に相当する
@@ -116,9 +116,9 @@ STEP_LENGTH_METHOD = "weinberg"
 HEADING_METHOD = "gyro_accel_motion"
 
 # forward 判定ステップを軌跡へ積むときの方位ソース
-# "body"  : ジャイロ由来の体/端末方向を使い、通常歩行の左右揺れを混ぜにくくする
-# "motion": 水平加速度から得た1歩ごとの移動方向を使う（旧挙動）
-FORWARD_HEADING_SOURCE = "body"
+# "body"  : ジャイロ由来の体/端末方向を使う
+# "motion": 水平加速度から得た移動方向を使う
+FORWARD_HEADING_SOURCE = "motion"
 
 # 加速度平面成分方位の信頼度パラメータ
 ACCEL_HEADING_MIN_PEAK_NORM = 1.0

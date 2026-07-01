@@ -100,6 +100,17 @@ SIDESTEP_SUSPECT_MODES = ("motion", "body_lateral", "blend", "forward")
 SIDESTEP_BODY_MOTION_ANGLE_THRESHOLD_RAD = np.deg2rad(45.0)
 SIDESTEP_BODY_MOTION_RATIO_THRESHOLD = 0.8
 SIDESTEP_STRONG_ANGLE_THRESHOLD_RAD = np.deg2rad(75.0)
+SIDESTEP_MOTION_LATERAL_CONSTRAINT_RAD = np.deg2rad(45.0)
+TRAJECTORY_HEADING_MAX_STEP_DELTA_RAD = np.deg2rad(25.0)
+SIDESTEP_HEADING_MAX_STEP_DELTA_RAD = np.deg2rad(45.0)
+TURNING_SIDESTEP_HEADING_MAX_STEP_DELTA_RAD = np.deg2rad(90.0)
+INITIAL_FORWARD_MOTION_BODY_CONSTRAINT_RAD = np.deg2rad(45.0)
+DEVICE_ORIENTATION_MODES = (
+    "normal",
+    "front_back_inverted",
+    "left_right_inverted",
+    "rotated_180",
+)
 
 
 class StepSegment(NamedTuple):
@@ -155,6 +166,7 @@ class StepHeading(NamedTuple):
     sidestep_evidence_direction: str | None = None
     sidestep_evidence_reason: str | None = None
     sidestep_cluster_id: int | None = None
+    device_orientation_mode: str = "normal"
 
 
 class GyroBiasResult(NamedTuple):
@@ -1337,6 +1349,23 @@ def _rotate_vector(
     return x * cos_a - y * sin_a, x * sin_a + y * cos_a
 
 
+def _apply_device_orientation_to_horizontal(
+    h_y: np.ndarray,
+    h_z: np.ndarray,
+    mode: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    """端末装着向き候補に応じて水平加速度軸を反転する。"""
+    if mode == "normal":
+        return h_y, h_z
+    if mode == "front_back_inverted":
+        return -h_y, h_z
+    if mode == "left_right_inverted":
+        return h_y, -h_z
+    if mode == "rotated_180":
+        return -h_y, -h_z
+    raise ValueError(f"unknown device_orientation_mode: {mode}")
+
+
 def _classify_movement_type(
     forward_displacement: float,
     lateral_displacement: float,
@@ -1345,17 +1374,24 @@ def _classify_movement_type(
     sidestep_min_lateral_displacement: float = SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
 ) -> str:
     """体の向きに対する移動タイプを返す。"""
+    forward_abs = abs(forward_displacement)
+    lateral_abs = abs(lateral_displacement)
+    is_lateral_dominant = (
+        lateral_abs >= sidestep_min_lateral_displacement
+        and lateral_abs >= sidestep_lateral_ratio * max(forward_abs, 1e-12)
+    )
     if yaw_delta is not None and abs(yaw_delta) >= np.deg2rad(
         TURNING_YAW_DELTA_THRESHOLD_DEG
     ):
+        if is_lateral_dominant:
+            return (
+                "turning_sidestep_left"
+                if lateral_displacement > 0
+                else "turning_sidestep_right"
+            )
         return "turning"
 
-    forward_abs = abs(forward_displacement)
-    lateral_abs = abs(lateral_displacement)
-    if (
-        lateral_abs >= sidestep_min_lateral_displacement
-        and lateral_abs >= sidestep_lateral_ratio * max(forward_abs, 1e-12)
-    ):
+    if is_lateral_dominant:
         return "sidestep_left" if lateral_displacement > 0 else "sidestep_right"
     if forward_abs >= lateral_abs:
         return "forward"
@@ -1373,6 +1409,7 @@ def _estimate_motion_heading_from_horizontal_accel(
     motion_heading_correction: float = 0.0,
     sidestep_lateral_ratio: float = SIDESTEP_LATERAL_RATIO,
     sidestep_min_lateral_displacement: float = SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
+    device_orientation_mode: str = "normal",
 ) -> _MotionHeadingResult:
     """ジャイロで向きを固定し、水平加速度から世界座標上の移動方向を推定する。"""
     if body_heading is None:
@@ -1428,6 +1465,11 @@ def _estimate_motion_heading_from_horizontal_accel(
 
     h_y = h_y[valid_acc].astype(float)
     h_z = h_z[valid_acc].astype(float)
+    h_y, h_z = _apply_device_orientation_to_horizontal(
+        h_y,
+        h_z,
+        device_orientation_mode,
+    )
     sample_times = sample_times[valid_acc].astype(float)
 
     gyro_times = _dataframe_times_or_sample_index(df_gyro)
@@ -1512,6 +1554,7 @@ def _estimate_motion_heading_correction(
     peaks: np.ndarray,
     initial_direction: float,
     step_segments: tuple[StepSegment, ...] = (),
+    device_orientation_mode: str = "normal",
 ) -> float:
     """歩行開始直後の前進歩行から水平加速度方位の固定ずれを推定する。"""
     if MOTION_HEADING_CALIBRATION_STEPS <= 0:
@@ -1540,6 +1583,7 @@ def _estimate_motion_heading_correction(
             body_heading,
             direction_offset,
             step_segments,
+            device_orientation_mode=device_orientation_mode,
         )
         if (
             motion.motion_heading is None
@@ -1556,6 +1600,63 @@ def _estimate_motion_heading_correction(
     return _normalize_angle(float(np.arctan2(sin_sum, cos_sum)))
 
 
+def _estimate_device_orientation_mode(
+    df_acc: pd.DataFrame,
+    df_gyro: pd.DataFrame,
+    peaks: np.ndarray,
+    initial_direction: float,
+    step_segments: tuple[StepSegment, ...] = (),
+) -> str:
+    """初期歩行から端末水平軸の装着向き候補を推定する。"""
+    if len(peaks) == 0:
+        return "normal"
+
+    direction_offset = float(np.deg2rad(initial_direction))
+    best_mode = "normal"
+    best_score = float("-inf")
+    for mode in DEVICE_ORIENTATION_MODES:
+        score = 0.0
+        count = 0
+        for i in range(min(len(peaks), MOTION_HEADING_CALIBRATION_STEPS)):
+            mid_idx = _step_mid_index(peaks, i)
+            mid_time = _step_mid_time(df_acc, peaks, i)
+            gyro_base = _sample_gyro_angle(
+                df_gyro,
+                sample_index=mid_idx,
+                sample_time=mid_time,
+            )
+            if gyro_base is None:
+                continue
+            body_heading = _normalize_angle(gyro_base + direction_offset)
+            motion = _estimate_motion_heading_from_horizontal_accel(
+                df_acc,
+                df_gyro,
+                peaks,
+                i,
+                body_heading,
+                direction_offset,
+                step_segments,
+                device_orientation_mode=mode,
+            )
+            if (
+                motion.forward_displacement is None
+                or motion.lateral_displacement is None
+                or motion.motion_heading is None
+            ):
+                continue
+            forward = motion.forward_displacement
+            lateral = abs(motion.lateral_displacement)
+            diff = abs(_normalize_angle(motion.motion_heading - body_heading))
+            score += forward - lateral - max(-forward, 0.0) - 0.25 * diff
+            count += 1
+        if count > 0:
+            score /= count
+        if score > best_score:
+            best_score = score
+            best_mode = mode
+    return best_mode
+
+
 def _resolve_motion_heading_correction(
     df_acc: pd.DataFrame,
     df_gyro: pd.DataFrame,
@@ -1563,6 +1664,7 @@ def _resolve_motion_heading_correction(
     initial_direction: float,
     step_segments: tuple[StepSegment, ...],
     method: str,
+    device_orientation_mode: str = "normal",
 ) -> float:
     """指定モードに応じた水平加速度方位補正角を返す。"""
     selected_method = _validate_motion_heading_correction(method)
@@ -1574,12 +1676,18 @@ def _resolve_motion_heading_correction(
         peaks,
         initial_direction,
         step_segments,
+        device_orientation_mode,
     )
 
 
 def _is_sidestep_movement(movement_type: str) -> bool:
     """横歩き系の移動タイプかどうかを返す。"""
-    return movement_type in {"sidestep_left", "sidestep_right"}
+    return movement_type in {
+        "sidestep_left",
+        "sidestep_right",
+        "turning_sidestep_left",
+        "turning_sidestep_right",
+    }
 
 
 def _is_trajectory_sidestep_movement(movement_type: str | None) -> bool:
@@ -1587,6 +1695,8 @@ def _is_trajectory_sidestep_movement(movement_type: str | None) -> bool:
     return movement_type in {
         "sidestep_left",
         "sidestep_right",
+        "turning_sidestep_left",
+        "turning_sidestep_right",
         "sidestep_suspect_left",
         "sidestep_suspect_right",
     }
@@ -1604,18 +1714,31 @@ def _sidestep_body_lateral_heading(
     """端末方位から見た左右横歩き方向を返す。"""
     if body_heading is None:
         return None
-    if movement_type in {"sidestep_left", "sidestep_suspect_left"}:
+    if movement_type in {
+        "sidestep_left",
+        "turning_sidestep_left",
+        "sidestep_suspect_left",
+    }:
         return body_heading + np.pi / 2
-    if movement_type in {"sidestep_right", "sidestep_suspect_right"}:
+    if movement_type in {
+        "sidestep_right",
+        "turning_sidestep_right",
+        "sidestep_suspect_right",
+    }:
         return body_heading - np.pi / 2
     return None
 
 
 def _sidestep_motion_heading(step_heading: StepHeading) -> float | None:
     """横歩き用の実移動方位候補を返す。"""
-    if step_heading.selected_heading is not None:
+    if (
+        step_heading.source.startswith("trajectory_")
+        and step_heading.selected_heading is not None
+    ):
         return step_heading.selected_heading
-    return step_heading.motion_heading
+    if step_heading.motion_heading is not None:
+        return step_heading.motion_heading
+    return step_heading.selected_heading
 
 
 def _resolve_sidestep_heading(
@@ -1659,9 +1782,9 @@ def _lateral_forward_ratio(step_heading: StepHeading) -> float | None:
 
 def _sidestep_direction(movement_type: str) -> int | None:
     """横歩き方向を符号で返す。left=+1, right=-1。"""
-    if movement_type == "sidestep_left":
+    if movement_type in {"sidestep_left", "turning_sidestep_left"}:
         return 1
-    if movement_type == "sidestep_right":
+    if movement_type in {"sidestep_right", "turning_sidestep_right"}:
         return -1
     return None
 
@@ -1994,15 +2117,20 @@ def _smooth_step_headings(
 
         if confirmed:
             cluster_id += 1
-            selected_heading = _sidestep_cluster_motion_heading_for_indexes(
-                step_headings,
-                evidence_indexes,
+            sidestep_type = "sidestep_left" if direction == 1 else "sidestep_right"
+            turning_sidestep_type = (
+                "turning_sidestep_left" if direction == 1 else "turning_sidestep_right"
             )
-            movement_type = "sidestep_left" if direction == 1 else "sidestep_right"
             for member_index in members:
                 member_evidence = evidences[member_index]
+                movement_type = (
+                    turning_sidestep_type
+                    if step_headings[member_index].movement_type.startswith(
+                        "turning_sidestep_"
+                    )
+                    else sidestep_type
+                )
                 smoothed[member_index] = step_headings[member_index]._replace(
-                    selected_heading=selected_heading,
                     trajectory_movement_type=movement_type,
                     body_motion_angle_diff=member_evidence.angle_diff,
                     sidestep_evidence_direction=_sidestep_direction_label(direction),
@@ -2049,6 +2177,214 @@ def _smooth_step_headings(
     return smoothed
 
 
+def _trajectory_movement_type(step_heading: StepHeading) -> str:
+    """軌跡計算に使う移動タイプを返す。"""
+    return (
+        step_heading.trajectory_movement_type
+        if step_heading.trajectory_movement_type is not None
+        else step_heading.movement_type
+    )
+
+
+def _limit_heading_change(
+    heading: float | None,
+    previous_heading: float | None,
+    max_delta: float = TRAJECTORY_HEADING_MAX_STEP_DELTA_RAD,
+) -> float | None:
+    """前回方位からの変化量を制限した方位を返す。"""
+    if heading is None or previous_heading is None:
+        return heading
+    delta = _normalize_angle(heading - previous_heading)
+    if abs(delta) <= max_delta:
+        return heading
+    return _normalize_angle(previous_heading + float(np.sign(delta)) * max_delta)
+
+
+def _heading_change_limit_for_movement_type(movement_type: str) -> float:
+    """移動状態ごとの1歩あたり方位変化上限を返す。"""
+    if movement_type.startswith("turning_sidestep_"):
+        return TURNING_SIDESTEP_HEADING_MAX_STEP_DELTA_RAD
+    if movement_type in {"sidestep_left", "sidestep_right"}:
+        return SIDESTEP_HEADING_MAX_STEP_DELTA_RAD
+    return TRAJECTORY_HEADING_MAX_STEP_DELTA_RAD
+
+
+def _resolve_world_motion_heading(
+    step_heading: StepHeading,
+    movement_type: str,
+    previous_heading: float | None,
+    previous_movement_type: str | None,
+    forward_heading_source: str,
+    sidestep_heading_source: str,
+) -> tuple[float | None, str | None]:
+    """世界座標変換済み移動方位を主候補にして軌跡方位を返す。"""
+    body_heading = (
+        step_heading.body_heading
+        if step_heading.body_heading is not None
+        else step_heading.gyro_heading
+    )
+    candidate: float | None = None
+    source: str | None = None
+
+    if movement_type == "forward":
+        if forward_heading_source == "body":
+            candidate = body_heading
+            source = "trajectory_body"
+        else:
+            candidate = (
+                step_heading.motion_heading
+                if step_heading.motion_heading is not None
+                else body_heading
+            )
+            source = (
+                "trajectory_motion"
+                if step_heading.motion_heading is not None
+                else "trajectory_body_fallback"
+            )
+            if (
+                previous_heading is None
+                and step_heading.motion_heading is not None
+                and body_heading is not None
+                and abs(_normalize_angle(step_heading.motion_heading - body_heading))
+                > INITIAL_FORWARD_MOTION_BODY_CONSTRAINT_RAD
+            ):
+                candidate = body_heading
+                source = "trajectory_initial_body_fallback"
+    elif movement_type in {
+        "sidestep_left",
+        "sidestep_right",
+        "turning_sidestep_left",
+        "turning_sidestep_right",
+    }:
+        body_lateral_heading = (
+            _sidestep_body_lateral_heading(body_heading, movement_type)
+            if body_heading is not None
+            else None
+        )
+        motion_heading = step_heading.motion_heading
+        if movement_type.startswith("turning_sidestep_"):
+            candidate = (
+                motion_heading
+                if motion_heading is not None
+                else previous_heading
+                if previous_heading is not None
+                else body_lateral_heading
+            )
+            source = (
+                "trajectory_turning_sidestep_motion"
+                if motion_heading is not None
+                else "trajectory_turning_sidestep_fallback"
+            )
+        elif sidestep_heading_source == "body_lateral":
+            candidate = (
+                body_lateral_heading
+                if body_lateral_heading is not None
+                else motion_heading
+            )
+            source = "trajectory_body_lateral"
+        elif sidestep_heading_source == "blend":
+            if (
+                motion_heading is not None
+                and body_lateral_heading is not None
+                and abs(_normalize_angle(motion_heading - body_lateral_heading))
+                <= SIDESTEP_MOTION_LATERAL_CONSTRAINT_RAD
+            ):
+                candidate = _circular_mean_angles(
+                    [motion_heading, body_lateral_heading]
+                )
+                source = "trajectory_blend"
+            else:
+                candidate = (
+                    previous_heading
+                    if previous_heading is not None
+                    else body_lateral_heading
+                )
+                source = "trajectory_sidestep_fallback"
+        else:
+            if motion_heading is not None and (
+                body_lateral_heading is None
+                or abs(_normalize_angle(motion_heading - body_lateral_heading))
+                <= SIDESTEP_MOTION_LATERAL_CONSTRAINT_RAD
+            ):
+                candidate = motion_heading
+                source = "trajectory_sidestep_motion"
+            else:
+                candidate = (
+                    previous_heading
+                    if previous_heading is not None
+                    else body_lateral_heading
+                )
+                source = "trajectory_sidestep_fallback"
+    else:
+        return None, None
+
+    if movement_type == previous_movement_type:
+        limited = _limit_heading_change(
+            candidate,
+            previous_heading,
+            _heading_change_limit_for_movement_type(movement_type),
+        )
+        if (
+            limited is not None
+            and candidate is not None
+            and abs(_normalize_angle(limited - candidate)) > 1e-12
+        ):
+            source = f"{source}_limited" if source is not None else "trajectory_limited"
+        candidate = limited
+    return candidate, source
+
+
+def _stabilize_trajectory_headings(
+    step_headings: list[StepHeading],
+    forward_heading_source: str = FORWARD_HEADING_SOURCE,
+    sidestep_heading_source: str = "motion",
+) -> list[StepHeading]:
+    """世界座標変換済み移動方位を制約付きで軌跡方位へ反映する。"""
+    selected_forward_heading_source = _validate_forward_heading_source(
+        forward_heading_source
+    )
+    selected_sidestep_heading_source = _validate_sidestep_heading_source(
+        sidestep_heading_source
+    )
+    stabilized = list(step_headings)
+    previous_heading: float | None = None
+    previous_movement_type: str | None = None
+    for index, step_heading in enumerate(step_headings):
+        movement_type = _trajectory_movement_type(step_heading)
+        selected_heading, source = _resolve_world_motion_heading(
+            step_heading,
+            movement_type,
+            previous_heading,
+            previous_movement_type,
+            selected_forward_heading_source,
+            selected_sidestep_heading_source,
+        )
+        if selected_heading is not None:
+            stabilized[index] = step_heading._replace(
+                selected_heading=selected_heading,
+                source=source if source is not None else step_heading.source,
+            )
+            previous_heading = selected_heading
+            previous_movement_type = movement_type
+        elif movement_type != "turning":
+            previous_movement_type = movement_type
+
+    return stabilized
+
+
+def _stabilize_trajectory_body_headings(
+    step_headings: list[StepHeading],
+    forward_heading_source: str = FORWARD_HEADING_SOURCE,
+    sidestep_heading_source: str = "motion",
+) -> list[StepHeading]:
+    """互換用: 軌跡方位の区間安定化を返す。"""
+    return _stabilize_trajectory_headings(
+        step_headings,
+        forward_heading_source,
+        sidestep_heading_source,
+    )
+
+
 def estimate_step_motion(
     step_heading: StepHeading,
     step_length: float,
@@ -2090,13 +2426,21 @@ def estimate_step_motion(
             heading = body_heading if body_heading is not None else fallback_heading
         else:
             heading = (
-                step_heading.motion_heading
+                step_heading.selected_heading
+                if step_heading.source.startswith("trajectory_")
+                and step_heading.selected_heading is not None
+                else step_heading.motion_heading
                 if step_heading.motion_heading is not None
                 else fallback_heading
             )
         scale = 1.0
     elif (
-        movement_type in {"sidestep_left", "sidestep_suspect_left"}
+        movement_type
+        in {
+            "sidestep_left",
+            "turning_sidestep_left",
+            "sidestep_suspect_left",
+        }
         and body_heading is not None
     ):
         sidestep_source = (
@@ -2114,7 +2458,12 @@ def estimate_step_motion(
         )
         scale = SIDESTEP_LENGTH_SCALE
     elif (
-        movement_type in {"sidestep_right", "sidestep_suspect_right"}
+        movement_type
+        in {
+            "sidestep_right",
+            "turning_sidestep_right",
+            "sidestep_suspect_right",
+        }
         and body_heading is not None
     ):
         sidestep_source = (
@@ -2277,6 +2626,7 @@ def resolve_step_heading(
     motion_heading_correction: float = 0.0,
     sidestep_lateral_ratio: float = SIDESTEP_LATERAL_RATIO,
     sidestep_min_lateral_displacement: float = SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
+    device_orientation_mode: str = "normal",
 ) -> StepHeading:
     """指定ステップのジャイロ/加速度/移動方向方位を解決する。"""
     selected_method = _validate_heading_method(heading_method)
@@ -2309,6 +2659,7 @@ def resolve_step_heading(
         motion_heading_correction,
         sidestep_lateral_ratio,
         sidestep_min_lateral_displacement,
+        device_orientation_mode,
     )
 
     selected_heading: float | None
@@ -2364,6 +2715,7 @@ def resolve_step_heading(
         motion_heading_correction=motion_heading_correction,
         sidestep_lateral_ratio=sidestep_lateral_ratio,
         sidestep_min_lateral_displacement=sidestep_min_lateral_displacement,
+        device_orientation_mode=device_orientation_mode,
     )
 
 
@@ -2417,6 +2769,13 @@ def estimate_trajectory_with_headings(
         "sidestep_min_lateral_displacement",
         sidestep_min_lateral_displacement,
     )
+    device_orientation_mode = _estimate_device_orientation_mode(
+        df_acc,
+        df_gyro,
+        peaks,
+        initial_direction,
+        step_segments,
+    )
     motion_heading_correction_rad = _resolve_motion_heading_correction(
         df_acc,
         df_gyro,
@@ -2424,6 +2783,7 @@ def estimate_trajectory_with_headings(
         initial_direction,
         step_segments,
         motion_heading_correction,
+        device_orientation_mode,
     )
     selected_sidestep_smoothing = _validate_sidestep_smoothing(sidestep_smoothing)
     selected_forward_heading_source = _validate_forward_heading_source(
@@ -2462,6 +2822,7 @@ def estimate_trajectory_with_headings(
             motion_heading_correction=motion_heading_correction_rad,
             sidestep_lateral_ratio=sidestep_lateral_ratio,
             sidestep_min_lateral_displacement=sidestep_min_lateral_displacement,
+            device_orientation_mode=device_orientation_mode,
         )
         if step_heading.selected_heading is None:
             continue
@@ -2473,12 +2834,19 @@ def estimate_trajectory_with_headings(
         raw_step_lengths.append(step_length)
         raw_step_times.append(_step_output_time(df_acc, peaks, i))
 
+    smoothed_step_headings = _smooth_step_headings(
+        raw_step_headings,
+        selected_sidestep_smoothing,
+        selected_sidestep_suspect_mode,
+    )
+    stabilized_step_headings = _stabilize_trajectory_headings(
+        smoothed_step_headings,
+        selected_forward_heading_source,
+        selected_sidestep_heading_source,
+    )
+
     for step_heading, step_length, step_time in zip(
-        _smooth_step_headings(
-            raw_step_headings,
-            selected_sidestep_smoothing,
-            selected_sidestep_suspect_mode,
-        ),
+        stabilized_step_headings,
         raw_step_lengths,
         raw_step_times,
         strict=True,
@@ -2495,7 +2863,9 @@ def estimate_trajectory_with_headings(
             continue
         step_heading = step_heading._replace(
             selected_heading=step_motion.heading,
-            source="state_motion",
+            source=step_heading.source
+            if step_heading.source.startswith("trajectory_")
+            else "state_motion",
             step_length_scale=step_motion.length_scale,
             trajectory_movement_type=step_motion.movement_type,
             forward_heading_source=selected_forward_heading_source,
@@ -2956,6 +3326,7 @@ def _build_step_headings_dataframe(step_headings: list[StepHeading]) -> pd.DataF
         "motion_confidence",
         "yaw_delta_deg",
         "motion_heading_correction_deg",
+        "device_orientation_mode",
         "body_motion_angle_diff_deg",
         "lateral_forward_ratio",
         "sidestep_lateral_ratio",
@@ -2994,6 +3365,7 @@ def _build_step_headings_dataframe(step_headings: list[StepHeading]) -> pd.DataF
             "motion_heading_correction_deg": _angle_to_deg(
                 heading.motion_heading_correction
             ),
+            "device_orientation_mode": heading.device_orientation_mode,
             "body_motion_angle_diff_deg": _angle_to_deg(heading.body_motion_angle_diff),
             "lateral_forward_ratio": _lateral_forward_ratio(heading),
             "sidestep_lateral_ratio": heading.sidestep_lateral_ratio,

@@ -30,7 +30,7 @@ def test_compute_weinberg_k_rejects_non_positive_height() -> None:
 
 def test_default_sidestep_detection_settings_match_selected_standard() -> None:
     assert HEADING_METHOD == "gyro_accel_motion"
-    assert FORWARD_HEADING_SOURCE == "body"
+    assert FORWARD_HEADING_SOURCE == "motion"
     assert SIDESTEP_LATERAL_RATIO == pytest.approx(1.2)
     assert SIDESTEP_MIN_LATERAL_DISPLACEMENT_M == pytest.approx(0.03)
     assert SIDESTEP_SMOOTHING_METHOD == "clustered"

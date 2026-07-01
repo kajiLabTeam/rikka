@@ -32,10 +32,12 @@ from .pdr import (
     StepHeading,
     StepSegment,
     _compute_pixel_coords,
+    _estimate_device_orientation_mode,
     _estimate_initial_forward_angle,
     _plot_heading_overlay,
     _resolve_motion_heading_correction,
     _smooth_step_headings,
+    _stabilize_trajectory_headings,
     _step_output_time,
     _validate_forward_heading_source,
     _validate_motion_heading_correction,
@@ -273,6 +275,13 @@ def run_particle_filter(
     resample_history: list[np.ndarray] = []
     all_particles_list: list[np.ndarray] = [particles.copy()]  # ステップ0（原点）
     step_headings: list[StepHeading] = []
+    device_orientation_mode = _estimate_device_orientation_mode(
+        df_acc,
+        df_gyro,
+        peaks,
+        initial_direction,
+        step_segments,
+    )
     motion_heading_correction_rad = _resolve_motion_heading_correction(
         df_acc,
         df_gyro,
@@ -280,6 +289,7 @@ def run_particle_filter(
         initial_direction,
         step_segments,
         selected_motion_heading_correction,
+        device_orientation_mode,
     )
 
     phi_0 = (
@@ -307,6 +317,7 @@ def run_particle_filter(
             motion_heading_correction=motion_heading_correction_rad,
             sidestep_lateral_ratio=sidestep_lateral_ratio,
             sidestep_min_lateral_displacement=sidestep_min_lateral_displacement,
+            device_orientation_mode=device_orientation_mode,
         )
         if step_heading.selected_heading is None:
             continue
@@ -321,12 +332,19 @@ def run_particle_filter(
 
     previous_heading: float | None = None
 
+    smoothed_step_headings = _smooth_step_headings(
+        raw_step_headings,
+        selected_sidestep_smoothing,
+        selected_sidestep_suspect_mode,
+    )
+    stabilized_step_headings = _stabilize_trajectory_headings(
+        smoothed_step_headings,
+        selected_forward_heading_source,
+        selected_sidestep_heading_source,
+    )
+
     for step_heading, sl_det, step_time in zip(
-        _smooth_step_headings(
-            raw_step_headings,
-            selected_sidestep_smoothing,
-            selected_sidestep_suspect_mode,
-        ),
+        stabilized_step_headings,
         raw_step_lengths,
         raw_step_times,
         strict=True,
@@ -345,7 +363,9 @@ def run_particle_filter(
         sl_det = step_motion.length
         step_heading = step_heading._replace(
             selected_heading=step_motion.heading,
-            source="state_motion",
+            source=step_heading.source
+            if step_heading.source.startswith("trajectory_")
+            else "state_motion",
             step_length_scale=step_motion.length_scale,
             trajectory_movement_type=step_motion.movement_type,
             forward_heading_source=selected_forward_heading_source,
