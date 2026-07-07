@@ -48,7 +48,7 @@ input/
 現在の既定入力は次です。
 
 ```python
-DATA_DIR = "input/1turn_rightsidestep_3turn_leftsidestep4"
+DATA_DIR = "input/kakeru_nosidestep_1turn_3turn"
 ```
 
 別データを使う場合は、CLI の `-d` で指定できます。
@@ -101,16 +101,16 @@ UV_CACHE_DIR=.uv-cache uv run rikka sensor
 
 | 項目 | 既定値 | 説明 |
 |---|---:|---|
-| `DATA_DIR` | `input/1turn_rightsidestep_3turn_leftsidestep4` | 入力データ |
+| `DATA_DIR` | `input/kakeru_nosidestep_1turn_3turn` | 入力データ |
 | `FLOORMAP_PATH` | `input/Floormap_building14_5floor.png` | 背景マップ |
 | `FLOORMAP_ORIGIN_PX` | `(2050, 600)` | 軌跡の開始ピクセル |
 | `FLOORMAP_SCALE` | `0.01` | 1px あたりのメートル数 |
 | `INITIAL_DIRECTION` | `90.0` | 歩行開始方向 [deg] |
 | `STEP_DETECTION_METHOD` | `peak` | ステップ検出 |
 | `HEADING_METHOD` | `gyro_accel_motion` | 方位・移動方向推定 |
-| `FORWARD_HEADING_SOURCE` | `body` | 通常歩行の軌跡方位は体/端末方向を使用 |
+| `FORWARD_HEADING_SOURCE` | `motion` | 通常歩行の軌跡方位は水平加速度由来の移動方向を使用 |
 | `GYRO_BIAS_METHOD` | `prewalk_robust` | ジャイロバイアス推定 |
-| `USER_HEIGHT_M` | `1.65` | Weinberg 歩幅補正用の身長 |
+| `USER_HEIGHT_M` | `1.68` | Weinberg 歩幅補正用の身長 |
 | `SIDESTEP_LATERAL_RATIO` | `1.2` | 横方向/前方向の比率がこの値以上で横歩き候補 |
 | `SIDESTEP_MIN_LATERAL_DISPLACEMENT_M` | `0.03` | 横歩き判定に必要な横方向変位 [m] |
 | `SIDESTEP_SMOOTHING_METHOD` | `clustered` | 5歩窓で同方向横歩きが2回以上ある場合だけ軌跡へ横歩きとして反映 |
