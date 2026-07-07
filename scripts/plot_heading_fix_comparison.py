@@ -327,7 +327,7 @@ def _plot_result(
     ax.text(
         0.02,
         0.02,
-        f"end=({points[-1,0]:.1f},{points[-1,1]:.1f})\n"
+        f"end=({points[-1, 0]:.1f},{points[-1, 1]:.1f})\n"
         f"delta p90/max={p90:.1f}/{max_delta:.1f}deg\n"
         f"neg={neg_forward} suspect={suspect}",
         transform=ax.transAxes,

@@ -1719,13 +1719,13 @@ def _sidestep_body_lateral_heading(
         "turning_sidestep_left",
         "sidestep_suspect_left",
     }:
-        return body_heading + np.pi / 2
+        return float(body_heading + np.pi / 2)
     if movement_type in {
         "sidestep_right",
         "turning_sidestep_right",
         "sidestep_suspect_right",
     }:
-        return body_heading - np.pi / 2
+        return float(body_heading - np.pi / 2)
     return None
 
 
@@ -1859,7 +1859,10 @@ def _sidestep_evidence(step_heading: StepHeading) -> _SidestepEvidence:
         return _SidestepEvidence(None, None, angle_diff, False)
 
     ratio = _lateral_forward_ratio(step_heading)
-    lateral_abs = abs(step_heading.lateral_displacement)
+    lateral_displacement = step_heading.lateral_displacement
+    if lateral_displacement is None:
+        return _SidestepEvidence(None, None, angle_diff, False)
+    lateral_abs = abs(lateral_displacement)
     if (
         angle_diff is None
         or ratio is None
@@ -1869,7 +1872,7 @@ def _sidestep_evidence(step_heading: StepHeading) -> _SidestepEvidence:
     ):
         return _SidestepEvidence(None, None, angle_diff, False)
 
-    direction = 1 if step_heading.lateral_displacement > 0 else -1
+    direction = 1 if lateral_displacement > 0 else -1
     strong = (
         angle_diff >= SIDESTEP_STRONG_ANGLE_THRESHOLD_RAD
         and ratio >= SIDESTEP_BODY_MOTION_RATIO_THRESHOLD
@@ -1898,16 +1901,15 @@ def _sidestep_cluster_has_lateral_strength(
     direction: int,
 ) -> bool:
     """cluster 全体として横方向特徴が十分かどうかを返す。"""
-    lateral_values = [
-        step_headings[index].lateral_displacement
-        for index in indexes
-        if step_headings[index].lateral_displacement is not None
-    ]
-    forward_values = [
-        abs(step_headings[index].forward_displacement)
-        for index in indexes
-        if step_headings[index].forward_displacement is not None
-    ]
+    lateral_values: list[float] = []
+    forward_values: list[float] = []
+    for index in indexes:
+        lateral_displacement = step_headings[index].lateral_displacement
+        if lateral_displacement is not None:
+            lateral_values.append(lateral_displacement)
+        forward_displacement = step_headings[index].forward_displacement
+        if forward_displacement is not None:
+            forward_values.append(abs(forward_displacement))
     lateral_smoothed = _mean_finite(lateral_values)
     forward_smoothed = _mean_finite(forward_values)
     if lateral_smoothed is None or forward_smoothed is None:
@@ -1999,11 +2001,11 @@ def _sidestep_cluster_motion_heading_for_indexes(
     indexes: list[int],
 ) -> float | None:
     """指定した横歩き evidence 歩の motion_heading を円平均して返す。"""
-    motion_headings = [
-        step_headings[index].motion_heading
-        for index in indexes
-        if step_headings[index].motion_heading is not None
-    ]
+    motion_headings: list[float] = []
+    for index in indexes:
+        motion_heading = step_headings[index].motion_heading
+        if motion_heading is not None:
+            motion_headings.append(motion_heading)
     return _circular_mean_angles(motion_headings)
 
 
@@ -2203,10 +2205,10 @@ def _limit_heading_change(
 def _heading_change_limit_for_movement_type(movement_type: str) -> float:
     """移動状態ごとの1歩あたり方位変化上限を返す。"""
     if movement_type.startswith("turning_sidestep_"):
-        return TURNING_SIDESTEP_HEADING_MAX_STEP_DELTA_RAD
+        return float(TURNING_SIDESTEP_HEADING_MAX_STEP_DELTA_RAD)
     if movement_type in {"sidestep_left", "sidestep_right"}:
-        return SIDESTEP_HEADING_MAX_STEP_DELTA_RAD
-    return TRAJECTORY_HEADING_MAX_STEP_DELTA_RAD
+        return float(SIDESTEP_HEADING_MAX_STEP_DELTA_RAD)
+    return float(TRAJECTORY_HEADING_MAX_STEP_DELTA_RAD)
 
 
 def _resolve_world_motion_heading(
@@ -2421,6 +2423,7 @@ def estimate_step_motion(
         if step_heading.trajectory_movement_type is not None
         else step_heading.movement_type
     )
+    heading: float | None
     if movement_type == "forward":
         if selected_forward_heading_source == "body":
             heading = body_heading if body_heading is not None else fallback_heading
@@ -2456,6 +2459,8 @@ def estimate_step_motion(
             body_heading,
             sidestep_source,
         )
+        if heading is None:
+            heading = fallback_heading
         scale = SIDESTEP_LENGTH_SCALE
     elif (
         movement_type
@@ -2479,6 +2484,8 @@ def estimate_step_motion(
             body_heading,
             sidestep_source,
         )
+        if heading is None:
+            heading = fallback_heading
         scale = SIDESTEP_LENGTH_SCALE
     elif movement_type == "turning":
         heading = previous_heading if previous_heading is not None else fallback_heading
