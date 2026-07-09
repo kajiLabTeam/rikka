@@ -81,6 +81,17 @@ def _validate_cli_non_negative_float(
     return value
 
 
+def _validate_gyro_bias_options(
+    gyro_bias_method: str,
+    gyro_bias: float | None,
+) -> None:
+    """manual 指定時は明示的なジャイロバイアス値を必須にする。"""
+    if gyro_bias_method == "manual" and gyro_bias is None:
+        raise click.UsageError(
+            "--gyro-bias-method manual を使う場合は --gyro-bias を指定してください。"
+        )
+
+
 def _common_options(f: click.decorators.FC) -> click.decorators.FC:
     """run / particle コマンド共通オプションをまとめたデコレータ。"""
     f = click.option(
@@ -241,6 +252,7 @@ def _run_pdr(
     from .analyze.pdr import load_sensor_data  # noqa: PLC0415
     from .analyze.pdr import run as _run  # noqa: PLC0415
 
+    _validate_gyro_bias_options(gyro_bias_method, gyro_bias)
     df_acc, df_gyro = load_sensor_data(data_dir)
     _run(
         df_acc=df_acc,
@@ -389,6 +401,7 @@ def particle(
     from .analyze.pdr import load_sensor_data  # noqa: PLC0415
     from .analyze.pdr import run as _run  # noqa: PLC0415
 
+    _validate_gyro_bias_options(gyro_bias_method, gyro_bias)
     df_acc, df_gyro = load_sensor_data(data_dir)
     _run(
         df_acc=df_acc,
@@ -453,6 +466,7 @@ def sensor(
     """センサーデータをグラフ化して入力フォルダに保存する。"""
     from .analyze.sensor_plot import plot_sensor_data  # noqa: PLC0415
 
+    _validate_gyro_bias_options(gyro_bias_method, gyro_bias)
     plot_sensor_data(
         data_dir,
         step_detection_method=step_detection,

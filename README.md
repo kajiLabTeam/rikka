@@ -5,7 +5,7 @@ PDR（Pedestrian Dead Reckoning）ライブラリです。
 
 現在の標準設定は、ジャイロを体の向き、水平加速度を横歩き判定用の
 移動特徴として使う `gyro_accel_motion` です。通常歩行の軌跡方位は
-`body_heading` を使い、横歩き判定は記録として残しつつ、同方向にまとまった
+`motion_heading` を使い、横歩き判定は記録として残しつつ、同方向にまとまった
 横歩きだけを軌跡へ反映します。
 
 ## セットアップ
@@ -147,11 +147,11 @@ UV_CACHE_DIR=.uv-cache uv run rikka sensor
 標準設定では、単発の横歩き判定は `movement_type` には残りますが、
 `trajectory_movement_type="forward"` として軌跡には前進扱いで反映されます。
 一方、5歩窓で同方向の横歩きが2回以上ある場合は、横歩き区間として軌跡へ反映されます。
-また、`forward` 判定ステップは `body_heading` で軌跡へ積みます。
-旧挙動のように水平加速度由来の `motion_heading` で積む場合は次を指定します。
+また、`forward` 判定ステップは水平加速度由来の `motion_heading` で軌跡へ積みます。
+ジャイロ由来の `body_heading` で積む場合は次を指定します。
 
 ```sh
-UV_CACHE_DIR=.uv-cache uv run rikka run --forward-heading-source motion
+UV_CACHE_DIR=.uv-cache uv run rikka run --forward-heading-source body
 ```
 
 横歩き判定を軌跡へそのまま反映して比較したい場合:
