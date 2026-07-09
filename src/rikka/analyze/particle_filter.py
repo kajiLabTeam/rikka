@@ -205,6 +205,9 @@ def run_particle_filter(
     forward_heading_source: str = FORWARD_HEADING_SOURCE,
     sidestep_heading_source: str = "motion",
     sidestep_suspect_mode: str = "motion",
+    prepared_step_headings: list[StepHeading] | None = None,
+    prepared_step_lengths: list[float] | None = None,
+    prepared_step_times: list[float] | None = None,
 ) -> tuple[list[list[float]], list[float], list[float], np.ndarray, list[StepHeading]]:
     """パーティクルフィルタでマップマッチング付き歩行軌跡を推定する。
 
@@ -275,73 +278,106 @@ def run_particle_filter(
     resample_history: list[np.ndarray] = []
     all_particles_list: list[np.ndarray] = [particles.copy()]  # ステップ0（原点）
     step_headings: list[StepHeading] = []
-    device_orientation_mode = _estimate_device_orientation_mode(
-        df_acc,
-        df_gyro,
-        peaks,
-        initial_direction,
-        step_segments,
+    using_prepared_steps = (
+        prepared_step_headings is not None
+        and prepared_step_lengths is not None
+        and prepared_step_times is not None
     )
-    motion_heading_correction_rad = _resolve_motion_heading_correction(
-        df_acc,
-        df_gyro,
-        peaks,
-        initial_direction,
-        step_segments,
-        selected_motion_heading_correction,
-        device_orientation_mode,
-    )
-
-    phi_0 = (
-        _estimate_initial_forward_angle(df_acc, df_gyro, peaks)
-        if STEP_LENGTH_METHOD == "forward"
-        else 0.0
-    )
-    raw_step_headings: list[StepHeading] = []
-    raw_step_lengths: list[float] = []
-    raw_step_times: list[float] = []
-    for i, p in enumerate(peaks):
-        if p >= len(df_acc):
-            continue
-        if STEP_LENGTH_METHOD == "forward" and i + 1 >= len(peaks):
-            continue
-
-        step_heading = resolve_step_heading(
-            peaks,
-            df_gyro,
-            df_acc,
-            i,
-            initial_direction=initial_direction,
-            heading_method=heading_method,
-            step_segments=step_segments,
-            motion_heading_correction=motion_heading_correction_rad,
-            sidestep_lateral_ratio=sidestep_lateral_ratio,
-            sidestep_min_lateral_displacement=sidestep_min_lateral_displacement,
-            device_orientation_mode=device_orientation_mode,
+    if not using_prepared_steps and (
+        prepared_step_headings is not None
+        or prepared_step_lengths is not None
+        or prepared_step_times is not None
+    ):
+        raise ValueError(
+            "prepared_step_headings, prepared_step_lengths, "
+            "prepared_step_times はすべて同時に指定してください"
         )
-        if step_heading.selected_heading is None:
-            continue
+    if not using_prepared_steps:
+        device_orientation_mode = _estimate_device_orientation_mode(
+            df_acc,
+            df_gyro,
+            peaks,
+            initial_direction,
+            step_segments=step_segments,
+        )
+        motion_heading_correction_rad = _resolve_motion_heading_correction(
+            df_acc,
+            df_gyro,
+            peaks,
+            initial_direction,
+            step_segments,
+            selected_motion_heading_correction,
+            device_orientation_mode,
+        )
 
-        if STEP_LENGTH_METHOD == "forward":
-            sl_det = estimate_step_length_forward(df_acc, df_gyro, peaks, i, phi_0)
-        else:
-            sl_det = estimate_step_length(df_acc, int(p), k=weinberg_k)
-        raw_step_headings.append(step_heading)
-        raw_step_lengths.append(sl_det)
-        raw_step_times.append(_step_output_time(df_acc, peaks, i, STEP_LENGTH_METHOD))
+        phi_0 = (
+            _estimate_initial_forward_angle(df_acc, df_gyro, peaks)
+            if STEP_LENGTH_METHOD == "forward"
+            else 0.0
+        )
+        raw_step_headings: list[StepHeading] = []
+        raw_step_lengths: list[float] = []
+        raw_step_times: list[float] = []
+        for i, p in enumerate(peaks):
+            if p >= len(df_acc):
+                continue
+            if STEP_LENGTH_METHOD == "forward" and i + 1 >= len(peaks):
+                continue
+
+            step_heading = resolve_step_heading(
+                peaks,
+                df_gyro,
+                df_acc,
+                i,
+                initial_direction=initial_direction,
+                heading_method=heading_method,
+                step_segments=step_segments,
+                motion_heading_correction=motion_heading_correction_rad,
+                sidestep_lateral_ratio=sidestep_lateral_ratio,
+                sidestep_min_lateral_displacement=sidestep_min_lateral_displacement,
+                device_orientation_mode=device_orientation_mode,
+            )
+            if step_heading.selected_heading is None:
+                continue
+
+            if STEP_LENGTH_METHOD == "forward":
+                sl_det = estimate_step_length_forward(df_acc, df_gyro, peaks, i, phi_0)
+            else:
+                sl_det = estimate_step_length(df_acc, int(p), k=weinberg_k)
+            raw_step_headings.append(step_heading)
+            raw_step_lengths.append(sl_det)
+            raw_step_times.append(
+                _step_output_time(df_acc, peaks, i, STEP_LENGTH_METHOD)
+            )
+
+        smoothed_step_headings = _smooth_step_headings(
+            raw_step_headings,
+            selected_sidestep_smoothing,
+            selected_sidestep_suspect_mode,
+        )
+        stabilized_step_headings = _stabilize_trajectory_headings(
+            smoothed_step_headings,
+            selected_forward_heading_source,
+            selected_sidestep_heading_source,
+        )
+    else:
+        assert prepared_step_headings is not None
+        assert prepared_step_lengths is not None
+        assert prepared_step_times is not None
+        if not (
+            len(prepared_step_headings)
+            == len(prepared_step_lengths)
+            == len(prepared_step_times)
+        ):
+            raise ValueError(
+                "prepared_step_headings, prepared_step_lengths, "
+                "prepared_step_times の長さが一致しません"
+            )
+        stabilized_step_headings = prepared_step_headings
+        raw_step_lengths = prepared_step_lengths
+        raw_step_times = prepared_step_times
 
     previous_heading: float | None = None
-
-    smoothed_step_headings = _smooth_step_headings(
-        raw_step_headings,
-        selected_sidestep_smoothing,
-        selected_sidestep_suspect_mode,
-    )
-    stabilized_step_headings = _stabilize_trajectory_headings(
-        smoothed_step_headings,
-        selected_forward_heading_source,
-        selected_sidestep_heading_source,
-    )
 
     for step_heading, sl_det, step_time in zip(
         stabilized_step_headings,
@@ -349,27 +385,32 @@ def run_particle_filter(
         raw_step_times,
         strict=True,
     ):
-        step_motion = estimate_step_motion(
-            step_heading,
-            sl_det,
-            previous_heading,
-            selected_forward_heading_source,
-            selected_sidestep_heading_source,
-            selected_sidestep_suspect_mode,
-        )
-        if step_motion is None:
-            continue
-        angle_det = step_motion.heading
-        sl_det = step_motion.length
-        step_heading = step_heading._replace(
-            selected_heading=step_motion.heading,
-            source=step_heading.source
-            if step_heading.source.startswith("trajectory_")
-            else "state_motion",
-            step_length_scale=step_motion.length_scale,
-            trajectory_movement_type=step_motion.movement_type,
-            forward_heading_source=selected_forward_heading_source,
-        )
+        if using_prepared_steps:
+            if step_heading.selected_heading is None:
+                continue
+            angle_det = step_heading.selected_heading
+        else:
+            step_motion = estimate_step_motion(
+                step_heading,
+                sl_det,
+                previous_heading,
+                selected_forward_heading_source,
+                selected_sidestep_heading_source,
+                selected_sidestep_suspect_mode,
+            )
+            if step_motion is None:
+                continue
+            angle_det = step_motion.heading
+            sl_det = step_motion.length
+            step_heading = step_heading._replace(
+                selected_heading=step_motion.heading,
+                source=step_heading.source
+                if step_heading.source.startswith("trajectory_")
+                else "state_motion",
+                step_length_scale=step_motion.length_scale,
+                trajectory_movement_type=step_motion.movement_type,
+                forward_heading_source=selected_forward_heading_source,
+            )
 
         # 予測前の状態を保存（全壁レスキュー用）
         particles_before = particles.copy()
@@ -445,7 +486,7 @@ def run_particle_filter(
         step_lengths.append(sl_det)
         t_at_steps.append(step_time)
         step_headings.append(step_heading)
-        previous_heading = step_motion.heading
+        previous_heading = angle_det
 
         # 系統リサンプリング
         indices = _systematic_resample(weights, rng)

@@ -275,6 +275,34 @@ def test_run_returns_and_saves_timestamped_trajectory_without_steps(
     pd.testing.assert_frame_equal(saved, df_trajectory)
 
 
+def test_prepare_pdr_steps_returns_shared_step_result_without_steps() -> None:
+    df_acc = pd.DataFrame(
+        {
+            "t": np.arange(5, dtype=float) * 0.01,
+            "x": np.zeros(5),
+            "y": np.zeros(5),
+            "z": np.full(5, 9.8),
+        }
+    )
+    df_gyro = pd.DataFrame(
+        {
+            "t": np.arange(5, dtype=float) * 0.01,
+            "x": np.zeros(5),
+            "y": np.zeros(5),
+            "z": np.zeros(5),
+        }
+    )
+
+    prepared = pdr.prepare_pdr_steps(df_acc, df_gyro, gyro_bias_method="quietest")
+
+    assert prepared.step_detection.peaks.tolist() == []
+    assert prepared.trajectory == [[0.0, 0.0]]
+    assert prepared.step_lengths == []
+    assert prepared.t_at_steps == []
+    assert prepared.step_headings == []
+    assert "low_angle" in prepared.df_gyro.columns
+
+
 def test_paper_vertical_threshold_detects_step_segments() -> None:
     signal = np.zeros(220)
     signal[[10, 70, 130, 190]] = [4.0, 5.0, 4.5, 5.5]
