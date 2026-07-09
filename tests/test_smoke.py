@@ -41,3 +41,11 @@ def test_run_help_includes_forward_heading_source_option() -> None:
 
     assert result.exit_code == 0
     assert "--forward-heading-source" in result.output
+
+
+@pytest.mark.parametrize("command", ["run", "pdr", "particle", "sensor"])
+def test_cli_manual_gyro_bias_requires_bias_value(command: str) -> None:
+    result = CliRunner().invoke(cli, [command, "--gyro-bias-method", "manual"])
+
+    assert result.exit_code != 0
+    assert "--gyro-bias" in result.output
