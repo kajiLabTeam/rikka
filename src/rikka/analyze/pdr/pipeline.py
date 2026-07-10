@@ -69,6 +69,7 @@ def run(
     forward_heading_source: str = FORWARD_HEADING_SOURCE,
     sidestep_heading_source: str = "motion",
     sidestep_suspect_mode: str = "motion",
+    particle_seed: int | None = None,
 ) -> pd.DataFrame:
     """PDRのメインパイプラインを実行する。
 
@@ -126,6 +127,8 @@ def run(
             確定横歩きステップの軌跡方位ソース。
         sidestep_suspect_mode:
             横歩き疑いステップの軌跡反映モード。
+        particle_seed:
+            パーティクルフィルタの乱数 seed。``None`` のときは非決定的に実行する。
     Returns:
         pd.DataFrame: 軌跡データ（列: timestamp_s, x, y）
 
@@ -154,7 +157,6 @@ def run(
     selected_sidestep_suspect_mode = _validate_sidestep_suspect_mode(
         sidestep_suspect_mode
     )
-    output_dir = _create_output_dir()
     should_save_animation = plot if save_animation is None else save_animation
 
     if (df_acc is None) != (df_gyro is None):
@@ -240,6 +242,8 @@ def run(
         f" → Y軸{'反転' if y_flipped else '非反転'}"
     )
 
+    output_dir = _create_output_dir()
+
     df_gyro_bias = _build_gyro_bias_dataframe(df_gyro)
     gyro_bias_path = output_dir / "gyro_bias.csv"
     df_gyro_bias.to_csv(gyro_bias_path, index=False)
@@ -282,6 +286,7 @@ def run(
             forward_heading_source=selected_forward_heading_source,
             sidestep_heading_source=selected_sidestep_heading_source,
             sidestep_suspect_mode=selected_sidestep_suspect_mode,
+            seed=particle_seed,
         )
 
         print(f"Peaks detected: {len(peaks)}")

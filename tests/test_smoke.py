@@ -28,6 +28,12 @@ def test_compute_weinberg_k_rejects_non_positive_height() -> None:
         compute_weinberg_k(0.0)
 
 
+@pytest.mark.parametrize("height_m", [float("nan"), float("inf"), float("-inf")])
+def test_compute_weinberg_k_rejects_non_finite_height(height_m: float) -> None:
+    with pytest.raises(ValueError, match="有限"):
+        compute_weinberg_k(height_m)
+
+
 def test_default_sidestep_detection_settings_match_selected_standard() -> None:
     assert HEADING_METHOD == "gyro_accel_motion"
     assert FORWARD_HEADING_SOURCE == "motion"
@@ -41,6 +47,13 @@ def test_run_help_includes_forward_heading_source_option() -> None:
 
     assert result.exit_code == 0
     assert "--forward-heading-source" in result.output
+
+
+def test_particle_help_includes_pf_seed_option() -> None:
+    result = CliRunner().invoke(cli, ["particle", "--help"])
+
+    assert result.exit_code == 0
+    assert "--pf-seed" in result.output
 
 
 @pytest.mark.parametrize("command", ["run", "pdr", "particle", "sensor"])

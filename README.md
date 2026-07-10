@@ -48,7 +48,7 @@ input/
 現在の既定入力は次です。
 
 ```python
-DATA_DIR = "input/kakeru_nosidestep_1turn_3turn"
+DATA_DIR = "input/1turn_rightsidestep_3turn_leftsidestep5"
 ```
 
 別データを使う場合は、CLI の `-d` で指定できます。
@@ -101,7 +101,7 @@ UV_CACHE_DIR=.uv-cache uv run rikka sensor
 
 | 項目 | 既定値 | 説明 |
 |---|---:|---|
-| `DATA_DIR` | `input/kakeru_nosidestep_1turn_3turn` | 入力データ |
+| `DATA_DIR` | `input/1turn_rightsidestep_3turn_leftsidestep5` | 入力データ |
 | `FLOORMAP_PATH` | `input/Floormap_building14_5floor.png` | 背景マップ |
 | `FLOORMAP_ORIGIN_PX` | `(2050, 600)` | 軌跡の開始ピクセル |
 | `FLOORMAP_SCALE` | `0.01` | 1px あたりのメートル数 |

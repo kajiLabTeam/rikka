@@ -1,5 +1,7 @@
 """Configuration file for rikka"""
 
+from math import isfinite
+
 # Data directory path
 # Change this path to use different input data
 
@@ -91,8 +93,8 @@ WEINBERG_REFERENCE_K = 0.47
 
 def compute_weinberg_k(height_m: float = USER_HEIGHT_M) -> float:
     """身長に応じた Weinberg モデルのスケール係数を返す。"""
-    if height_m <= 0:
-        raise ValueError("height_m は正の値を指定してください。")
+    if not isfinite(height_m) or height_m <= 0:
+        raise ValueError("height_m は有限な正の値を指定してください。")
     return WEINBERG_REFERENCE_K * (height_m / WEINBERG_REFERENCE_HEIGHT_M)
 
 

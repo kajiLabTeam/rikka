@@ -1,3 +1,5 @@
+from math import isfinite
+
 import click
 
 from .config import (
@@ -57,8 +59,8 @@ def _validate_cli_scale(
     value: float,
 ) -> float:
     """scale が正の値であることを確認する。"""
-    if value <= 0:
-        raise click.BadParameter("scale は正の値を指定してください。")
+    if not isfinite(value) or value <= 0:
+        raise click.BadParameter("scale は有限な正の値を指定してください。")
     return value
 
 
@@ -68,8 +70,8 @@ def _validate_cli_positive_float(
     value: float,
 ) -> float:
     """正の float オプションであることを確認する。"""
-    if value <= 0:
-        raise click.BadParameter(f"{param.name} は正の値を指定してください。")
+    if not isfinite(value) or value <= 0:
+        raise click.BadParameter(f"{param.name} は有限な正の値を指定してください。")
     return value
 
 
@@ -79,8 +81,8 @@ def _validate_cli_non_negative_float(
     value: float,
 ) -> float:
     """0以上の float オプションであることを確認する。"""
-    if value < 0:
-        raise click.BadParameter(f"{param.name} は0以上の値を指定してください。")
+    if not isfinite(value) or value < 0:
+        raise click.BadParameter(f"{param.name} は有限な0以上の値を指定してください。")
     return value
 
 
@@ -373,6 +375,12 @@ def pdr(
 
 @cli.command()
 @click.option(
+    "--pf-seed",
+    type=int,
+    default=None,
+    help="パーティクルフィルタ乱数の seed（回帰検証用）",
+)
+@click.option(
     "--save-animation",
     is_flag=True,
     default=False,
@@ -399,6 +407,7 @@ def particle(
     sidestep_suspect_mode: str,
     no_plot: bool,
     save_animation: bool,
+    pf_seed: int | None,
 ) -> None:
     """パーティクルフィルタ + マップマッチングで歩行軌跡を推定する。"""
     from .analyze.pdr import load_sensor_data  # noqa: PLC0415
@@ -428,6 +437,7 @@ def particle(
         forward_heading_source=forward_heading_source,
         sidestep_heading_source=sidestep_heading_source,
         sidestep_suspect_mode=sidestep_suspect_mode,
+        particle_seed=pf_seed,
     )
 
 

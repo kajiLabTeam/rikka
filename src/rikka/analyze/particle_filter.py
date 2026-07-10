@@ -208,6 +208,7 @@ def run_particle_filter(
     prepared_step_headings: list[StepHeading] | None = None,
     prepared_step_lengths: list[float] | None = None,
     prepared_step_times: list[float] | None = None,
+    seed: int | None = None,
 ) -> tuple[list[list[float]], list[float], list[float], np.ndarray, list[StepHeading]]:
     """パーティクルフィルタでマップマッチング付き歩行軌跡を推定する。
 
@@ -233,6 +234,7 @@ def run_particle_filter(
         motion_heading_correction: 水平加速度移動方向の固定ずれ補正モード
         sidestep_smoothing: 横歩き判定の平滑化モード
         forward_heading_source: forward 判定ステップの軌跡方位ソース
+        seed: 乱数 seed。``None`` のときは非決定的に実行する。
 
     Returns:
         tuple: (加重平均軌跡の座標リスト, 各ステップの決定論的歩幅リスト,
@@ -261,7 +263,7 @@ def run_particle_filter(
     selected_sidestep_suspect_mode = validate_sidestep_suspect_mode(
         sidestep_suspect_mode
     )
-    rng = np.random.default_rng()
+    rng = np.random.default_rng(seed)
 
     # フロアマップをグレースケールで読み込み
     map_gray = _normalize_floormap_gray(plt.imread(Path(floormap_path)))
