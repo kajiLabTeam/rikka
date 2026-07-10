@@ -167,6 +167,13 @@ uv run pre-commit run --all-files
 ```
 
 CI は GitHub Actions で `uv sync --all-groups`、`pre-commit run --all-files`、`uv build` を実行します。
+AI エージェントが CI 修正や CI に影響する変更を行った場合は、修正後に少なくとも次を実行し、
+CI と同等のチェックが通っていることを確認してください。
+
+```sh
+UV_CACHE_DIR=.uv-cache uv run pre-commit run --all-files
+UV_CACHE_DIR=.uv-cache uv build
+```
 
 ## 実装時の注意
 
