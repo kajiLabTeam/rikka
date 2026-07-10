@@ -379,6 +379,7 @@ def run(
     forward_heading_source: str = FORWARD_HEADING_SOURCE,
     sidestep_heading_source: str = "motion",
     sidestep_suspect_mode: str = "motion",
+    particle_seed: int | None = None,
 ) -> pd.DataFrame:
     """互換 facade 経由で PDR パイプラインを実行する。"""
     vars(_pipeline)["_create_output_dir"] = _create_output_dir
@@ -404,4 +405,5 @@ def run(
         forward_heading_source=forward_heading_source,
         sidestep_heading_source=sidestep_heading_source,
         sidestep_suspect_mode=sidestep_suspect_mode,
+        particle_seed=particle_seed,
     )

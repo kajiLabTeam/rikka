@@ -40,8 +40,8 @@ DEVICE_ORIENTATION_MODES = (
 
 def _validate_scale(scale: float) -> None:
     """フロアマップ縮尺が正の値であることを確認する。"""
-    if scale <= 0:
-        raise ValueError("scale は正の値を指定してください。")
+    if not np.isfinite(scale) or scale <= 0:
+        raise ValueError("scale は有限な正の値を指定してください。")
 
 
 def _validate_heading_method(method: str) -> str:
@@ -73,15 +73,15 @@ def _score_ratio(value: float, target: float) -> float:
 
 def _validate_positive_parameter(name: str, value: float) -> float:
     """正の解析パラメータであることを確認する。"""
-    if value <= 0:
-        raise ValueError(f"{name} は正の値を指定してください。")
+    if not np.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} は有限な正の値を指定してください。")
     return value
 
 
 def _validate_non_negative_parameter(name: str, value: float) -> float:
     """0以上の解析パラメータであることを確認する。"""
-    if value < 0:
-        raise ValueError(f"{name} は0以上の値を指定してください。")
+    if not np.isfinite(value) or value < 0:
+        raise ValueError(f"{name} は有限な0以上の値を指定してください。")
     return value
 
 

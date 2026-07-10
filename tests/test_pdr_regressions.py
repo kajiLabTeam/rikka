@@ -10,6 +10,7 @@ from rikka.analyze.particle_filter import (
     _normalize_floormap_gray,
     _reconstruct_resampled_paths,
     _snap_trajectory_to_walkable_pixels,
+    run_particle_filter,
 )
 from rikka.analyze.sensor_plot import _project_acceleration_to_step_axes
 
@@ -239,6 +240,56 @@ def test_build_trajectory_dataframe_adds_elapsed_timestamps() -> None:
     )
 
 
+def test_numeric_validators_reject_non_finite_values() -> None:
+    for value in (float("nan"), float("inf"), float("-inf")):
+        try:
+            pdr._validate_scale(value)
+        except ValueError as exc:
+            assert "有限" in str(exc)
+        else:
+            raise AssertionError("_validate_scale should reject non-finite values")
+
+        try:
+            pdr._validate_positive_parameter("value", value)
+        except ValueError as exc:
+            assert "有限" in str(exc)
+        else:
+            raise AssertionError(
+                "_validate_positive_parameter should reject non-finite values"
+            )
+
+        try:
+            pdr._validate_non_negative_parameter("value", value)
+        except ValueError as exc:
+            assert "有限" in str(exc)
+        else:
+            raise AssertionError(
+                "_validate_non_negative_parameter should reject non-finite values"
+            )
+
+
+def test_run_does_not_create_output_dir_when_sensor_pair_is_incomplete(
+    monkeypatch,
+) -> None:
+    calls = 0
+
+    def fake_create_output_dir() -> Path:
+        nonlocal calls
+        calls += 1
+        raise AssertionError("_create_output_dir should not be called")
+
+    monkeypatch.setattr(pdr, "_create_output_dir", fake_create_output_dir)
+
+    try:
+        pdr.run(df_acc=pd.DataFrame(), df_gyro=None, plot=False)
+    except ValueError as exc:
+        assert "df_acc と df_gyro" in str(exc)
+    else:
+        raise AssertionError("incomplete sensor pair should fail")
+
+    assert calls == 0
+
+
 def test_run_returns_and_saves_timestamped_trajectory_without_steps(
     tmp_path, monkeypatch
 ) -> None:
@@ -273,6 +324,69 @@ def test_run_returns_and_saves_timestamped_trajectory_without_steps(
     assert df_trajectory.empty
     saved = pd.read_csv(tmp_path / "pdr" / "trajectory.csv")
     pd.testing.assert_frame_equal(saved, df_trajectory)
+
+
+def test_run_particle_filter_seed_makes_particles_deterministic(tmp_path) -> None:
+    floormap_path = tmp_path / "map.png"
+    plt.imsave(floormap_path, np.ones((20, 20), dtype=float), cmap="gray")
+    step_heading = pdr.StepHeading(
+        step_index=1,
+        timestamp_s=0.0,
+        gyro_heading=0.0,
+        accel_method1_heading=None,
+        accel_method2_heading=None,
+        selected_heading=0.0,
+        source="trajectory_motion",
+        confidence=0.0,
+        angle_diff_method1=None,
+        angle_diff_method2=None,
+        segment_start_index=None,
+        segment_end_index=None,
+        peak1_index=None,
+        peak2_index=None,
+        body_heading=0.0,
+        motion_heading=0.0,
+        movement_type="forward",
+        forward_displacement=1.0,
+        lateral_displacement=0.0,
+        motion_confidence=1.0,
+        motion_reject_reason=None,
+        trajectory_movement_type="forward",
+    )
+
+    first = run_particle_filter(
+        np.array([0]),
+        pd.DataFrame({"low_angle": [0.0]}),
+        pd.DataFrame({"h_y": [0.0], "h_z": [0.0]}),
+        gx_mean=0.0,
+        gz_mean=9.8,
+        floormap_path=floormap_path,
+        origin_px=(5, 5),
+        scale=1.0,
+        n_particles=12,
+        prepared_step_headings=[step_heading],
+        prepared_step_lengths=[1.0],
+        prepared_step_times=[0.0],
+        seed=123,
+    )
+    second = run_particle_filter(
+        np.array([0]),
+        pd.DataFrame({"low_angle": [0.0]}),
+        pd.DataFrame({"h_y": [0.0], "h_z": [0.0]}),
+        gx_mean=0.0,
+        gz_mean=9.8,
+        floormap_path=floormap_path,
+        origin_px=(5, 5),
+        scale=1.0,
+        n_particles=12,
+        prepared_step_headings=[step_heading],
+        prepared_step_lengths=[1.0],
+        prepared_step_times=[0.0],
+        seed=123,
+    )
+
+    np.testing.assert_allclose(np.asarray(first[0]), np.asarray(second[0]))
+    np.testing.assert_allclose(first[3], second[3])
 
 
 def test_prepare_pdr_steps_returns_shared_step_result_without_steps() -> None:
