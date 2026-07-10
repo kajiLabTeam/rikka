@@ -211,6 +211,32 @@ UV_CACHE_DIR=.uv-cache uv run rikka run \
 | `pf_trajectory.png` | PF の平均軌跡 |
 | `particle_filter.mp4` / `.gif` | パーティクル分布アニメーション |
 
+## コード構成
+
+PDR 本体は `src/rikka/analyze/pdr/` パッケージに分割されています。
+`rikka.analyze.pdr` からの既存 import は互換 facade として維持しています。
+
+| ファイル | 役割 |
+|---|---|
+| `pdr/__init__.py` | 互換 facade。既存の `from rikka.analyze.pdr import run` などを維持 |
+| `pdr/common.py` | 共通定数、角度処理、モード検証、パラメータ検証 |
+| `pdr/models.py` | `StepHeading`、`StepMotion`、`PreparedPdrSteps` などの共有データ型 |
+| `pdr/sensors.py` | CSV 読み込み、列名正規化、加速度・ジャイロの前処理 |
+| `pdr/gyro_bias.py` | ジャイロバイアス推定 |
+| `pdr/step_detection.py` | ステップピーク・接地区間の検出 |
+| `pdr/step_length.py` | Weinberg / forward 系の歩幅推定 |
+| `pdr/heading.py` | ジャイロ・加速度・水平加速度からのステップ方位候補推定 |
+| `pdr/sidestep.py` | 横歩き判定、クラスタ平滑化、軌跡用方位の安定化 |
+| `pdr/trajectory.py` | 決定論的 PDR 軌跡生成と `prepare_pdr_steps()` |
+| `pdr/outputs.py` | CSV 出力用 DataFrame 生成 |
+| `pdr/plotting.py` | 通常 PDR の軌跡描画 |
+| `pdr/pipeline.py` | `run()` の実行 orchestration |
+| `pdr/particle_api.py` | particle filter が利用する PDR API の bridge |
+
+`src/rikka/analyze/particle_filter.py` は、`prepare_pdr_steps()` で作った
+決定論的なステップ方位・歩幅・時刻を受け取り、フロアマップ制約で軌跡を補正します。
+PDR の内部 helper を直接参照せず、`pdr/particle_api.py` 経由で必要な API だけを使います。
+
 ## Python から使う
 
 ```python

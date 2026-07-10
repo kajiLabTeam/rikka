@@ -8,6 +8,7 @@
 - コードコメントを書く場合、説明文は日本語で書いてください。
 - 既存の未コミット変更はユーザーの作業として扱い、明示的な依頼なしに戻さないでください。
 - `input/` には実験データ、`output/` には実行結果が入ります。不要な大容量ファイルや生成物をコミットしないでください。
+- AI エージェントが検証のために生成した `output/` 配下の実行結果は、検証が終わったら削除してください。
 - わからないこと，疑問に思ったことがあれば実行する前にニュアンスを整理して聞いて
 
 ## プロジェクト概要
@@ -24,10 +25,26 @@
 
 - `src/rikka/__init__.py`: Click ベースの CLI 定義。`run`、`pdr`、`particle`、`sensor` コマンドを提供します。
 - `src/rikka/config.py`: 入力データ、フロアマップ、歩幅推定、パーティクルフィルタの既定値を定義します。
-- `src/rikka/analyze/pdr.py`: センサーデータ読み込み、前処理、ステップ検出、歩幅推定、軌跡推定、CSV/画像出力の中心処理です。
+- `src/rikka/analyze/pdr/`: 通常 PDR の処理を分割したパッケージです。`rikka.analyze.pdr` は互換 facade として維持されています。
+  - `common.py`: 共通定数、角度処理、モード検証、パラメータ検証を担当します。
+  - `models.py`: `StepHeading`、`StepMotion`、`PreparedPdrSteps` などの共有データ型を定義します。
+  - `sensors.py`: センサーデータ読み込み、列名正規化、加速度・ジャイロ前処理を担当します。
+  - `gyro_bias.py`: ジャイロバイアス推定を担当します。
+  - `step_detection.py`: ステップピーク・接地区間の検出を担当します。
+  - `step_length.py`: Weinberg / forward 系の歩幅推定を担当します。
+  - `heading.py`: ジャイロ・加速度・水平加速度からステップ方位候補を推定します。
+  - `sidestep.py`: 横歩き判定、クラスタ平滑化、軌跡用方位の安定化を担当します。
+  - `trajectory.py`: 決定論的 PDR 軌跡生成と `prepare_pdr_steps()` を担当します。
+  - `outputs.py`: CSV 出力用 DataFrame の生成を担当します。
+  - `plotting.py`: 通常 PDR の軌跡描画を担当します。
+  - `pipeline.py`: `run()` の実行 orchestration を担当します。
+  - `particle_api.py`: particle filter が利用する PDR API の bridge です。
 - `src/rikka/analyze/particle_filter.py`: パーティクルフィルタとフロアマップ上のマップマッチング、アニメーション出力を扱います。
 - `src/rikka/analyze/sensor_plot.py`: センサー波形と歩幅グラフの可視化を担当します。
+- `src/rikka/matplotlib_config.py`: Matplotlib のキャッシュ先を writable な一時ディレクトリへ設定します。
 - `src/rikka/ping.py`: 接続確認用の `ping()` を提供します。
+- `scripts/`: AI エージェントが調査・検証に使う補助スクリプトを置きます。通常 CLI やライブラリ API ではありません。
+  - `agent_verify_heading_fix_comparison.py`: heading / sidestep 補正の比較画像を生成する診断スクリプトです。
 - `input/`: サンプル・実験用センサーデータとフロアマップ画像を置く場所です。
 - `output/`: `rikka run` / `rikka particle` の実行結果がタイムスタンプ付きで出力されます。
 
@@ -156,6 +173,10 @@ CI は GitHub Actions で `uv sync --all-groups`、`pre-commit run --all-files`�
 - `pyproject.toml` の Ruff 設定は行長 88、ダブルクォート、スペースインデントです。
 - Mypy は strict 設定ですが、`disallow_untyped_defs = false` です。既存コードの型付け方針に合わせてください。
 - `config.py` の既定値は CLI のデフォルトにも使われます。設定変更は CLI 挙動にも影響します。
+- `pdr.run()` は `pdr/pipeline.py` が実体です。`pdr/__init__.py` は互換 facade なので、外部互換を壊さないよう既存 import を維持してください。
 - `pdr.run()` は `df_acc` と `df_gyro` を両方渡すか、両方省略する必要があります。片方だけ渡すと `ValueError` になります。
+- 通常 PDR と particle filter で共有するステップ情報は `prepare_pdr_steps()` が作ります。particle 側で同じ heading / step length 推定を重複実装しないでください。
+- `particle_filter.py` から PDR 側の内部処理を使う場合は、`pdr/particle_api.py` に bridge を追加してから利用してください。`pdr/__init__.py` の private re-export へ直接依存しないでください。
+- `scripts/agent_*.py` はエージェント検証用です。恒常的な機能として扱わず、必要な検証目的・入力データ・出力先が分かる名前と docstring を保ってください。
 - プロット処理は `plt.show()` を呼びます。CI やバッチ確認では `--no-plot` または `plot=False` を使ってください。
 - `particle` は ffmpeg がない場合、GIF 出力へフォールバックします。

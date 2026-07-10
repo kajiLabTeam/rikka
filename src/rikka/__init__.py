@@ -15,7 +15,10 @@ from .config import (
     STEP_DETECTION_METHOD,
     USER_HEIGHT_M,
 )
+from .matplotlib_config import configure_matplotlib_cache
 from .ping import ping as ping
+
+configure_matplotlib_cache()
 
 _DATA_DIR_DEFAULT = DATA_DIR
 _FLOORMAP_DEFAULT = FLOORMAP_PATH

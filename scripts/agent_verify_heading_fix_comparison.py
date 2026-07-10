@@ -1,9 +1,11 @@
-"""Ryuki 系データの方位ガード比較プロットを生成する診断スクリプト。"""
+"""エージェント検証用: Ryuki 系データの方位ガード比較プロットを生成する。"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+
+import rikka as rikka  # isort: skip
 
 import matplotlib.pyplot as plt
 import numpy as np
