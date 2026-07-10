@@ -95,6 +95,64 @@ UV_CACHE_DIR=.uv-cache uv run rikka particle --no-plot --save-animation
 UV_CACHE_DIR=.uv-cache uv run rikka sensor
 ```
 
+## データフロー
+
+`run` / `pdr` / `particle` は、同じ CSV 読み込みと PDR ステップ準備を通ります。
+通常 PDR はそのステップ列をそのまま軌跡へ積み上げ、particle filter は同じステップ列を
+フロアマップ制約で補正してから画像やアニメーションへ出力します。
+
+```mermaid
+flowchart TD
+    input_dir["input/<data_dir>/"] --> acc_csv["Accelerometer.csv"]
+    input_dir --> gyro_csv["Gyroscope.csv"]
+    floormap["input/Floormap_building14_5floor.png"] --> plot_pdr
+    floormap --> pf_map
+
+    acc_csv --> load["load_sensor_data()\n列名を t,x,y,z に正規化"]
+    gyro_csv --> load
+    load --> preprocess["process_sensor_data()\n重力推定 / 線形加速度 / 水平加速度 / gyro bias / low_angle"]
+
+    preprocess --> step_detect["detect_step_result()\n歩行ステップのピーク・区間を検出"]
+    preprocess --> heading["resolve_step_heading()\nbody_heading / motion_heading / movement_type を推定"]
+    step_detect --> heading
+    heading --> sidestep["sidestep smoothing / heading stabilize\n横歩き判定を軌跡用 movement_type に整理"]
+    sidestep --> step_length["estimate_step_length()\nWeinberg などで歩幅を推定"]
+    step_length --> prepared["prepare_pdr_steps()\ntrajectory候補 / step_lengths / t_at_steps / step_headings"]
+
+    prepared --> pdr_branch{"コマンド"}
+    pdr_branch -->|rikka run / pdr| det_traj["通常 PDR\nstep_length × selected_heading を積み上げ"]
+    pdr_branch -->|rikka particle| pf["run_particle_filter()\n粒子をステップごとに予測・リサンプリング"]
+
+    pf_map["フロアマップ輝度\n通路/壁判定"] --> pf
+    pf --> pf_snap["平均軌跡を歩行可能画素へ補正"]
+
+    det_traj --> csv_common["CSV 出力\ntrajectory.csv / step_lengths.csv / step_headings.csv / gyro_bias.csv"]
+    det_traj --> plot_pdr["plot_trajectory()\ntrajectory.png"]
+    det_traj --> step_plots["plot_step_lengths() / plot_step_vectors()\nstep_lengths.png / step_vectors/step_*.png"]
+
+    pf_snap --> csv_common
+    pf_snap --> plot_pf["plot_particle_filter_trajectory()\npf_trajectory.png"]
+    pf --> anim["save_particle_animation()\nparticle_filter.mp4 または .gif"]
+
+    csv_common --> output_dir["output/<timestamp>/"]
+    plot_pdr --> output_dir
+    step_plots --> output_dir
+    plot_pf --> output_dir
+    anim --> output_dir
+```
+
+センサー波形だけを確認する `sensor` コマンドは、軌跡推定までは進まず、
+前処理とステップ検出結果を入力フォルダ内の画像へ保存します。
+
+```mermaid
+flowchart LR
+    input["input/<data_dir>/\nAccelerometer.csv / Gyroscope.csv"] --> load["load_sensor_data()"]
+    load --> preprocess["process_sensor_data()"]
+    preprocess --> detect["detect_step_result()"]
+    detect --> sensor_plot["plot_sensor_data()\nsensor_plot.png"]
+    sensor_plot --> input
+```
+
 ## 標準設定
 
 `uv run rikka run` の現在の主要な既定値です。
