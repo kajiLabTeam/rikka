@@ -28,28 +28,28 @@ from ..config import (
     STEP_LENGTH_METHOD,
     WEINBERG_K,
 )
-from .pdr import (
+from .pdr.particle_api import (
     StepHeading,
     StepSegment,
-    _compute_pixel_coords,
-    _estimate_device_orientation_mode,
-    _estimate_initial_forward_angle,
-    _plot_heading_overlay,
-    _resolve_motion_heading_correction,
-    _smooth_step_headings,
-    _stabilize_trajectory_headings,
-    _step_output_time,
-    _validate_forward_heading_source,
-    _validate_motion_heading_correction,
-    _validate_non_negative_parameter,
-    _validate_positive_parameter,
-    _validate_sidestep_heading_source,
-    _validate_sidestep_smoothing,
-    _validate_sidestep_suspect_mode,
+    compute_pixel_coords,
+    estimate_device_orientation_mode,
+    estimate_initial_forward_angle,
     estimate_step_length,
     estimate_step_length_forward,
     estimate_step_motion,
+    plot_heading_overlay,
+    resolve_motion_heading_correction,
     resolve_step_heading,
+    smooth_step_headings,
+    stabilize_trajectory_headings,
+    step_output_time,
+    validate_forward_heading_source,
+    validate_motion_heading_correction,
+    validate_non_negative_parameter,
+    validate_positive_parameter,
+    validate_sidestep_heading_source,
+    validate_sidestep_smoothing,
+    validate_sidestep_suspect_mode,
 )
 
 
@@ -113,7 +113,7 @@ def _snap_trajectory_to_walkable_pixels(
 
     map_h, map_w = walkable.shape
     points = np.asarray(trajectory, dtype=float)
-    px_f, py_f = _compute_pixel_coords(
+    px_f, py_f = compute_pixel_coords(
         points[:, 0], points[:, 1], gx_mean, gz_mean, origin_px, scale
     )
     pxi = np.round(px_f).astype(int)
@@ -240,25 +240,25 @@ def run_particle_filter(
             全ステップのパーティクル位置 shape=(T, N, 2),
             各ステップの方位候補と採用結果)
     """
-    sidestep_lateral_ratio = _validate_positive_parameter(
+    sidestep_lateral_ratio = validate_positive_parameter(
         "sidestep_lateral_ratio",
         sidestep_lateral_ratio,
     )
-    sidestep_min_lateral_displacement = _validate_non_negative_parameter(
+    sidestep_min_lateral_displacement = validate_non_negative_parameter(
         "sidestep_min_lateral_displacement",
         sidestep_min_lateral_displacement,
     )
-    selected_motion_heading_correction = _validate_motion_heading_correction(
+    selected_motion_heading_correction = validate_motion_heading_correction(
         motion_heading_correction
     )
-    selected_sidestep_smoothing = _validate_sidestep_smoothing(sidestep_smoothing)
-    selected_forward_heading_source = _validate_forward_heading_source(
+    selected_sidestep_smoothing = validate_sidestep_smoothing(sidestep_smoothing)
+    selected_forward_heading_source = validate_forward_heading_source(
         forward_heading_source
     )
-    selected_sidestep_heading_source = _validate_sidestep_heading_source(
+    selected_sidestep_heading_source = validate_sidestep_heading_source(
         sidestep_heading_source
     )
-    selected_sidestep_suspect_mode = _validate_sidestep_suspect_mode(
+    selected_sidestep_suspect_mode = validate_sidestep_suspect_mode(
         sidestep_suspect_mode
     )
     rng = np.random.default_rng()
@@ -293,14 +293,14 @@ def run_particle_filter(
             "prepared_step_times はすべて同時に指定してください"
         )
     if not using_prepared_steps:
-        device_orientation_mode = _estimate_device_orientation_mode(
+        device_orientation_mode = estimate_device_orientation_mode(
             df_acc,
             df_gyro,
             peaks,
             initial_direction,
             step_segments=step_segments,
         )
-        motion_heading_correction_rad = _resolve_motion_heading_correction(
+        motion_heading_correction_rad = resolve_motion_heading_correction(
             df_acc,
             df_gyro,
             peaks,
@@ -311,7 +311,7 @@ def run_particle_filter(
         )
 
         phi_0 = (
-            _estimate_initial_forward_angle(df_acc, df_gyro, peaks)
+            estimate_initial_forward_angle(df_acc, df_gyro, peaks)
             if STEP_LENGTH_METHOD == "forward"
             else 0.0
         )
@@ -347,15 +347,15 @@ def run_particle_filter(
             raw_step_headings.append(step_heading)
             raw_step_lengths.append(sl_det)
             raw_step_times.append(
-                _step_output_time(df_acc, peaks, i, STEP_LENGTH_METHOD)
+                step_output_time(df_acc, peaks, i, STEP_LENGTH_METHOD)
             )
 
-        smoothed_step_headings = _smooth_step_headings(
+        smoothed_step_headings = smooth_step_headings(
             raw_step_headings,
             selected_sidestep_smoothing,
             selected_sidestep_suspect_mode,
         )
-        stabilized_step_headings = _stabilize_trajectory_headings(
+        stabilized_step_headings = stabilize_trajectory_headings(
             smoothed_step_headings,
             selected_forward_heading_source,
             selected_sidestep_heading_source,
@@ -434,7 +434,7 @@ def run_particle_filter(
             """
 
             def _brightness(arr: np.ndarray) -> np.ndarray:
-                px_f, py_f = _compute_pixel_coords(
+                px_f, py_f = compute_pixel_coords(
                     arr[:, 0], arr[:, 1], gx_mean, gz_mean, origin_px, scale
                 )
                 pxi = np.round(px_f).astype(int)
@@ -532,7 +532,7 @@ def plot_particle_filter_trajectory(
         output_dir: 出力ディレクトリ（指定時に PNG 保存）
     """
     df = pd.DataFrame(trajectory, columns=["x", "y"])
-    px, py = _compute_pixel_coords(
+    px, py = compute_pixel_coords(
         df["x"].to_numpy(), df["y"].to_numpy(), gx_mean, gz_mean, origin_px, scale
     )
 
@@ -551,7 +551,7 @@ def plot_particle_filter_trajectory(
     sc = ax.scatter(px, py, c=np.arange(n), cmap=cmap, norm=norm, s=20, zorder=3)
     fig.colorbar(sc, ax=ax, label="Step")
     ax.plot(px[0], py[0], "go", markersize=10, label="Start", zorder=4)
-    _plot_heading_overlay(
+    plot_heading_overlay(
         ax,
         trajectory,
         step_headings,
@@ -605,7 +605,7 @@ def save_particle_animation(
         ax.imshow(map_img)
 
         # 全パーティクルを半透明グレーで描画
-        px_p, py_p = _compute_pixel_coords(
+        px_p, py_p = compute_pixel_coords(
             all_particles[frame, :, 0],
             all_particles[frame, :, 1],
             gx_mean,
@@ -617,7 +617,7 @@ def save_particle_animation(
 
         # ステップ 0 〜 現在の平均軌跡を青線で描画
         if frame > 0:
-            px_m, py_m = _compute_pixel_coords(
+            px_m, py_m = compute_pixel_coords(
                 mean_arr[: frame + 1, 0],
                 mean_arr[: frame + 1, 1],
                 gx_mean,
@@ -628,7 +628,7 @@ def save_particle_animation(
             ax.plot(px_m, py_m, "b-", linewidth=1.5, zorder=3)
 
         # 現ステップの平均位置を赤点で描画
-        px_c, py_c = _compute_pixel_coords(
+        px_c, py_c = compute_pixel_coords(
             mean_arr[frame : frame + 1, 0],
             mean_arr[frame : frame + 1, 1],
             gx_mean,
