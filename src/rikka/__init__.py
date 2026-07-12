@@ -1,3 +1,20 @@
+"""rikka の CLI エントリポイント。
+
+役割:
+    Click で ``run`` / ``pdr`` / ``particle`` / ``sensor`` コマンドと共通オプションを
+    定義し、ライブラリ内部の実行関数へ利用者の指定を渡す。
+依存元:
+    ``config`` から CLI の既定値、``matplotlib_config`` からキャッシュ設定、
+    ``ping`` から接続確認関数を取得する。実行時には循環 import を避けるため、
+    ``analyze.pdr`` または ``analyze.sensor_plot`` を遅延 import する。
+利用先:
+    ``pyproject.toml`` の ``rikka = "rikka:main"`` から起動されるほか、
+    パッケージ利用者へ ``ping`` を公開する。
+処理フロー:
+    起動時に Matplotlib を設定し、Click が引数を検証した後、通常 PDR または
+    particle filter の pipeline、もしくはセンサー描画処理を呼び出す。
+"""
+
 from math import isfinite
 
 import click

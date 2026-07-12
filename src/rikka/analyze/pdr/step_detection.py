@@ -1,4 +1,17 @@
-"""PDR のステップ検出手法。"""
+"""PDR のステップ検出手法。
+
+役割:
+    線形加速度ノルムのピーク方式、または上下加速度の閾値方式で歩行イベントを検出し、
+    ピーク位置・1歩区間・診断値を ``StepDetectionResult`` にまとめる。
+依存元:
+    ``config`` から距離・高さ・区間長・閾値、``models`` から結果型を取得し、
+    NumPy、Pandas、SciPy のピーク検出を利用する。
+利用先:
+    ``trajectory.prepare_pdr_steps`` と ``sensor_plot`` がステップ列を作るために使い、
+    互換 facade から従来の ``detect_steps`` も公開される。
+処理フロー:
+    指定方式を検証し、候補イベントを抽出して近接重複や不正区間を除き、結果を返す。
+"""
 
 import numpy as np
 import pandas as pd
