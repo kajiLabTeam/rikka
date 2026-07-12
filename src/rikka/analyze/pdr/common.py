@@ -1,8 +1,15 @@
 """PDR 共通定数と検証ヘルパー。
 
-このモジュールはアルゴリズム本体を持たず、各 PDR 手法で共通利用する
-モード名・閾値・角度処理・入力値検証だけを集約する。ここに置くことで、
-heading / sidestep / trajectory / pipeline 間の循環 import を避ける。
+役割:
+    モード名、方位閾値、角度の正規化、数値・選択値の検証を一元管理する。
+依存元:
+    NumPy の有限値・角度計算だけを利用し、他の PDR モジュールには依存しない。
+利用先:
+    ``heading``、``sidestep``、``trajectory``、``pipeline``、``particle_api`` と
+    互換 facade が共通ルールとして使用する。
+処理フロー:
+    入力値を正規化または検証して返し、不正値は ``ValueError`` にする。
+    アルゴリズム本体から独立させることでモジュール間の循環 import を避ける。
 """
 
 import numpy as np

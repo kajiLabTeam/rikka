@@ -1,8 +1,17 @@
 """PDR の軌跡生成とステップ準備。
 
-センサー処理済み DataFrame とステップ検出結果から、歩ごとの heading / step length /
-timestamp を揃え、最終的な2次元軌跡へ積み上げる。通常 PDR と particle filter が
-同じ決定論的な歩行ステップ情報を共有できるよう、prepare_pdr_steps() もここに置く。
+役割:
+    センサーデータから歩ごとの方位、歩幅、時刻を揃え、通常 PDR の2次元軌跡と
+    particle filter でも共有する ``PreparedPdrSteps`` を生成する。
+依存元:
+    ``sensors``、``step_detection``、``step_length``、``heading``、``sidestep``、
+    ``time_utils`` の各処理と、``common`` の検証、``models`` の共有型を利用する。
+利用先:
+    ``pipeline.run`` が共通前処理として使用し、互換 facade が従来の軌跡推定関数を
+    外部へ公開する。
+処理フロー:
+    センサー前処理、ステップ検出、方位・歩幅候補生成、横歩き平滑化、方位安定化を
+    行い、各歩の移動ベクトルを原点から順に加算する。
 """
 
 import numpy as np

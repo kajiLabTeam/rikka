@@ -1,8 +1,16 @@
-"""Particle filter から利用する PDR 内部APIの公開 bridge。
+"""Particle filter から利用する PDR 内部 API の公開 bridge。
 
-particle_filter.py が pdr facade や private helper を直接 import すると、型解析や IDE で
-赤表示が出やすい。ここで particle filter に必要な関数だけを公開名へ付け替え、
-依存先を1か所にまとめる。
+役割:
+    particle filter が必要とする PDR 内部関数だけを安定した公開名へ付け替え、
+    通常 PDR と確率的 PDR の依存境界を1か所にまとめる。
+依存元:
+    ``common``、``heading``、``models``、``plotting``、``sidestep``、
+    ``step_length``、``time_utils`` から共有する検証・推定・描画 API を取得する。
+利用先:
+    ``analyze.particle_filter`` だけがこの bridge を import し、PDR の private helper や
+    互換 facade への直接依存を避ける。
+処理フロー:
+    独自計算は行わず、必要な関数・型を意味の明確な公開名として再 export する。
 """
 
 from .common import (

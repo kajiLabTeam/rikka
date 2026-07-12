@@ -1,4 +1,18 @@
-"""PDR 解析パッケージの互換 facade。"""
+"""PDR 解析パッケージの互換 facade。
+
+役割:
+    分割された PDR モジュールの型・関数・定数を従来の ``rikka.analyze.pdr``
+    名前空間へ再公開し、既存 import との互換性を保つ。
+依存元:
+    ``common``、``sensors``、``gyro_bias``、``step_detection``、``step_length``、
+    ``heading``、``sidestep``、``trajectory``、``outputs``、``plotting`` の API と
+    ``config`` の既定値を取得する。
+利用先:
+    CLI、``sensor_plot``、外部ライブラリ利用者、互換 API を参照するテストから使う。
+    particle filter はこの facade ではなく ``particle_api`` を境界として使用する。
+処理フロー:
+    アルゴリズムは実装せず各要素を再公開し、``run`` だけを ``pipeline.run`` へ委譲する。
+"""
 # ruff: noqa: F401
 
 from pathlib import Path

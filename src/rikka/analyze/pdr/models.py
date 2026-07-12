@@ -1,4 +1,17 @@
-"""PDR パイプラインで共有するデータ構造。"""
+"""PDR パイプラインで共有するデータ構造。
+
+役割:
+    ステップ区間、検出結果、方位候補、ジャイロ補正結果、確定移動量、前処理済み
+    PDR 一式を NamedTuple / dataclass として定義する。
+依存元:
+    ``config`` から ``PreparedPdrSteps`` の既定値を取得し、NumPy と Pandas の型を
+    配列・DataFrame フィールドに使用する。
+利用先:
+    ``pdr`` 配下のほぼ全モジュール、``particle_filter``、``sensor_plot`` が
+    モジュール間の受け渡し形式として使用する。
+処理フロー:
+    計算処理は持たず、各段階の入力・結果を明示的な不変データとして保持する。
+"""
 
 from dataclasses import dataclass
 from typing import NamedTuple

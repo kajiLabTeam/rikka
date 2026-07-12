@@ -1,8 +1,18 @@
 """PDR CLI パイプライン。
 
-CLI や外部呼び出しから見た PDR 実行の入口。センサー読み込み、共通ステップ準備、
-通常 PDR / particle filter の分岐、CSV・プロット出力をここでまとめる。
-アルゴリズム本体は各モジュールへ分離し、このファイルは orchestration に集中する。
+役割:
+    CLI やライブラリからの PDR 実行を統括し、通常軌跡と particle filter の分岐、
+    CSV 保存、グラフ生成までをまとめる。
+依存元:
+    ``config`` と ``common`` から既定値・検証、``sensors`` から読み込み、
+    ``trajectory`` から共通ステップ準備、``outputs`` と ``plotting`` から出力処理を
+    取得する。particle filter と sensor plot は必要時だけ遅延 import する。
+利用先:
+    ``pdr.__init__.run`` を経由して CLI の ``run`` / ``pdr`` / ``particle`` と
+    外部ライブラリ利用者から呼ばれる。
+処理フロー:
+    引数検証、センサー取得、``prepare_pdr_steps``、軌跡方式の実行、CSV 書き出し、
+    任意の静止画・ステップ診断図・アニメーション生成の順に処理する。
 """
 
 from pathlib import Path

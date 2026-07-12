@@ -5,8 +5,8 @@ PDR（Pedestrian Dead Reckoning）ライブラリです。
 
 現在の標準設定は、ジャイロを体の向き、水平加速度を横歩き判定用の
 移動特徴として使う `gyro_accel_motion` です。通常歩行の軌跡方位は
-`motion_heading` を使い、横歩き判定は記録として残しつつ、同方向にまとまった
-横歩きだけを軌跡へ反映します。
+`motion_heading` を使います。同方向にまとまった横歩きは確定横歩きとして、
+強い単発候補は横歩き疑いとして軌跡へ反映し、それ以外の単発判定は前進扱いにします。
 
 ## セットアップ
 
@@ -115,9 +115,11 @@ flowchart TD
     preprocess --> step_detect["detect_step_result()\n歩行ステップのピーク・区間を検出"]
     preprocess --> heading["resolve_step_heading()\nbody_heading / motion_heading / movement_type を推定"]
     step_detect --> heading
+    preprocess --> step_length["estimate_step_length()\nWeinberg などで歩幅候補を推定"]
+    step_detect --> step_length
     heading --> sidestep["sidestep smoothing / heading stabilize\n横歩き判定を軌跡用 movement_type に整理"]
-    sidestep --> step_length["estimate_step_length()\nWeinberg などで歩幅を推定"]
-    step_length --> prepared["prepare_pdr_steps()\ntrajectory候補 / step_lengths / t_at_steps / step_headings"]
+    step_length --> sidestep
+    sidestep --> prepared["prepare_pdr_steps()\ntrajectory候補 / step_lengths / t_at_steps / step_headings"]
 
     prepared --> pdr_branch{"コマンド"}
     pdr_branch -->|rikka run / pdr| det_traj["通常 PDR\nstep_length × selected_heading を積み上げ"]
@@ -171,7 +173,7 @@ flowchart LR
 | `USER_HEIGHT_M` | `1.68` | Weinberg 歩幅補正用の身長 |
 | `SIDESTEP_LATERAL_RATIO` | `1.2` | 横方向/前方向の比率がこの値以上で横歩き候補 |
 | `SIDESTEP_MIN_LATERAL_DISPLACEMENT_M` | `0.03` | 横歩き判定に必要な横方向変位 [m] |
-| `SIDESTEP_SMOOTHING_METHOD` | `clustered` | 5歩窓で同方向横歩きが2回以上ある場合だけ軌跡へ横歩きとして反映 |
+| `SIDESTEP_SMOOTHING_METHOD` | `clustered` | 同方向 evidence の連続クラスタを評価し、確定横歩きまたは横歩き疑いとして軌跡へ反映 |
 | `SIDESTEP_LENGTH_SCALE` | `1` | 横歩き歩幅の倍率 |
 | `TURNING_LENGTH_SCALE` | `0.3` | 旋回中歩幅の倍率 |
 
@@ -202,9 +204,15 @@ flowchart LR
 | `lateral_displacement` | 横方向への変位特徴 |
 | `motion_heading_correction_deg` | 水平加速度方向の補正角 |
 
-標準設定では、単発の横歩き判定は `movement_type` には残りますが、
-`trajectory_movement_type="forward"` として軌跡には前進扱いで反映されます。
-一方、5歩窓で同方向の横歩きが2回以上ある場合は、横歩き区間として軌跡へ反映されます。
+標準設定の `clustered` では、同方向の横歩き evidence が連続する区間をクラスタとして
+評価します。条件を満たす1歩の隙間は最大1つまでクラスタに含め、横歩き evidence が
+2歩以上かつクラスタ全体の横方向変位が閾値を満たす場合、確定横歩きとして軌跡へ
+反映します。
+
+確定しなかった強い単発 evidence は、標準の `--sidestep-suspect-mode motion` では
+`trajectory_movement_type="sidestep_suspect_left/right"` として `motion_heading` を
+軌跡へ反映します。それ以外の単発判定は `trajectory_movement_type="forward"` として
+前進扱いにします。
 また、`forward` 判定ステップは水平加速度由来の `motion_heading` で軌跡へ積みます。
 ジャイロ由来の `body_heading` で積む場合は次を指定します。
 

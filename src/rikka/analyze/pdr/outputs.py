@@ -1,4 +1,16 @@
-"""PDR のCSV出力用データ整形。"""
+"""PDR の CSV 出力用データ整形。
+
+役割:
+    軌跡、歩幅ベクトル、ステップ区間、方位診断、ジャイロ補正結果を保存可能な
+    Pandas DataFrame に変換し、タイムスタンプ付き出力ディレクトリを作る。
+依存元:
+    ``models`` の各結果型と ``time_utils`` の時刻参照を利用し、NumPy、Pandas、
+    pathlib、datetime で列値と保存先を構成する。
+利用先:
+    ``pipeline.run`` が通常 PDR と particle filter の CSV を書き出す際に使用する。
+処理フロー:
+    解析結果の配列長と時刻を揃え、角度や分類値を出力列へ変換して DataFrame を返す。
+"""
 
 from datetime import datetime
 from pathlib import Path
