@@ -1,4 +1,18 @@
-"""パーティクルフィルタによる確率的歩行軌跡推定モジュール"""
+"""パーティクルフィルタによる確率的歩行軌跡推定。
+
+役割:
+    PDR の歩行ステップへ確率的な方位・歩幅ノイズとフロアマップ制約を適用し、
+    マップマッチング済み軌跡、静止画、アニメーションを生成する。
+依存元:
+    ``config`` から既定値、``pdr.particle_api`` から方位・歩幅・横歩き判定・描画の
+    共有 API を取得し、NumPy、Pandas、SciPy、Matplotlib を数値処理と可視化に使う。
+利用先:
+    ``pdr.pipeline.run`` が particle モードで遅延 import し、CLI の ``particle``
+    コマンドおよび particle 有効時の ``run`` から使用する。
+処理フロー:
+    ステップ候補を粒子群へ反映し、壁との衝突で重み付け、系統リサンプリング、
+    祖先経路復元、歩行可能画素への補正を行って軌跡と可視化結果を返す。
+"""
 
 from pathlib import Path
 
@@ -16,23 +30,40 @@ from ..config import (
     FLOORMAP_ORIGIN_PX,
     FLOORMAP_PATH,
     FLOORMAP_SCALE,
+    FORWARD_HEADING_SOURCE,
     INITIAL_DIRECTION,
     PF_NUM_PARTICLES,
     PF_SIGMA_HEADING,
     PF_SIGMA_INIT_HEADING,
     PF_SIGMA_STEP_LENGTH_RATIO,
+    SIDESTEP_LATERAL_RATIO,
+    SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
+    SIDESTEP_SMOOTHING_METHOD,
     STEP_LENGTH_METHOD,
     WEINBERG_K,
 )
-from .pdr import (
-    _compute_pixel_coords,
-    _estimate_initial_forward_angle,
-    _sample_gyro_angle,
-    _step_mid_index,
-    _step_mid_time,
-    _step_output_time,
+from .pdr.particle_api import (
+    StepHeading,
+    StepSegment,
+    compute_pixel_coords,
+    estimate_device_orientation_mode,
+    estimate_initial_forward_angle,
     estimate_step_length,
     estimate_step_length_forward,
+    estimate_step_motion,
+    plot_heading_overlay,
+    resolve_motion_heading_correction,
+    resolve_step_heading,
+    smooth_step_headings,
+    stabilize_trajectory_headings,
+    step_output_time,
+    validate_forward_heading_source,
+    validate_motion_heading_correction,
+    validate_non_negative_parameter,
+    validate_positive_parameter,
+    validate_sidestep_heading_source,
+    validate_sidestep_smoothing,
+    validate_sidestep_suspect_mode,
 )
 
 
@@ -96,7 +127,7 @@ def _snap_trajectory_to_walkable_pixels(
 
     map_h, map_w = walkable.shape
     points = np.asarray(trajectory, dtype=float)
-    px_f, py_f = _compute_pixel_coords(
+    px_f, py_f = compute_pixel_coords(
         points[:, 0], points[:, 1], gx_mean, gz_mean, origin_px, scale
     )
     pxi = np.round(px_f).astype(int)
@@ -179,7 +210,20 @@ def run_particle_filter(
     sigma_heading: float = PF_SIGMA_HEADING,
     sigma_sl_ratio: float = PF_SIGMA_STEP_LENGTH_RATIO,
     weinberg_k: float = WEINBERG_K,
-) -> tuple[list[list[float]], list[float], list[float], np.ndarray]:
+    heading_method: str = "gyro",
+    step_segments: tuple[StepSegment, ...] = (),
+    sidestep_lateral_ratio: float = SIDESTEP_LATERAL_RATIO,
+    sidestep_min_lateral_displacement: float = SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
+    motion_heading_correction: str = "auto",
+    sidestep_smoothing: str = SIDESTEP_SMOOTHING_METHOD,
+    forward_heading_source: str = FORWARD_HEADING_SOURCE,
+    sidestep_heading_source: str = "motion",
+    sidestep_suspect_mode: str = "motion",
+    prepared_step_headings: list[StepHeading] | None = None,
+    prepared_step_lengths: list[float] | None = None,
+    prepared_step_times: list[float] | None = None,
+    seed: int | None = None,
+) -> tuple[list[list[float]], list[float], list[float], np.ndarray, list[StepHeading]]:
     """パーティクルフィルタでマップマッチング付き歩行軌跡を推定する。
 
     Args:
@@ -197,13 +241,43 @@ def run_particle_filter(
         sigma_heading: ステップごとの方位角ノイズ [rad]
         sigma_sl_ratio: ステップ長ノイズの比率
         weinberg_k: Weinbergモデルのスケール係数
+        heading_method: 方位推定手法
+        step_segments: 論文寄せステップ検出の1歩区間
+        sidestep_lateral_ratio: 横歩き判定に使う横方向/前方向の最小比率
+        sidestep_min_lateral_displacement: 横歩き判定に必要な横方向変位の最小値
+        motion_heading_correction: 水平加速度移動方向の固定ずれ補正モード
+        sidestep_smoothing: 横歩き判定の平滑化モード
+        forward_heading_source: forward 判定ステップの軌跡方位ソース
+        seed: 乱数 seed。``None`` のときは非決定的に実行する。
 
     Returns:
         tuple: (加重平均軌跡の座標リスト, 各ステップの決定論的歩幅リスト,
             各ステップのピーク時刻リスト [s],
-            全ステップのパーティクル位置 shape=(T, N, 2))
+            全ステップのパーティクル位置 shape=(T, N, 2),
+            各ステップの方位候補と採用結果)
     """
-    rng = np.random.default_rng()
+    sidestep_lateral_ratio = validate_positive_parameter(
+        "sidestep_lateral_ratio",
+        sidestep_lateral_ratio,
+    )
+    sidestep_min_lateral_displacement = validate_non_negative_parameter(
+        "sidestep_min_lateral_displacement",
+        sidestep_min_lateral_displacement,
+    )
+    selected_motion_heading_correction = validate_motion_heading_correction(
+        motion_heading_correction
+    )
+    selected_sidestep_smoothing = validate_sidestep_smoothing(sidestep_smoothing)
+    selected_forward_heading_source = validate_forward_heading_source(
+        forward_heading_source
+    )
+    selected_sidestep_heading_source = validate_sidestep_heading_source(
+        sidestep_heading_source
+    )
+    selected_sidestep_suspect_mode = validate_sidestep_suspect_mode(
+        sidestep_suspect_mode
+    )
+    rng = np.random.default_rng(seed)
 
     # フロアマップをグレースケールで読み込み
     map_gray = _normalize_floormap_gray(plt.imread(Path(floormap_path)))
@@ -219,36 +293,140 @@ def run_particle_filter(
     position_history: list[np.ndarray] = [particles.copy()]
     resample_history: list[np.ndarray] = []
     all_particles_list: list[np.ndarray] = [particles.copy()]  # ステップ0（原点）
-
-    direction_offset = float(np.deg2rad(initial_direction))
-
-    phi_0 = (
-        _estimate_initial_forward_angle(df_acc, df_gyro, peaks)
-        if STEP_LENGTH_METHOD == "forward"
-        else 0.0
+    step_headings: list[StepHeading] = []
+    using_prepared_steps = (
+        prepared_step_headings is not None
+        and prepared_step_lengths is not None
+        and prepared_step_times is not None
     )
-
-    for i, p in enumerate(peaks):
-        if p >= len(df_acc):
-            continue
-        if STEP_LENGTH_METHOD == "forward" and i + 1 >= len(peaks):
-            continue
-
-        # estimate_trajectory と同一のサンプリングインデックス計算
-        mid_idx = _step_mid_index(peaks, i)
-        angle_at_mid = _sample_gyro_angle(
-            df_gyro,
-            sample_index=mid_idx,
-            sample_time=_step_mid_time(df_acc, peaks, i),
+    if not using_prepared_steps and (
+        prepared_step_headings is not None
+        or prepared_step_lengths is not None
+        or prepared_step_times is not None
+    ):
+        raise ValueError(
+            "prepared_step_headings, prepared_step_lengths, "
+            "prepared_step_times はすべて同時に指定してください"
         )
-        if angle_at_mid is None:
-            continue
-        angle_det = angle_at_mid + direction_offset
+    if not using_prepared_steps:
+        device_orientation_mode = estimate_device_orientation_mode(
+            df_acc,
+            df_gyro,
+            peaks,
+            initial_direction,
+            step_segments=step_segments,
+        )
+        motion_heading_correction_rad = resolve_motion_heading_correction(
+            df_acc,
+            df_gyro,
+            peaks,
+            initial_direction,
+            step_segments,
+            selected_motion_heading_correction,
+            device_orientation_mode,
+        )
 
-        if STEP_LENGTH_METHOD == "forward":
-            sl_det = estimate_step_length_forward(df_acc, df_gyro, peaks, i, phi_0)
+        phi_0 = (
+            estimate_initial_forward_angle(df_acc, df_gyro, peaks)
+            if STEP_LENGTH_METHOD == "forward"
+            else 0.0
+        )
+        raw_step_headings: list[StepHeading] = []
+        raw_step_lengths: list[float] = []
+        raw_step_times: list[float] = []
+        for i, p in enumerate(peaks):
+            if p >= len(df_acc):
+                continue
+            if STEP_LENGTH_METHOD == "forward" and i + 1 >= len(peaks):
+                continue
+
+            step_heading = resolve_step_heading(
+                peaks,
+                df_gyro,
+                df_acc,
+                i,
+                initial_direction=initial_direction,
+                heading_method=heading_method,
+                step_segments=step_segments,
+                motion_heading_correction=motion_heading_correction_rad,
+                sidestep_lateral_ratio=sidestep_lateral_ratio,
+                sidestep_min_lateral_displacement=sidestep_min_lateral_displacement,
+                device_orientation_mode=device_orientation_mode,
+            )
+            if step_heading.selected_heading is None:
+                continue
+
+            if STEP_LENGTH_METHOD == "forward":
+                sl_det = estimate_step_length_forward(df_acc, df_gyro, peaks, i, phi_0)
+            else:
+                sl_det = estimate_step_length(df_acc, int(p), k=weinberg_k)
+            raw_step_headings.append(step_heading)
+            raw_step_lengths.append(sl_det)
+            raw_step_times.append(
+                step_output_time(df_acc, peaks, i, STEP_LENGTH_METHOD)
+            )
+
+        smoothed_step_headings = smooth_step_headings(
+            raw_step_headings,
+            selected_sidestep_smoothing,
+            selected_sidestep_suspect_mode,
+        )
+        stabilized_step_headings = stabilize_trajectory_headings(
+            smoothed_step_headings,
+            selected_forward_heading_source,
+            selected_sidestep_heading_source,
+        )
+    else:
+        assert prepared_step_headings is not None
+        assert prepared_step_lengths is not None
+        assert prepared_step_times is not None
+        if not (
+            len(prepared_step_headings)
+            == len(prepared_step_lengths)
+            == len(prepared_step_times)
+        ):
+            raise ValueError(
+                "prepared_step_headings, prepared_step_lengths, "
+                "prepared_step_times の長さが一致しません"
+            )
+        stabilized_step_headings = prepared_step_headings
+        raw_step_lengths = prepared_step_lengths
+        raw_step_times = prepared_step_times
+
+    previous_heading: float | None = None
+
+    for step_heading, sl_det, step_time in zip(
+        stabilized_step_headings,
+        raw_step_lengths,
+        raw_step_times,
+        strict=True,
+    ):
+        if using_prepared_steps:
+            if step_heading.selected_heading is None:
+                continue
+            angle_det = step_heading.selected_heading
         else:
-            sl_det = estimate_step_length(df_acc, int(p), k=weinberg_k)
+            step_motion = estimate_step_motion(
+                step_heading,
+                sl_det,
+                previous_heading,
+                selected_forward_heading_source,
+                selected_sidestep_heading_source,
+                selected_sidestep_suspect_mode,
+            )
+            if step_motion is None:
+                continue
+            angle_det = step_motion.heading
+            sl_det = step_motion.length
+            step_heading = step_heading._replace(
+                selected_heading=step_motion.heading,
+                source=step_heading.source
+                if step_heading.source.startswith("trajectory_")
+                else "state_motion",
+                step_length_scale=step_motion.length_scale,
+                trajectory_movement_type=step_motion.movement_type,
+                forward_heading_source=selected_forward_heading_source,
+            )
 
         # 予測前の状態を保存（全壁レスキュー用）
         particles_before = particles.copy()
@@ -272,7 +450,7 @@ def run_particle_filter(
             """
 
             def _brightness(arr: np.ndarray) -> np.ndarray:
-                px_f, py_f = _compute_pixel_coords(
+                px_f, py_f = compute_pixel_coords(
                     arr[:, 0], arr[:, 1], gx_mean, gz_mean, origin_px, scale
                 )
                 pxi = np.round(px_f).astype(int)
@@ -322,7 +500,9 @@ def run_particle_filter(
 
         position_history.append(particles.copy())
         step_lengths.append(sl_det)
-        t_at_steps.append(_step_output_time(df_acc, peaks, i, STEP_LENGTH_METHOD))
+        t_at_steps.append(step_time)
+        step_headings.append(step_heading)
+        previous_heading = angle_det
 
         # 系統リサンプリング
         indices = _systematic_resample(weights, rng)
@@ -343,7 +523,7 @@ def run_particle_filter(
         origin_px,
         scale,
     )
-    return mean_trajectory, step_lengths, t_at_steps, all_particles
+    return mean_trajectory, step_lengths, t_at_steps, all_particles, step_headings
 
 
 def plot_particle_filter_trajectory(
@@ -354,6 +534,7 @@ def plot_particle_filter_trajectory(
     origin_px: tuple[int, int] = FLOORMAP_ORIGIN_PX,
     scale: float = FLOORMAP_SCALE,
     output_dir: Path | None = None,
+    step_headings: list[StepHeading] | None = None,
 ) -> None:
     """PF の加重平均軌跡をフロアマップ上にプロットする。
 
@@ -367,7 +548,7 @@ def plot_particle_filter_trajectory(
         output_dir: 出力ディレクトリ（指定時に PNG 保存）
     """
     df = pd.DataFrame(trajectory, columns=["x", "y"])
-    px, py = _compute_pixel_coords(
+    px, py = compute_pixel_coords(
         df["x"].to_numpy(), df["y"].to_numpy(), gx_mean, gz_mean, origin_px, scale
     )
 
@@ -386,6 +567,15 @@ def plot_particle_filter_trajectory(
     sc = ax.scatter(px, py, c=np.arange(n), cmap=cmap, norm=norm, s=20, zorder=3)
     fig.colorbar(sc, ax=ax, label="Step")
     ax.plot(px[0], py[0], "go", markersize=10, label="Start", zorder=4)
+    plot_heading_overlay(
+        ax,
+        trajectory,
+        step_headings,
+        gx_mean,
+        gz_mean,
+        origin_px,
+        scale,
+    )
 
     ax.set_title("Particle Filter Trajectory on Floormap")
     ax.legend()
@@ -431,7 +621,7 @@ def save_particle_animation(
         ax.imshow(map_img)
 
         # 全パーティクルを半透明グレーで描画
-        px_p, py_p = _compute_pixel_coords(
+        px_p, py_p = compute_pixel_coords(
             all_particles[frame, :, 0],
             all_particles[frame, :, 1],
             gx_mean,
@@ -443,7 +633,7 @@ def save_particle_animation(
 
         # ステップ 0 〜 現在の平均軌跡を青線で描画
         if frame > 0:
-            px_m, py_m = _compute_pixel_coords(
+            px_m, py_m = compute_pixel_coords(
                 mean_arr[: frame + 1, 0],
                 mean_arr[: frame + 1, 1],
                 gx_mean,
@@ -454,7 +644,7 @@ def save_particle_animation(
             ax.plot(px_m, py_m, "b-", linewidth=1.5, zorder=3)
 
         # 現ステップの平均位置を赤点で描画
-        px_c, py_c = _compute_pixel_coords(
+        px_c, py_c = compute_pixel_coords(
             mean_arr[frame : frame + 1, 0],
             mean_arr[frame : frame + 1, 1],
             gx_mean,
