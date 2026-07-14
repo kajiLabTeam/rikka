@@ -17,6 +17,13 @@
 	"mypy-type-checker.reportingScope": "workspace",
 	"python.analysis.diagnosticMode": "workspace",
 	"python.languageServer": "Pylance",
+	"gitlens.ai.generateCommitMessage.customInstructions": "コミットメッセージは日本語で出力してください。Conventional Commits 形式を使い、type は英語のまま、subject と本文は自然な日本語にしてください。例: fix: README の説明矛盾を修正",
+	"gitlens.ai.generateCommits.customInstructions": "コミットメッセージは日本語で出力してください。Conventional Commits 形式を使い、type は英語のまま、subject と本文は自然な日本語にしてください。例: fix: README の説明矛盾を修正",
+	"github.copilot.chat.commitMessageGeneration.instructions": [
+		{
+			"text": "コミットメッセージは日本語で出力してください。Conventional Commits 形式を使い、type は英語のまま、subject と本文は自然な日本語にしてください。例: fix: README の説明矛盾を修正"
+		}
+	],
 	"files.insertFinalNewline": true,
 	"files.trimTrailingWhitespace": true,
 	"files.trimFinalNewlines": true

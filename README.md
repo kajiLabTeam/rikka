@@ -1,8 +1,12 @@
 # rikka
 
-スマートフォンのセンサーデータ（加速度計・ジャイロスコープ）から歩行軌跡を推定する PDR（Pedestrian Dead Reckoning）ライブラリです。
+スマートフォンの加速度計・ジャイロスコープ CSV から歩行軌跡を推定する
+PDR（Pedestrian Dead Reckoning）ライブラリです。
 
----
+現在の標準設定は、ジャイロを体の向き、水平加速度を横歩き判定用の
+移動特徴として使う `gyro_accel_motion` です。通常歩行の軌跡方位は
+`motion_heading` を使います。同方向にまとまった横歩きは確定横歩きとして、
+強い単発候補は横歩き疑いとして軌跡へ反映し、それ以外の単発判定は前進扱いにします。
 
 ## セットアップ
 
@@ -10,124 +14,296 @@
 uv sync --all-groups
 ```
 
-MP4 アニメーション出力（`uv run rikka particle`）には ffmpeg が必要です。
+AI エージェントや sandbox 環境で `uv` のホームキャッシュ権限に引っかかる場合は、
+リポジトリ内キャッシュを使います。
+
+```sh
+UV_CACHE_DIR=.uv-cache uv run pytest
+```
+
+パーティクルフィルタの MP4 アニメーション出力には `ffmpeg` が必要です。
 
 ```sh
 brew install ffmpeg
 ```
 
----
+## 入力データ
 
-## 使い方
+`input/<データフォルダ>/` に phyphox 形式の CSV を置きます。
 
-### 入力データの配置
-
-`input/<データフォルダ>/` に以下の2ファイルを置きます（phyphox 形式の CSV）。
-
-```
+```text
 input/
 └── my_walk/
     ├── Accelerometer.csv
     └── Gyroscope.csv
 ```
 
-各 CSV の列構成は次のとおりです（phyphox アプリの出力形式）。
+対応する列名は次の通りです。
 
-| ファイル | 列 |
+| ファイル | 対応列 |
 |---|---|
-| `Accelerometer.csv` | `Time (s)`, `Acceleration x (m/s^2)`, `Acceleration y (m/s^2)`, `Acceleration z (m/s^2)` |
-| `Gyroscope.csv` | `Time (s)`, `Gyroscope x (rad/s)`, `Gyroscope y (rad/s)`, `Gyroscope z (rad/s)` |
+| `Accelerometer.csv` | `Time (s)`, `Acceleration x/y/z (m/s^2)` または `X/Y/Z (m/s^2)` |
+| `Gyroscope.csv` | `Time (s)`, `Gyroscope x/y/z (rad/s)` または `X/Y/Z (rad/s)` |
 
-列名が `X (m/s^2)` / `X (rad/s)` 形式の場合も自動で対応します。
-
-`src/rikka/config.py` の `DATA_DIR` を対象フォルダに変更します。
+現在の既定入力は次です。
 
 ```python
-DATA_DIR = "input/my_walk"
+DATA_DIR = "input/1turn_rightsidestep_3turn_leftsidestep5"
 ```
 
----
-
-### 実行コマンド
-
-#### 通常の PDR 軌跡推定
+別データを使う場合は、CLI の `-d` で指定できます。
 
 ```sh
-uv run rikka run [OPTIONS]
-
-# 例: フロアマップと起点を変更して実行
-uv run rikka run -f input/map.png --origin-px 1000 500 --no-plot
-
-# 例: 身長 1.78m として Weinberg 歩幅係数を補正して実行
-uv run rikka run --height-m 1.78 --no-plot
+UV_CACHE_DIR=.uv-cache uv run rikka run -d input/my_walk
 ```
 
-- 軌跡グラフ（`trajectory.png`）と歩幅グラフ（`step_lengths.png`）、CSV を `output/<timestamp>/` に保存します。
-- `trajectory.csv` は `timestamp_s,x,y` 形式です。`timestamp_s` は最初の移動点からの経過秒です。
+## 基本コマンド
 
-#### PDR 軌跡推定（run の別名）
+標準設定で通常 PDR を実行します。プロット表示と PNG/CSV 保存を行います。
 
 ```sh
-uv run rikka pdr [OPTIONS]
+UV_CACHE_DIR=.uv-cache uv run rikka run
 ```
 
-- `run` と同じ処理・オプションです。
-
-#### パーティクルフィルタ付き軌跡推定
+プロット表示を止めてバッチ確認する場合だけ `--no-plot` を付けます。
 
 ```sh
-uv run rikka particle
-
-# グラフ表示とアニメーション保存を無効化して実行
-uv run rikka particle --no-plot
-
-# グラフ表示なしでアニメーションだけ保存
-uv run rikka particle --no-plot --save-animation
+UV_CACHE_DIR=.uv-cache uv run rikka run --no-plot
 ```
 
-- マップマッチングでパーティクルを通路内に収束させながら軌跡を推定します。
-- `pf_trajectory.png`・`step_lengths.png`・`particle_filter.mp4`（または `.gif`）を出力します。
-- `--no-plot` を指定するとグラフ表示とアニメーション保存を行いません。
-- MP4 出力には `ffmpeg` が必要です（`brew install ffmpeg`）。
-
-#### センサーデータの可視化
+`pdr` は `run` の別名です。
 
 ```sh
-uv run rikka sensor
+UV_CACHE_DIR=.uv-cache uv run rikka pdr
 ```
 
-- 生加速度・線形加速度ノルム・ジャイロ・積算角度を4段グラフにして `input/<データフォルダ>/sensor_plot.png` に保存します。
+パーティクルフィルタ付きで実行します。
 
-#### 簡易接続確認
-
-引数なしで呼び出し、`"Hello, rikka"` が返れば接続・インポートが正常に動作しています。
-
-```python
-from rikka import ping
-
-print(ping())  # → Hello, rikka
+```sh
+UV_CACHE_DIR=.uv-cache uv run rikka particle
 ```
 
-![sensor_plot サンプル](docs/images/sensor_plot_sample.png)
+グラフ表示なしでパーティクルフィルタのアニメーションだけ保存する場合:
 
----
+```sh
+UV_CACHE_DIR=.uv-cache uv run rikka particle --no-plot --save-animation
+```
 
-### 歩幅グラフ（`step_lengths.png`）
+センサー波形を確認します。入力フォルダに `sensor_plot.png` を保存します。
 
-`uv run rikka` / `uv run rikka particle` 実行時に自動生成されます。
+```sh
+UV_CACHE_DIR=.uv-cache uv run rikka sensor
+```
 
-- 折れ線グラフ：各ステップの歩幅 [m]
-- 赤い水平線：平均値
-- 赤い半透明帯：±1σ 範囲（σ = 標準偏差。帯の幅が狭いほど歩幅が安定していることを示す）
-- 右上テキスト・コンソール出力：`mean / std / n`
+## データフロー
 
-![step_lengths サンプル](docs/images/step_lengths_sample.png)
+`run` / `pdr` / `particle` は、同じ CSV 読み込みと PDR ステップ準備を通ります。
+通常 PDR はそのステップ列をそのまま軌跡へ積み上げ、particle filter は同じステップ列を
+フロアマップ制約で補正してから画像やアニメーションへ出力します。
 
----
+```mermaid
+flowchart TD
+    input_dir["input/<data_dir>/"] --> acc_csv["Accelerometer.csv"]
+    input_dir --> gyro_csv["Gyroscope.csv"]
+    floormap["input/Floormap_building14_5floor.png"] --> plot_pdr
+    floormap --> pf_map
 
-### Python から直接使う
+    acc_csv --> load["load_sensor_data()\n列名を t,x,y,z に正規化"]
+    gyro_csv --> load
+    load --> preprocess["process_sensor_data()\n重力推定 / 線形加速度 / 水平加速度 / gyro bias / low_angle"]
 
-CSV 以外のソース（リアルタイム取得・前処理済みデータなど）から DataFrame を用意して渡すこともできます。
+    preprocess --> step_detect["detect_step_result()\n歩行ステップのピーク・区間を検出"]
+    preprocess --> heading["resolve_step_heading()\nbody_heading / motion_heading / movement_type を推定"]
+    step_detect --> heading
+    preprocess --> step_length["estimate_step_length()\nWeinberg などで歩幅候補を推定"]
+    step_detect --> step_length
+    heading --> sidestep["sidestep smoothing / heading stabilize\n横歩き判定を軌跡用 movement_type に整理"]
+    step_length --> sidestep
+    sidestep --> prepared["prepare_pdr_steps()\ntrajectory候補 / step_lengths / t_at_steps / step_headings"]
+
+    prepared --> pdr_branch{"コマンド"}
+    pdr_branch -->|rikka run / pdr| det_traj["通常 PDR\nstep_length × selected_heading を積み上げ"]
+    pdr_branch -->|rikka particle| pf["run_particle_filter()\n粒子をステップごとに予測・リサンプリング"]
+
+    pf_map["フロアマップ輝度\n通路/壁判定"] --> pf
+    pf --> pf_snap["平均軌跡を歩行可能画素へ補正"]
+
+    det_traj --> csv_common["CSV 出力\ntrajectory.csv / step_lengths.csv / step_headings.csv / gyro_bias.csv"]
+    det_traj --> plot_pdr["plot_trajectory()\ntrajectory.png"]
+    det_traj --> step_plots["plot_step_lengths() / plot_step_vectors()\nstep_lengths.png / step_vectors/step_*.png"]
+
+    pf_snap --> csv_common
+    pf_snap --> plot_pf["plot_particle_filter_trajectory()\npf_trajectory.png"]
+    pf --> anim["save_particle_animation()\nparticle_filter.mp4 または .gif"]
+
+    csv_common --> output_dir["output/<timestamp>/"]
+    plot_pdr --> output_dir
+    step_plots --> output_dir
+    plot_pf --> output_dir
+    anim --> output_dir
+```
+
+センサー波形だけを確認する `sensor` コマンドは、軌跡推定までは進まず、
+前処理とステップ検出結果を入力フォルダ内の画像へ保存します。
+
+```mermaid
+flowchart LR
+    input["input/<data_dir>/\nAccelerometer.csv / Gyroscope.csv"] --> load["load_sensor_data()"]
+    load --> preprocess["process_sensor_data()"]
+    preprocess --> detect["detect_step_result()"]
+    detect --> sensor_plot["plot_sensor_data()\nsensor_plot.png"]
+    sensor_plot --> input
+```
+
+## 標準設定
+
+`uv run rikka run` の現在の主要な既定値です。
+
+| 項目 | 既定値 | 説明 |
+|---|---:|---|
+| `DATA_DIR` | `input/1turn_rightsidestep_3turn_leftsidestep5` | 入力データ |
+| `FLOORMAP_PATH` | `input/Floormap_building14_5floor.png` | 背景マップ |
+| `FLOORMAP_ORIGIN_PX` | `(2050, 600)` | 軌跡の開始ピクセル |
+| `FLOORMAP_SCALE` | `0.01` | 1px あたりのメートル数 |
+| `INITIAL_DIRECTION` | `90.0` | 歩行開始方向 [deg] |
+| `STEP_DETECTION_METHOD` | `peak` | ステップ検出 |
+| `HEADING_METHOD` | `gyro_accel_motion` | 方位・移動方向推定 |
+| `FORWARD_HEADING_SOURCE` | `motion` | 通常歩行の軌跡方位は水平加速度由来の移動方向を使用 |
+| `GYRO_BIAS_METHOD` | `prewalk_robust` | ジャイロバイアス推定 |
+| `USER_HEIGHT_M` | `1.68` | Weinberg 歩幅補正用の身長 |
+| `SIDESTEP_LATERAL_RATIO` | `1.2` | 横方向/前方向の比率がこの値以上で横歩き候補 |
+| `SIDESTEP_MIN_LATERAL_DISPLACEMENT_M` | `0.03` | 横歩き判定に必要な横方向変位 [m] |
+| `SIDESTEP_SMOOTHING_METHOD` | `clustered` | 同方向 evidence の連続クラスタを評価し、確定横歩きまたは横歩き疑いとして軌跡へ反映 |
+| `SIDESTEP_LENGTH_SCALE` | `1` | 横歩き歩幅の倍率 |
+| `TURNING_LENGTH_SCALE` | `0.3` | 旋回中歩幅の倍率 |
+
+`gyro_accel_motion` では次を分けて扱います。
+
+- `body_heading`: ジャイロから推定した体/端末の向き
+- `motion_heading`: 水平加速度から推定した1歩ごとの移動方向特徴
+- `movement_type`: センサー上の判定結果
+- `trajectory_movement_type`: 軌跡計算に使った移動タイプ
+- `forward_heading_source`: `forward` 判定ステップの軌跡方位ソース
+
+## 横歩き判定の見方
+
+実行後、`output/<timestamp>/step_headings.csv` を確認します。
+
+重要な列は次です。
+
+| 列 | 意味 |
+|---|---|
+| `movement_type` | センサー上の判定。`sidestep_left/right` なら横歩きとして検出済み |
+| `trajectory_movement_type` | 軌跡に反映した移動タイプ。`forward` なら検出は横歩きだが軌跡上は前進扱い |
+| `body_heading_deg` | 体/端末の向き |
+| `motion_heading_deg` | 水平加速度から見た移動方向 |
+| `selected_heading_deg` | 実際に軌跡へ使った方位 |
+| `forward_heading_source` | `forward` 判定ステップの軌跡方位ソース |
+| `lateral_forward_ratio` | 横方向変位 / 前方向変位 |
+| `forward_displacement` | 体方向への変位特徴 |
+| `lateral_displacement` | 横方向への変位特徴 |
+| `motion_heading_correction_deg` | 水平加速度方向の補正角 |
+
+標準設定の `clustered` では、同方向の横歩き evidence が連続する区間をクラスタとして
+評価します。条件を満たす1歩の隙間は最大1つまでクラスタに含め、横歩き evidence が
+2歩以上かつクラスタ全体の横方向変位が閾値を満たす場合、確定横歩きとして軌跡へ
+反映します。
+
+確定しなかった強い単発 evidence は、標準の `--sidestep-suspect-mode motion` では
+`trajectory_movement_type="sidestep_suspect_left/right"` として `motion_heading` を
+軌跡へ反映します。それ以外の単発判定は `trajectory_movement_type="forward"` として
+前進扱いにします。
+また、`forward` 判定ステップは水平加速度由来の `motion_heading` で軌跡へ積みます。
+ジャイロ由来の `body_heading` で積む場合は次を指定します。
+
+```sh
+UV_CACHE_DIR=.uv-cache uv run rikka run --forward-heading-source body
+```
+
+横歩き判定を軌跡へそのまま反映して比較したい場合:
+
+```sh
+UV_CACHE_DIR=.uv-cache uv run rikka run --sidestep-smoothing none
+```
+
+旧方式の単発横歩き抑制と比較したい場合:
+
+```sh
+UV_CACHE_DIR=.uv-cache uv run rikka run --sidestep-smoothing isolated
+```
+
+横歩き判定を増やす/減らす場合:
+
+```sh
+# 拾いやすくする
+UV_CACHE_DIR=.uv-cache uv run rikka run --sidestep-lateral-ratio 1.0
+
+# 厳しくする
+UV_CACHE_DIR=.uv-cache uv run rikka run --sidestep-lateral-ratio 1.5
+```
+
+## ジャイロバイアス比較
+
+2つ目のサンプルデータは `prewalk_robust` のバイアス推定で軌跡が曲がりやすいです。
+比較用には手動バイアスも使えます。
+
+```sh
+UV_CACHE_DIR=.uv-cache uv run rikka run \
+  -d input/1turn_rightsidestep_3turn_leftsidestep2 \
+  --gyro-bias-method manual \
+  --gyro-bias 0.002
+```
+
+## 主な出力
+
+通常 PDR は `output/<timestamp>/` に保存します。
+
+| ファイル | 内容 |
+|---|---|
+| `trajectory.csv` | 移動後座標。列は `timestamp_s,x,y` |
+| `trajectory.png` | フロアマップ上の軌跡 |
+| `step_lengths.csv` | ステップごとの歩幅 |
+| `step_lengths.png` | 歩幅グラフ |
+| `step_vectors.csv` | ステップごとの変位ベクトル |
+| `step_vectors/step_*.png` | 各ステップの変位と加速度分布 |
+| `step_headings.csv` | 方位候補、横歩き判定、軌跡反映タイプ |
+| `gyro_bias.csv` | ジャイロバイアス推定の診断情報 |
+| `step_segments.csv` | `paper_vertical_threshold` 使用時のステップ区間 |
+
+パーティクルフィルタでは追加で次を保存します。
+
+| ファイル | 内容 |
+|---|---|
+| `pf_trajectory.png` | PF の平均軌跡 |
+| `particle_filter.mp4` / `.gif` | パーティクル分布アニメーション |
+
+## コード構成
+
+PDR 本体は `src/rikka/analyze/pdr/` パッケージに分割されています。
+`rikka.analyze.pdr` からの既存 import は互換 facade として維持しています。
+
+| ファイル | 役割 |
+|---|---|
+| `pdr/__init__.py` | 互換 facade。既存の `from rikka.analyze.pdr import run` などを維持 |
+| `pdr/common.py` | 共通定数、角度処理、モード検証、パラメータ検証 |
+| `pdr/models.py` | `StepHeading`、`StepMotion`、`PreparedPdrSteps` などの共有データ型 |
+| `pdr/sensors.py` | CSV 読み込み、列名正規化、加速度・ジャイロの前処理 |
+| `pdr/gyro_bias.py` | ジャイロバイアス推定 |
+| `pdr/step_detection.py` | ステップピーク・接地区間の検出 |
+| `pdr/step_length.py` | Weinberg / forward 系の歩幅推定 |
+| `pdr/heading.py` | ジャイロ・加速度・水平加速度からのステップ方位候補推定 |
+| `pdr/sidestep.py` | 横歩き判定、クラスタ平滑化、軌跡用方位の安定化 |
+| `pdr/trajectory.py` | 決定論的 PDR 軌跡生成と `prepare_pdr_steps()` |
+| `pdr/outputs.py` | CSV 出力用 DataFrame 生成 |
+| `pdr/plotting.py` | 通常 PDR の軌跡描画 |
+| `pdr/pipeline.py` | `run()` の実行 orchestration |
+| `pdr/particle_api.py` | particle filter が利用する PDR API の bridge |
+
+`src/rikka/analyze/particle_filter.py` は、`prepare_pdr_steps()` で作った
+決定論的なステップ方位・歩幅・時刻を受け取り、フロアマップ制約で軌跡を補正します。
+PDR の内部 helper を直接参照せず、`pdr/particle_api.py` 経由で必要な API だけを使います。
+
+## Python から使う
 
 ```python
 import pandas as pd
@@ -136,104 +312,57 @@ from rikka.analyze.pdr import run
 df_acc = pd.DataFrame(...)   # 列: t, x, y, z
 df_gyro = pd.DataFrame(...)  # 列: t, x, y, z
 
-# 通常の PDR
 trajectory = run(df_acc=df_acc, df_gyro=df_gyro)
-
-# パーティクルフィルタ
-trajectory = run(df_acc=df_acc, df_gyro=df_gyro, use_particle_filter=True)
-
-# グラフ非表示（バッチ処理向け）
-trajectory = run(df_acc=df_acc, df_gyro=df_gyro, plot=False)
-
-# グラフ非表示でパーティクルフィルタのアニメーションだけ保存
-trajectory = run(
-    df_acc=df_acc,
-    df_gyro=df_gyro,
-    plot=False,
-    use_particle_filter=True,
-    save_animation=True,
-)
-
-# フロアマップを外部から指定
-trajectory = run(
-    df_acc=df_acc,
-    df_gyro=df_gyro,
-    floormap_path="path/to/floormap.png",
-    origin_px=(1000, 500),
-    scale=0.01,
-    initial_direction=90.0,
-)
 ```
 
-`df_acc` と `df_gyro` は両方渡すか、両方省略（CSV から自動読み込み）してください。片方だけ渡すと `ValueError` になります。
+`df_acc` と `df_gyro` は両方渡すか、両方省略してください。片方だけ渡すと
+`ValueError` になります。
 
----
+グラフを表示しない場合:
 
-### 主な設定項目（`src/rikka/config.py`）
+```python
+trajectory = run(df_acc=df_acc, df_gyro=df_gyro, plot=False)
+```
 
-| 設定名 | 説明 | 既定値 |
-|---|---|---|
-| `DATA_DIR` | 入力データフォルダのパス | `"input/..."` |
-| `FLOORMAP_PATH` | フロアマップ画像のパス | `"input/Floormap_building14_5floor.png"` |
-| `FLOORMAP_ORIGIN_PX` | 軌跡起点のピクセル座標 `(x, y)` | `(2050, 400)` |
-| `FLOORMAP_SCALE` | 1ピクセルあたりのメートル数 | `0.01`（1px = 1cm） |
-| `INITIAL_DIRECTION` | 歩行開始方向のオフセット [度] | `90.0` |
-| `STEP_LENGTH_METHOD` | 歩幅推定手法 `"weinberg"` or `"forward"` | `"weinberg"` |
-| `USER_HEIGHT_M` | Weinberg モデルの身長補正に使うユーザー身長 [m] | `1.65` |
-| `WEINBERG_REFERENCE_HEIGHT_M` | `WEINBERG_REFERENCE_K` を校正した基準身長 [m] | `1.70` |
-| `WEINBERG_REFERENCE_K` | 基準身長での Weinberg モデルのスケール係数 | `0.47` |
-| `WEINBERG_K` | 身長補正後の Weinberg モデルのスケール係数 | `compute_weinberg_k(USER_HEIGHT_M)` |
-| `PF_NUM_PARTICLES` | パーティクル数 | `500` |
-| `PF_SIGMA_INIT_HEADING` | 初期方向ばらつき [rad] | `0.15` |
-| `PF_SIGMA_HEADING` | ステップごとの方位角ドリフト [rad] | `0.05` |
-| `PF_SIGMA_STEP_LENGTH_RATIO` | ステップ長ノイズ比率 | `0.08` |
+パーティクルフィルタを使う場合:
 
----
+```python
+trajectory = run(
+    df_acc=df_acc,
+    df_gyro=df_gyro,
+    use_particle_filter=True,
+)
+```
 
 ## 開発コマンド
 
-### フォーマット
-
 ```sh
-uv run ruff format
+UV_CACHE_DIR=.uv-cache uv run ruff format
+UV_CACHE_DIR=.uv-cache uv run ruff check
+UV_CACHE_DIR=.uv-cache uv run mypy src/
+UV_CACHE_DIR=.uv-cache uv run pytest
+UV_CACHE_DIR=.uv-cache uv build
 ```
 
-### リント
+CI と同等の pre-commit チェック:
 
 ```sh
-uv run ruff check
-# 自動修正
-uv run ruff check --fix
+UV_CACHE_DIR=.uv-cache uv run pre-commit run --all-files
 ```
 
-### 型チェック
-
-```sh
-uv run mypy src/
-```
-
-### テスト
-
-```sh
-uv run pytest
-```
-
----
-
-## コミット前の設定
-
-`git commit` 時に自動フォーマットを反映したい場合、最初に hook を有効化します。
+リポジトリ管理の Git hook を使う場合:
 
 ```sh
 git config core.hooksPath .githooks
 ```
 
----
+## 接続確認
 
-## CI が落ちたら
+```python
+from rikka import ping
 
-```sh
-uv run pre-commit run --all-files
+print(ping())  # Hello, rikka
 ```
 
-自動修正された変更を push するだけで解決するケースがほとんどです。
+![sensor_plot サンプル](docs/images/sensor_plot_sample.png)
+![step_lengths サンプル](docs/images/step_lengths_sample.png)

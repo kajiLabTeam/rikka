@@ -1,8 +1,8 @@
 reference
 .DS_Store
+input/
 output
-tests/
-AGENTS.md
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

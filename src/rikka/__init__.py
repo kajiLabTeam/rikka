@@ -1,3 +1,22 @@
+"""rikka の CLI エントリポイント。
+
+役割:
+    Click で ``run`` / ``pdr`` / ``particle`` / ``sensor`` コマンドと共通オプションを
+    定義し、ライブラリ内部の実行関数へ利用者の指定を渡す。
+依存元:
+    ``config`` から CLI の既定値、``matplotlib_config`` からキャッシュ設定、
+    ``ping`` から接続確認関数を取得する。実行時には循環 import を避けるため、
+    ``analyze.pdr`` または ``analyze.sensor_plot`` を遅延 import する。
+利用先:
+    ``pyproject.toml`` の ``rikka = "rikka:main"`` から起動されるほか、
+    パッケージ利用者へ ``ping`` を公開する。
+処理フロー:
+    起動時に Matplotlib を設定し、Click が引数を検証した後、通常 PDR または
+    particle filter の pipeline、もしくはセンサー描画処理を呼び出す。
+"""
+
+from math import isfinite
+
 import click
 
 from .config import (
@@ -5,10 +24,20 @@ from .config import (
     FLOORMAP_ORIGIN_PX,
     FLOORMAP_PATH,
     FLOORMAP_SCALE,
+    FORWARD_HEADING_SOURCE,
+    GYRO_BIAS_METHOD,
+    HEADING_METHOD,
     INITIAL_DIRECTION,
+    SIDESTEP_LATERAL_RATIO,
+    SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
+    SIDESTEP_SMOOTHING_METHOD,
+    STEP_DETECTION_METHOD,
     USER_HEIGHT_M,
 )
+from .matplotlib_config import configure_matplotlib_cache
 from .ping import ping as ping
+
+configure_matplotlib_cache()
 
 _DATA_DIR_DEFAULT = DATA_DIR
 _FLOORMAP_DEFAULT = FLOORMAP_PATH
@@ -16,6 +45,29 @@ _ORIGIN_DEFAULT = FLOORMAP_ORIGIN_PX
 _SCALE_DEFAULT = FLOORMAP_SCALE
 _DIRECTION_DEFAULT = INITIAL_DIRECTION
 _HEIGHT_DEFAULT = USER_HEIGHT_M
+_STEP_DETECTION_DEFAULT = STEP_DETECTION_METHOD
+_STEP_DETECTION_CHOICES = ("peak", "paper_vertical_threshold")
+_HEADING_METHOD_DEFAULT = HEADING_METHOD
+_HEADING_METHOD_CHOICES = (
+    "gyro",
+    "accel_method1",
+    "accel_method2",
+    "gyro_accel_motion",
+)
+_GYRO_BIAS_METHOD_DEFAULT = GYRO_BIAS_METHOD
+_GYRO_BIAS_METHOD_CHOICES = ("prewalk_robust", "initial_robust", "quietest", "manual")
+_SIDESTEP_LATERAL_RATIO_DEFAULT = SIDESTEP_LATERAL_RATIO
+_SIDESTEP_MIN_LATERAL_DISPLACEMENT_DEFAULT = SIDESTEP_MIN_LATERAL_DISPLACEMENT_M
+_MOTION_HEADING_CORRECTION_DEFAULT = "auto"
+_MOTION_HEADING_CORRECTION_CHOICES = ("auto", "none")
+_SIDESTEP_SMOOTHING_DEFAULT = SIDESTEP_SMOOTHING_METHOD
+_SIDESTEP_SMOOTHING_CHOICES = ("none", "isolated", "clustered")
+_FORWARD_HEADING_SOURCE_DEFAULT = FORWARD_HEADING_SOURCE
+_FORWARD_HEADING_SOURCE_CHOICES = ("body", "motion")
+_SIDESTEP_HEADING_SOURCE_DEFAULT = "motion"
+_SIDESTEP_HEADING_SOURCE_CHOICES = ("motion", "body_lateral", "blend")
+_SIDESTEP_SUSPECT_MODE_DEFAULT = "motion"
+_SIDESTEP_SUSPECT_MODE_CHOICES = ("motion", "body_lateral", "blend", "forward")
 
 
 def _validate_cli_scale(
@@ -24,15 +76,126 @@ def _validate_cli_scale(
     value: float,
 ) -> float:
     """scale が正の値であることを確認する。"""
-    if value <= 0:
-        raise click.BadParameter("scale は正の値を指定してください。")
+    if not isfinite(value) or value <= 0:
+        raise click.BadParameter("scale は有限な正の値を指定してください。")
     return value
+
+
+def _validate_cli_positive_float(
+    _ctx: click.Context,
+    param: click.Parameter,
+    value: float,
+) -> float:
+    """正の float オプションであることを確認する。"""
+    if not isfinite(value) or value <= 0:
+        raise click.BadParameter(f"{param.name} は有限な正の値を指定してください。")
+    return value
+
+
+def _validate_cli_non_negative_float(
+    _ctx: click.Context,
+    param: click.Parameter,
+    value: float,
+) -> float:
+    """0以上の float オプションであることを確認する。"""
+    if not isfinite(value) or value < 0:
+        raise click.BadParameter(f"{param.name} は有限な0以上の値を指定してください。")
+    return value
+
+
+def _validate_gyro_bias_options(
+    gyro_bias_method: str,
+    gyro_bias: float | None,
+) -> None:
+    """manual 指定時は明示的なジャイロバイアス値を必須にする。"""
+    if gyro_bias_method == "manual" and gyro_bias is None:
+        raise click.UsageError(
+            "--gyro-bias-method manual を使う場合は --gyro-bias を指定してください。"
+        )
 
 
 def _common_options(f: click.decorators.FC) -> click.decorators.FC:
     """run / particle コマンド共通オプションをまとめたデコレータ。"""
     f = click.option(
         "--no-plot", is_flag=True, default=False, help="グラフ表示を無効化"
+    )(f)
+    f = click.option(
+        "--sidestep-smoothing",
+        type=click.Choice(_SIDESTEP_SMOOTHING_CHOICES),
+        default=_SIDESTEP_SMOOTHING_DEFAULT,
+        show_default=True,
+        help="横歩き判定の平滑化",
+    )(f)
+    f = click.option(
+        "--forward-heading-source",
+        type=click.Choice(_FORWARD_HEADING_SOURCE_CHOICES),
+        default=_FORWARD_HEADING_SOURCE_DEFAULT,
+        show_default=True,
+        help="forward 判定ステップの軌跡方位ソース",
+    )(f)
+    f = click.option(
+        "--sidestep-heading-source",
+        type=click.Choice(_SIDESTEP_HEADING_SOURCE_CHOICES),
+        default=_SIDESTEP_HEADING_SOURCE_DEFAULT,
+        show_default=True,
+        help="確定横歩きステップの軌跡方位ソース",
+    )(f)
+    f = click.option(
+        "--sidestep-suspect-mode",
+        type=click.Choice(_SIDESTEP_SUSPECT_MODE_CHOICES),
+        default=_SIDESTEP_SUSPECT_MODE_DEFAULT,
+        show_default=True,
+        help="横歩き疑いステップの軌跡反映モード",
+    )(f)
+    f = click.option(
+        "--motion-heading-correction",
+        type=click.Choice(_MOTION_HEADING_CORRECTION_CHOICES),
+        default=_MOTION_HEADING_CORRECTION_DEFAULT,
+        show_default=True,
+        help="水平加速度移動方向の固定ずれ補正",
+    )(f)
+    f = click.option(
+        "--sidestep-min-lateral-displacement",
+        type=float,
+        callback=_validate_cli_non_negative_float,
+        default=_SIDESTEP_MIN_LATERAL_DISPLACEMENT_DEFAULT,
+        show_default=True,
+        help="横歩き判定に必要な横方向変位の最小値 [m]",
+    )(f)
+    f = click.option(
+        "--sidestep-lateral-ratio",
+        type=float,
+        callback=_validate_cli_positive_float,
+        default=_SIDESTEP_LATERAL_RATIO_DEFAULT,
+        show_default=True,
+        help="横歩き判定に使う 横方向/前方向 の最小比率",
+    )(f)
+    f = click.option(
+        "--step-detection",
+        type=click.Choice(_STEP_DETECTION_CHOICES),
+        default=_STEP_DETECTION_DEFAULT,
+        show_default=True,
+        help="ステップ検出手法",
+    )(f)
+    f = click.option(
+        "--heading-method",
+        type=click.Choice(_HEADING_METHOD_CHOICES),
+        default=_HEADING_METHOD_DEFAULT,
+        show_default=True,
+        help="方位推定手法",
+    )(f)
+    f = click.option(
+        "--gyro-bias-method",
+        type=click.Choice(_GYRO_BIAS_METHOD_CHOICES),
+        default=_GYRO_BIAS_METHOD_DEFAULT,
+        show_default=True,
+        help="ジャイロバイアス推定手法",
+    )(f)
+    f = click.option(
+        "--gyro-bias",
+        type=float,
+        default=None,
+        help="manual 指定時のジャイロバイアス [rad/s]",
     )(f)
     f = click.option(
         "--direction",
@@ -95,11 +258,23 @@ def _run_pdr(
     scale: float,
     direction: float,
     height_m: float,
+    step_detection: str,
+    heading_method: str,
+    gyro_bias_method: str,
+    gyro_bias: float | None,
+    sidestep_lateral_ratio: float,
+    sidestep_min_lateral_displacement: float,
+    motion_heading_correction: str,
+    sidestep_smoothing: str,
+    forward_heading_source: str,
+    sidestep_heading_source: str,
+    sidestep_suspect_mode: str,
     no_plot: bool,
 ) -> None:
     from .analyze.pdr import load_sensor_data  # noqa: PLC0415
     from .analyze.pdr import run as _run  # noqa: PLC0415
 
+    _validate_gyro_bias_options(gyro_bias_method, gyro_bias)
     df_acc, df_gyro = load_sensor_data(data_dir)
     _run(
         df_acc=df_acc,
@@ -111,6 +286,17 @@ def _run_pdr(
         scale=scale,
         initial_direction=direction,
         height_m=height_m,
+        step_detection_method=step_detection,
+        heading_method=heading_method,
+        gyro_bias_method=gyro_bias_method,
+        gyro_bias=gyro_bias,
+        sidestep_lateral_ratio=sidestep_lateral_ratio,
+        sidestep_min_lateral_displacement=sidestep_min_lateral_displacement,
+        motion_heading_correction=motion_heading_correction,
+        sidestep_smoothing=sidestep_smoothing,
+        forward_heading_source=forward_heading_source,
+        sidestep_heading_source=sidestep_heading_source,
+        sidestep_suspect_mode=sidestep_suspect_mode,
     )
 
 
@@ -123,10 +309,40 @@ def run(
     scale: float,
     direction: float,
     height_m: float,
+    step_detection: str,
+    heading_method: str,
+    gyro_bias_method: str,
+    gyro_bias: float | None,
+    sidestep_lateral_ratio: float,
+    sidestep_min_lateral_displacement: float,
+    motion_heading_correction: str,
+    sidestep_smoothing: str,
+    forward_heading_source: str,
+    sidestep_heading_source: str,
+    sidestep_suspect_mode: str,
     no_plot: bool,
 ) -> None:
     """決定論的 PDR で歩行軌跡を推定する。"""
-    _run_pdr(data_dir, floormap, origin_px, scale, direction, height_m, no_plot)
+    _run_pdr(
+        data_dir,
+        floormap,
+        origin_px,
+        scale,
+        direction,
+        height_m,
+        step_detection,
+        heading_method,
+        gyro_bias_method,
+        gyro_bias,
+        sidestep_lateral_ratio,
+        sidestep_min_lateral_displacement,
+        motion_heading_correction,
+        sidestep_smoothing,
+        forward_heading_source,
+        sidestep_heading_source,
+        sidestep_suspect_mode,
+        no_plot,
+    )
 
 
 @cli.command()
@@ -138,13 +354,49 @@ def pdr(
     scale: float,
     direction: float,
     height_m: float,
+    step_detection: str,
+    heading_method: str,
+    gyro_bias_method: str,
+    gyro_bias: float | None,
+    sidestep_lateral_ratio: float,
+    sidestep_min_lateral_displacement: float,
+    motion_heading_correction: str,
+    sidestep_smoothing: str,
+    forward_heading_source: str,
+    sidestep_heading_source: str,
+    sidestep_suspect_mode: str,
     no_plot: bool,
 ) -> None:
     """決定論的 PDR で歩行軌跡を推定する（run の別名）。"""
-    _run_pdr(data_dir, floormap, origin_px, scale, direction, height_m, no_plot)
+    _run_pdr(
+        data_dir,
+        floormap,
+        origin_px,
+        scale,
+        direction,
+        height_m,
+        step_detection,
+        heading_method,
+        gyro_bias_method,
+        gyro_bias,
+        sidestep_lateral_ratio,
+        sidestep_min_lateral_displacement,
+        motion_heading_correction,
+        sidestep_smoothing,
+        forward_heading_source,
+        sidestep_heading_source,
+        sidestep_suspect_mode,
+        no_plot,
+    )
 
 
 @cli.command()
+@click.option(
+    "--pf-seed",
+    type=int,
+    default=None,
+    help="パーティクルフィルタ乱数の seed（回帰検証用）",
+)
 @click.option(
     "--save-animation",
     is_flag=True,
@@ -159,13 +411,26 @@ def particle(
     scale: float,
     direction: float,
     height_m: float,
+    step_detection: str,
+    heading_method: str,
+    gyro_bias_method: str,
+    gyro_bias: float | None,
+    sidestep_lateral_ratio: float,
+    sidestep_min_lateral_displacement: float,
+    motion_heading_correction: str,
+    sidestep_smoothing: str,
+    forward_heading_source: str,
+    sidestep_heading_source: str,
+    sidestep_suspect_mode: str,
     no_plot: bool,
     save_animation: bool,
+    pf_seed: int | None,
 ) -> None:
     """パーティクルフィルタ + マップマッチングで歩行軌跡を推定する。"""
     from .analyze.pdr import load_sensor_data  # noqa: PLC0415
     from .analyze.pdr import run as _run  # noqa: PLC0415
 
+    _validate_gyro_bias_options(gyro_bias_method, gyro_bias)
     df_acc, df_gyro = load_sensor_data(data_dir)
     _run(
         df_acc=df_acc,
@@ -178,6 +443,18 @@ def particle(
         scale=scale,
         initial_direction=direction,
         height_m=height_m,
+        step_detection_method=step_detection,
+        heading_method=heading_method,
+        gyro_bias_method=gyro_bias_method,
+        gyro_bias=gyro_bias,
+        sidestep_lateral_ratio=sidestep_lateral_ratio,
+        sidestep_min_lateral_displacement=sidestep_min_lateral_displacement,
+        motion_heading_correction=motion_heading_correction,
+        sidestep_smoothing=sidestep_smoothing,
+        forward_heading_source=forward_heading_source,
+        sidestep_heading_source=sidestep_heading_source,
+        sidestep_suspect_mode=sidestep_suspect_mode,
+        particle_seed=pf_seed,
     )
 
 
@@ -190,11 +467,42 @@ def particle(
     show_default=True,
     help="入力データフォルダ",
 )
-def sensor(data_dir: str) -> None:
+@click.option(
+    "--step-detection",
+    type=click.Choice(_STEP_DETECTION_CHOICES),
+    default=_STEP_DETECTION_DEFAULT,
+    show_default=True,
+    help="ステップ検出手法",
+)
+@click.option(
+    "--gyro-bias-method",
+    type=click.Choice(_GYRO_BIAS_METHOD_CHOICES),
+    default=_GYRO_BIAS_METHOD_DEFAULT,
+    show_default=True,
+    help="ジャイロバイアス推定手法",
+)
+@click.option(
+    "--gyro-bias",
+    type=float,
+    default=None,
+    help="manual 指定時のジャイロバイアス [rad/s]",
+)
+def sensor(
+    data_dir: str,
+    step_detection: str,
+    gyro_bias_method: str,
+    gyro_bias: float | None,
+) -> None:
     """センサーデータをグラフ化して入力フォルダに保存する。"""
     from .analyze.sensor_plot import plot_sensor_data  # noqa: PLC0415
 
-    plot_sensor_data(data_dir)
+    _validate_gyro_bias_options(gyro_bias_method, gyro_bias)
+    plot_sensor_data(
+        data_dir,
+        step_detection_method=step_detection,
+        gyro_bias_method=gyro_bias_method,
+        gyro_bias=gyro_bias,
+    )
 
 
 def main() -> None:
