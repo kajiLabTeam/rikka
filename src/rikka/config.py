@@ -18,7 +18,7 @@ from math import isfinite
 # Data directory path
 # Change this path to use different input data
 
-DATA_DIR = "input/sensor_data/1turn_rightsidestep_3turn_leftsidestep"
+DATA_DIR = "input/sensor_data/1turn_rightsidestep_3turn_leftsidestep5"
 
 # フロアマップ設定
 # 背景として表示するフロアマップ画像のパス
@@ -178,3 +178,6 @@ PF_REJUVENATION_SIGMA_HEADING = 0.02  # 再標本化後の方位多様化 [rad]
 PF_RECOVERY_VALID_RATIO = 0.05  # 有効な重み付き粒子率が下回ると復旧
 PF_RECOVERY_HEADING_SIGMA = 0.08  # local recoveryの方位分散 [rad]
 PF_RECOVERY_MAX_ATTEMPTS = 5  # recovery候補を追加生成する最大回数
+PF_MOTION_DISPLACEMENT_FULL_CONFIDENCE_M = 0.08
+PF_MOTION_CALIBRATION_MIN_STEPS = 4
+PF_MOTION_STATE_TRANSITION_STAY = 0.82

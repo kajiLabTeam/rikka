@@ -35,6 +35,7 @@ from ..config import (
     FORWARD_HEADING_SOURCE,
     INITIAL_DIRECTION,
     PF_HEADING_DRIFT_RETENTION,
+    PF_MOTION_STATE_TRANSITION_STAY,
     PF_NUM_PARTICLES,
     PF_RECOVERY_HEADING_SIGMA,
     PF_RECOVERY_MAX_ATTEMPTS,
@@ -52,15 +53,20 @@ from ..config import (
     PF_STRIDE_SCALE_REJUVENATION_SIGMA,
     PF_STRIDE_SCALE_RETENTION,
     SIDESTEP_LATERAL_RATIO,
+    SIDESTEP_LENGTH_SCALE,
     SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
     SIDESTEP_SMOOTHING_METHOD,
     SIDESTEP_SUSPECT_MODE,
     STEP_LENGTH_METHOD,
+    TURNING_LENGTH_SCALE,
     WEINBERG_K,
 )
 from .pdr.particle_api import (
     StepHeading,
+    StepMotionEvidence,
     StepSegment,
+    build_particle_motion_headings,
+    build_step_motion_evidences,
     compute_pixel_coords,
     estimate_device_orientation_mode,
     estimate_initial_forward_angle,
@@ -81,6 +87,12 @@ from .pdr.particle_api import (
     validate_sidestep_smoothing,
     validate_sidestep_suspect_mode,
 )
+
+_MOTION_FORWARD = 0
+_MOTION_SIDESTEP_LEFT = 1
+_MOTION_SIDESTEP_RIGHT = 2
+_MOTION_TURNING = 3
+_MOTION_STATE_NAMES = ("forward", "sidestep_left", "sidestep_right", "turning")
 
 
 @dataclass(frozen=True)
@@ -106,6 +118,15 @@ class ParticleFilterStepDiagnostics:
     stride_scale_std: float
     effective_step_length_mean_m: float
     effective_step_length_std_m: float
+    forward_state_probability: float
+    sidestep_left_state_probability: float
+    sidestep_right_state_probability: float
+    turning_state_probability: float
+    representative_motion_state: str
+    motion_state_entropy: float
+    motion_state_transition_count: int
+    motion_reliability: float
+    calibration_reliability: float
     resampled: bool
     recovery_attempted: bool
     recovery_mode: str
@@ -140,6 +161,92 @@ def _effective_sample_size(weights: np.ndarray) -> float:
 def _normalize_angle(angle: np.ndarray) -> np.ndarray:
     """角度配列を -pi 以上 pi 未満へ正規化する。"""
     return (angle + np.pi) % (2 * np.pi) - np.pi
+
+
+def _motion_state_transition_matrix() -> np.ndarray:
+    """前進・左右横歩き・旋回の継続性を表す遷移行列を返す。"""
+    side_stay = PF_MOTION_STATE_TRANSITION_STAY
+    return np.asarray(
+        [
+            [0.90, 0.035, 0.035, 0.03],
+            [0.12, side_stay, 0.01, 0.05],
+            [0.12, 0.01, side_stay, 0.05],
+            [0.45, 0.08, 0.08, 0.39],
+        ],
+        dtype=float,
+    )
+
+
+def _sample_motion_states(
+    previous_states: np.ndarray,
+    observation_likelihoods: np.ndarray,
+    rng: np.random.Generator,
+) -> tuple[np.ndarray, np.ndarray]:
+    """遷移と観測を使う最適提案分布から次状態と予測尤度を返す。"""
+    unnormalized = (
+        _motion_state_transition_matrix()[previous_states]
+        * observation_likelihoods[None, :]
+    )
+    predictive_likelihoods = unnormalized.sum(axis=1)
+    probabilities = unnormalized / predictive_likelihoods[:, None]
+    draws = rng.random(len(previous_states))
+    states = np.sum(draws[:, None] > np.cumsum(probabilities, axis=1), axis=1).astype(
+        np.int8
+    )
+    return states, predictive_likelihoods
+
+
+def _motion_state_headings(
+    step_heading: StepHeading,
+    evidence: StepMotionEvidence,
+    particle_heading: float,
+) -> np.ndarray:
+    """1歩の運動状態別方位候補を返す。"""
+    fallback = particle_heading
+    if (
+        evidence.calibration_reliability >= 0.85
+        or step_heading.sidestep_cluster_id is None
+    ):
+        return np.full(4, fallback, dtype=float)
+    body = (
+        step_heading.body_heading if step_heading.body_heading is not None else fallback
+    )
+    movement = step_heading.trajectory_movement_type or step_heading.movement_type
+    motion = (
+        step_heading.motion_heading
+        if step_heading.motion_heading is not None
+        else fallback
+    )
+    forward = body
+    left = body + np.pi / 2
+    right = body - np.pi / 2
+    if movement in {
+        "sidestep_left",
+        "turning_sidestep_left",
+        "sidestep_suspect_left",
+    }:
+        left = motion
+    elif movement in {
+        "sidestep_right",
+        "turning_sidestep_right",
+        "sidestep_suspect_right",
+    }:
+        right = motion
+    turning = motion if movement.startswith("turning") else fallback
+    return _normalize_angle(np.asarray([forward, left, right, turning], dtype=float))
+
+
+def _motion_state_likelihoods(evidence: StepMotionEvidence) -> np.ndarray:
+    """運動観測を粒子状態順の尤度配列へ変換する。"""
+    return np.asarray(
+        [
+            evidence.forward_likelihood,
+            evidence.sidestep_left_likelihood,
+            evidence.sidestep_right_likelihood,
+            evidence.turning_likelihood,
+        ],
+        dtype=float,
+    )
 
 
 def _weighted_circular_std(angles: np.ndarray, weights: np.ndarray) -> float:
@@ -537,6 +644,7 @@ class _RecoveryResult:
     heading_correction: np.ndarray
     heading_drift: np.ndarray
     stride_scale: np.ndarray
+    motion_state: np.ndarray
     parent_indices: np.ndarray
     valid_count: int
     attempts: int
@@ -559,9 +667,10 @@ def _generate_recovery_candidates(
     previous_heading_correction: np.ndarray,
     previous_heading_drift: np.ndarray,
     previous_stride_scale: np.ndarray,
+    proposed_motion_state: np.ndarray,
     previous_weights: np.ndarray,
-    angle_det: float,
-    step_length: float,
+    angle_det: float | np.ndarray,
+    step_length: float | np.ndarray,
     sigma_step_length_ratio: float,
     n_particles: int,
     map_gray: np.ndarray,
@@ -575,16 +684,23 @@ def _generate_recovery_candidates(
     allow_turn_candidates: bool = False,
 ) -> _RecoveryResult | None:
     """決定論的方位に近い壁非交差候補から復旧粒子を生成する。"""
-    del max_attempts
     local_degrees = np.array(
         [0.0, 5.0, -5.0, 10.0, -10.0, 20.0, -20.0, 30.0, -30.0, 45.0, -45.0]
     )
-    stages = [("local_grid", local_degrees)]
+    normal_length_factors = np.array([1.0, 0.9, 1.1])
+    stages = [("local_grid", local_degrees, normal_length_factors)]
     if allow_turn_candidates:
-        stages.append(("turn_grid", np.array([60.0, -60.0, 90.0, -90.0])))
-    length_factors = np.array([1.0, 0.9, 1.1])
+        stages.append(
+            (
+                "turn_grid",
+                np.array([60.0, -60.0, 90.0, -90.0, 135.0, -135.0, 180.0]),
+                normal_length_factors,
+            )
+        )
 
-    for stage_number, (mode, offset_degrees) in enumerate(stages, start=1):
+    for stage_number, (mode, offset_degrees, length_factors) in enumerate(
+        stages[:max_attempts], start=1
+    ):
         combinations = np.array(
             [(offset, factor) for offset in offset_degrees for factor in length_factors]
         )
@@ -597,14 +713,26 @@ def _generate_recovery_candidates(
         parent_correction = previous_heading_correction[parent_indices]
         parent_drift = previous_heading_drift[parent_indices]
         candidate_stride_scales = previous_stride_scale[parent_indices]
-        theta = angle_det + parent_correction + parent_drift + offsets
+        base_angles = np.asarray(angle_det, dtype=float)
+        parent_angles = (
+            np.full(batch_size, float(base_angles))
+            if base_angles.ndim == 0
+            else base_angles[parent_indices]
+        )
+        theta = parent_angles + parent_correction + parent_drift + offsets
         residual_noise = rng.normal(
             0.0,
             sigma_step_length_ratio,
             batch_size,
         )
+        base_lengths = np.asarray(step_length, dtype=float)
+        parent_lengths = (
+            np.full(batch_size, float(base_lengths))
+            if base_lengths.ndim == 0
+            else base_lengths[parent_indices]
+        )
         lengths = np.clip(
-            step_length
+            parent_lengths
             * candidate_stride_scales
             * length_factor
             * (1.0 + residual_noise),
@@ -652,6 +780,7 @@ def _generate_recovery_candidates(
             heading_correction=selected_correction,
             heading_drift=selected_drift,
             stride_scale=candidate_stride_scales[select],
+            motion_state=proposed_motion_state[parent_indices[select]],
             parent_indices=parent_indices[select],
             valid_count=int(np.count_nonzero(valid)),
             attempts=stage_number,
@@ -680,6 +809,7 @@ def _replay_from_checkpoint(
     scale: float,
     heading_sigma: float,
     rng: np.random.Generator,
+    checkpoint_motion_state: np.ndarray | None = None,
 ) -> _CheckpointReplayResult | None:
     """同じ小方位差で最大3歩を再生し、壁非交差経路を返す。"""
     if len(angles) == 0 or len(angles) != len(step_lengths):
@@ -749,6 +879,11 @@ def _replay_from_checkpoint(
         heading_correction=parent_correction[select],
         heading_drift=_normalize_angle(parent_drift[select] + selected_offsets),
         stride_scale=candidate_stride_scales[select],
+        motion_state=(
+            np.zeros(n_particles, dtype=np.int8)
+            if checkpoint_motion_state is None
+            else checkpoint_motion_state[parent_indices[select]]
+        ),
         parent_indices=parent_indices[select],
         valid_count=int(np.count_nonzero(valid)),
         attempts=1,
@@ -801,6 +936,7 @@ def run_particle_filter(
     prepared_step_headings: list[StepHeading] | None = None,
     prepared_step_lengths: list[float] | None = None,
     prepared_step_times: list[float] | None = None,
+    prepared_motion_evidences: tuple[StepMotionEvidence, ...] | None = None,
     seed: int | None = None,
     heading_drift_retention: float = PF_HEADING_DRIFT_RETENTION,
     resample_ess_ratio: float = PF_RESAMPLE_ESS_RATIO,
@@ -935,6 +1071,9 @@ def run_particle_filter(
     stride_rng = np.random.default_rng(
         None if seed is None else np.random.SeedSequence([seed, 0x53545249])
     )
+    motion_rng = np.random.default_rng(
+        None if seed is None else np.random.SeedSequence([seed, 0x4D4F544E])
+    )
 
     # フロアマップをグレースケールで読み込み
     map_gray = _normalize_floormap_gray(plt.imread(Path(floormap_path)))
@@ -957,6 +1096,7 @@ def run_particle_filter(
         raise ValueError("origin_px は歩行可能なマップ内画素を指定してください")
     heading_correction = np.zeros(n_particles, dtype=float)
     heading_drift = rng.normal(0, sigma_init_heading, n_particles)
+    motion_state = np.full(n_particles, _MOTION_FORWARD, dtype=np.int8)
     stride_scale = np.clip(
         stride_scale_prior_mean
         + stride_rng.normal(0.0, stride_scale_init_sigma, n_particles),
@@ -970,6 +1110,7 @@ def run_particle_filter(
     position_history: list[np.ndarray] = [particles.copy()]
     heading_correction_history: list[np.ndarray] = [heading_correction.copy()]
     heading_drift_history: list[np.ndarray] = [heading_drift.copy()]
+    motion_state_history: list[np.ndarray] = [motion_state.copy()]
     stride_scale_history: list[np.ndarray] = [stride_scale.copy()]
     weight_history: list[np.ndarray] = [weights.copy()]
     parent_history: list[np.ndarray] = []
@@ -992,6 +1133,10 @@ def run_particle_filter(
         raise ValueError(
             "prepared_step_headings, prepared_step_lengths, "
             "prepared_step_times はすべて同時に指定してください"
+        )
+    if prepared_motion_evidences is not None and not using_prepared_steps:
+        raise ValueError(
+            "prepared_motion_evidences は prepared step 一式と同時に指定してください"
         )
     if not using_prepared_steps:
         device_orientation_mode = estimate_device_orientation_mode(
@@ -1061,6 +1206,7 @@ def run_particle_filter(
             selected_forward_heading_source,
             selected_sidestep_heading_source,
         )
+        motion_evidences = build_step_motion_evidences(stabilized_step_headings)
     else:
         assert prepared_step_headings is not None
         assert prepared_step_lengths is not None
@@ -1077,22 +1223,46 @@ def run_particle_filter(
         stabilized_step_headings = prepared_step_headings
         raw_step_lengths = prepared_step_lengths
         raw_step_times = prepared_step_times
+        motion_evidences = (
+            build_step_motion_evidences(stabilized_step_headings)
+            if prepared_motion_evidences is None
+            else prepared_motion_evidences
+        )
+        if len(motion_evidences) != len(stabilized_step_headings):
+            raise ValueError(
+                "prepared_motion_evidences と prepared_step_headings の"
+                "長さが一致しません"
+            )
+    particle_motion_headings = build_particle_motion_headings(stabilized_step_headings)
 
     previous_heading: float | None = None
 
-    for step_number, (step_heading, sl_det, step_time) in enumerate(
+    for step_number, (
+        step_heading,
+        sl_det,
+        step_time,
+        motion_evidence,
+        particle_heading,
+    ) in enumerate(
         zip(
             stabilized_step_headings,
             raw_step_lengths,
             raw_step_times,
+            motion_evidences,
+            particle_motion_headings,
             strict=True,
         ),
         start=1,
     ):
+        if particle_heading is None:
+            continue
+        angle_det = particle_heading
+        step_heading = step_heading._replace(
+            selected_heading=particle_heading,
+            source="particle_evidence_motion",
+        )
         if using_prepared_steps:
-            if step_heading.selected_heading is None:
-                continue
-            angle_det = step_heading.selected_heading
+            pass
         else:
             step_motion = estimate_step_motion(
                 step_heading,
@@ -1120,6 +1290,7 @@ def run_particle_filter(
         heading_correction_before = heading_correction.copy()
         heading_drift_before = heading_drift.copy()
         stride_scale_before = stride_scale.copy()
+        motion_state_before = motion_state.copy()
         weights_before = weights.copy()
         ess_before_observation = _effective_sample_size(weights_before)
 
@@ -1129,7 +1300,19 @@ def run_particle_filter(
             heading_drift_retention * heading_drift_before
             + rng.normal(0, sigma_heading, n_particles)
         )
-        theta = angle_det + proposed_correction + proposed_drift
+        observation_likelihoods = _motion_state_likelihoods(motion_evidence)
+        proposed_motion_state, _state_predictive_likelihoods = _sample_motion_states(
+            motion_state_before,
+            observation_likelihoods,
+            motion_rng,
+        )
+        state_headings = _motion_state_headings(
+            step_heading,
+            motion_evidence,
+            particle_heading,
+        )
+        particle_base_headings = state_headings[proposed_motion_state]
+        theta = particle_base_headings + proposed_correction + proposed_drift
         proposed_stride_scale = np.clip(
             stride_scale_prior_mean
             + stride_scale_retention * (stride_scale_before - stride_scale_prior_mean)
@@ -1137,8 +1320,26 @@ def run_particle_filter(
             stride_scale_min,
             stride_scale_max,
         )
+        if (
+            motion_evidence.calibration_reliability >= 0.85
+            or step_heading.sidestep_cluster_id is None
+        ):
+            particle_step_lengths = np.full(n_particles, sl_det, dtype=float)
+        else:
+            raw_step_length = sl_det / max(step_heading.step_length_scale, 1e-12)
+            state_length_scales = np.asarray(
+                [
+                    1.0,
+                    SIDESTEP_LENGTH_SCALE,
+                    SIDESTEP_LENGTH_SCALE,
+                    TURNING_LENGTH_SCALE,
+                ]
+            )
+            particle_step_lengths = (
+                raw_step_length * state_length_scales[proposed_motion_state]
+            )
         sl = np.clip(
-            sl_det
+            particle_step_lengths
             * proposed_stride_scale
             * (1 + rng.normal(0, sigma_sl_ratio, n_particles)),
             0,
@@ -1187,9 +1388,10 @@ def run_particle_filter(
                 heading_correction_before,
                 heading_drift_before,
                 stride_scale_before,
+                proposed_motion_state,
                 weights_before,
-                angle_det,
-                sl_det,
+                particle_base_headings,
+                particle_step_lengths,
                 sigma_sl_ratio,
                 n_particles,
                 map_gray,
@@ -1254,19 +1456,62 @@ def run_particle_filter(
                         scale,
                         recovery_heading_sigma,
                         rng,
+                        checkpoint_motion_state=motion_state_history[checkpoint_step],
                     )
                 if replay_result is None:
-                    # 有限回の局所復旧とreplayが失敗した場合だけ直前状態を保持する。
-                    particles = particles_before
-                    heading_correction = heading_correction_before
-                    heading_drift = heading_drift_before
-                    stride_scale = stride_scale_before
-                    weights = weights_before
-                    parent_indices = np.arange(n_particles, dtype=int)
-                    recovery_mode = "failed_hold"
-                    recovery_attempts = recovery_max_attempts
+                    fallback_recovery = _generate_recovery_candidates(
+                        particles_before,
+                        heading_correction_before,
+                        heading_drift_before,
+                        stride_scale_before,
+                        proposed_motion_state,
+                        weights_before,
+                        particle_base_headings,
+                        particle_step_lengths,
+                        sigma_sl_ratio,
+                        n_particles,
+                        map_gray,
+                        gx_mean,
+                        gz_mean,
+                        origin_px,
+                        scale,
+                        recovery_heading_sigma,
+                        recovery_max_attempts,
+                        rng,
+                        allow_turn_candidates=True,
+                    )
+                    if fallback_recovery is None:
+                        # 全候補とreplayが失敗した場合だけ直前位置を保持する。
+                        particles = particles_before
+                        heading_correction = heading_correction_before
+                        heading_drift = heading_drift_before
+                        stride_scale = stride_scale_before
+                        motion_state = proposed_motion_state
+                        weights = weights_before
+                        parent_indices = np.arange(n_particles, dtype=int)
+                        recovery_mode = "failed_hold"
+                        recovery_attempts = recovery_max_attempts
+                    else:
+                        particles = fallback_recovery.particles
+                        heading_correction = fallback_recovery.heading_correction
+                        heading_drift = fallback_recovery.heading_drift
+                        stride_scale = fallback_recovery.stride_scale
+                        motion_state = fallback_recovery.motion_state
+                        weights = np.full(n_particles, 1.0 / n_particles)
+                        parent_indices = fallback_recovery.parent_indices
+                        recovery_mode = f"fallback_{fallback_recovery.mode}"
+                        recovery_valid_count = fallback_recovery.valid_count
+                        recovery_attempts = fallback_recovery.attempts
+                        recovery_heading_delta_deg = fallback_recovery.heading_delta_deg
+                        recovery_step_scale = fallback_recovery.step_scale
+                        recovery_cost = fallback_recovery.mean_cost
+                        resampled = True
                 else:
                     recovery = replay_result.recovery
+                    recovery = replace(
+                        recovery,
+                        motion_state=proposed_motion_state.copy(),
+                    )
                     assert checkpoint_step is not None
                     replay_depth = replay_result.replay_positions.shape[0]
                     position_history = position_history[: checkpoint_step + 1]
@@ -1286,6 +1531,7 @@ def run_particle_filter(
                         : checkpoint_step + 1
                     ]
                     heading_drift_history = heading_drift_history[: checkpoint_step + 1]
+                    motion_state_history = motion_state_history[: checkpoint_step + 1]
                     stride_scale_history = stride_scale_history[: checkpoint_step + 1]
                     weight_history = weight_history[: checkpoint_step + 1]
                     healthy_checkpoint_steps = [
@@ -1298,12 +1544,14 @@ def run_particle_filter(
                             recovery.heading_correction.copy()
                         )
                         heading_drift_history.append(recovery.heading_drift.copy())
+                        motion_state_history.append(recovery.motion_state.copy())
                         stride_scale_history.append(recovery.stride_scale.copy())
                         weight_history.append(np.full(n_particles, 1.0 / n_particles))
                     particles = recovery.particles
                     heading_correction = recovery.heading_correction
                     heading_drift = recovery.heading_drift
                     stride_scale = recovery.stride_scale
+                    motion_state = recovery.motion_state
                     weights = np.full(n_particles, 1.0 / n_particles)
                     parent_indices = (
                         np.arange(n_particles, dtype=int)
@@ -1324,6 +1572,7 @@ def run_particle_filter(
                 heading_correction = recovery.heading_correction
                 heading_drift = recovery.heading_drift
                 stride_scale = recovery.stride_scale
+                motion_state = recovery.motion_state
                 weights = np.full(n_particles, 1.0 / n_particles)
                 parent_indices = recovery.parent_indices
                 recovery_mode = recovery.mode
@@ -1343,6 +1592,7 @@ def run_particle_filter(
                 heading_correction = proposed_correction[indices]
                 heading_drift = proposed_drift[indices]
                 stride_scale = proposed_stride_scale[indices]
+                motion_state = proposed_motion_state[indices]
                 if rejuvenation_sigma_heading > 0.0:
                     heading_drift = _normalize_angle(
                         heading_drift
@@ -1367,6 +1617,7 @@ def run_particle_filter(
                 heading_correction = proposed_correction
                 heading_drift = proposed_drift
                 stride_scale = proposed_stride_scale
+                motion_state = proposed_motion_state
                 weights = posterior_weights
                 parent_indices = np.arange(n_particles, dtype=int)
 
@@ -1375,6 +1626,7 @@ def run_particle_filter(
         position_history.append(particles.copy())
         heading_correction_history.append(heading_correction.copy())
         heading_drift_history.append(heading_drift.copy())
+        motion_state_history.append(motion_state.copy())
         stride_scale_history.append(stride_scale.copy())
         weight_history.append(weights.copy())
         step_lengths.append(sl_det)
@@ -1415,7 +1667,11 @@ def run_particle_filter(
             stride_scale_std = float(
                 np.sqrt(np.sum(weights * np.square(stride_scale - stride_scale_mean)))
             )
-            effective_step_lengths = sl_det * stride_scale
+            effective_step_lengths = (
+                particle_step_lengths[parent_indices] * stride_scale
+                if resampled
+                else particle_step_lengths * stride_scale
+            )
             effective_step_length_mean_m = float(
                 np.sum(weights * effective_step_lengths)
             )
@@ -1428,6 +1684,22 @@ def run_particle_filter(
                         )
                     )
                 )
+            )
+            state_probabilities = np.asarray(
+                [float(np.sum(weights[motion_state == state])) for state in range(4)]
+            )
+            representative_state_index = int(np.argmax(state_probabilities))
+            positive_state_probabilities = state_probabilities[
+                state_probabilities > 0.0
+            ]
+            motion_state_entropy = float(
+                -np.sum(
+                    positive_state_probabilities * np.log(positive_state_probabilities)
+                )
+            )
+            parent_states = motion_state_before[parent_indices]
+            motion_state_transition_count = int(
+                np.count_nonzero(motion_state != parent_states)
             )
             diagnostics_collector.append(
                 ParticleFilterStepDiagnostics(
@@ -1450,6 +1722,17 @@ def run_particle_filter(
                     stride_scale_std=stride_scale_std,
                     effective_step_length_mean_m=effective_step_length_mean_m,
                     effective_step_length_std_m=effective_step_length_std_m,
+                    forward_state_probability=float(state_probabilities[0]),
+                    sidestep_left_state_probability=float(state_probabilities[1]),
+                    sidestep_right_state_probability=float(state_probabilities[2]),
+                    turning_state_probability=float(state_probabilities[3]),
+                    representative_motion_state=_MOTION_STATE_NAMES[
+                        representative_state_index
+                    ],
+                    motion_state_entropy=motion_state_entropy,
+                    motion_state_transition_count=motion_state_transition_count,
+                    motion_reliability=motion_evidence.motion_reliability,
+                    calibration_reliability=(motion_evidence.calibration_reliability),
                     resampled=resampled,
                     recovery_attempted=recovery_attempted,
                     recovery_mode=recovery_mode,

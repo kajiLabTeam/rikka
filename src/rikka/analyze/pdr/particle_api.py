@@ -43,7 +43,12 @@ from .heading import (
 from .heading import (
     resolve_step_heading,
 )
-from .models import StepHeading, StepSegment
+from .models import (
+    StepHeading,
+    StepMotionEvidence,
+    StepMotionObservation,
+    StepSegment,
+)
 from .plotting import (
     _compute_pixel_coords as compute_pixel_coords,
 )
@@ -57,6 +62,9 @@ from .sidestep import (
     _stabilize_trajectory_headings as stabilize_trajectory_headings,
 )
 from .sidestep import (
+    build_particle_motion_headings,
+    build_step_motion_evidences,
+    build_step_motion_observations,
     estimate_step_motion,
 )
 from .step_length import (
@@ -70,7 +78,12 @@ from .time_utils import _step_output_time as step_output_time
 
 __all__ = [
     "StepHeading",
+    "StepMotionEvidence",
+    "StepMotionObservation",
     "StepSegment",
+    "build_step_motion_evidences",
+    "build_step_motion_observations",
+    "build_particle_motion_headings",
     "compute_pixel_coords",
     "estimate_device_orientation_mode",
     "estimate_initial_forward_angle",

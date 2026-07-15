@@ -124,6 +124,7 @@ from .models import (
     StepDetectionResult,
     StepHeading,
     StepMotion,
+    StepMotionObservation,
     StepSegment,
 )
 from .outputs import (
@@ -258,6 +259,7 @@ __all__ = [
     "StepDetectionResult",
     "StepHeading",
     "StepMotion",
+    "StepMotionObservation",
     "StepSegment",
     "TRAJECTORY_HEADING_MAX_STEP_DELTA_RAD",
     "TURNING_LENGTH_SCALE",

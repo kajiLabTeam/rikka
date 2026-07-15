@@ -293,6 +293,7 @@ def run(
             prepared_step_headings=prepared_steps.step_headings,
             prepared_step_lengths=prepared_steps.step_lengths,
             prepared_step_times=prepared_steps.t_at_steps,
+            prepared_motion_evidences=prepared_steps.motion_evidences,
             sidestep_lateral_ratio=sidestep_lateral_ratio,
             sidestep_min_lateral_displacement=sidestep_min_lateral_displacement,
             motion_heading_correction=selected_motion_heading_correction,

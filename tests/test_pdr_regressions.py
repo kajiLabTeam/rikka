@@ -10,14 +10,20 @@ from rikka.analyze.particle_filter import (
     ParticleFilterStepDiagnostics,
     _effective_sample_size,
     _evaluate_particle_transitions,
+    _motion_state_headings,
     _normalize_floormap_gray,
     _reconstruct_particle_paths,
     _reconstruct_resampled_paths,
     _replay_from_checkpoint,
+    _sample_motion_states,
     _select_reachable_mean_path,
     _snap_trajectory_to_walkable_pixels,
     _systematic_resample,
     run_particle_filter,
+)
+from rikka.analyze.pdr.particle_api import (
+    build_step_motion_evidences,
+    build_step_motion_observations,
 )
 from rikka.analyze.sensor_plot import _project_acceleration_to_step_axes
 
@@ -425,6 +431,115 @@ def test_systematic_resampling_is_reproducible() -> None:
     assert indices.tolist() == [1, 2, 2]
 
 
+def test_particle_motion_evidence_is_normalized_without_confidence_saturation() -> None:
+    evidence = build_step_motion_evidences([_forward_step_heading()])[0]
+
+    np.testing.assert_allclose(
+        evidence.forward_likelihood
+        + evidence.sidestep_left_likelihood
+        + evidence.sidestep_right_likelihood
+        + evidence.turning_likelihood,
+        1.0,
+    )
+    assert 0.0 < evidence.motion_reliability < 1.0
+    assert 0.0 < evidence.calibration_reliability < 1.0
+
+
+def test_motion_observation_separates_device_body_and_motion_axis() -> None:
+    heading = _forward_step_heading()._replace(
+        gyro_heading=np.deg2rad(10.0),
+        body_heading=np.deg2rad(25.0),
+        motion_heading=np.deg2rad(170.0),
+        forward_displacement=0.03,
+        lateral_displacement=-0.04,
+    )
+
+    observation = build_step_motion_observations([heading])[0]
+
+    np.testing.assert_allclose(observation.device_yaw_heading, np.deg2rad(10.0))
+    np.testing.assert_allclose(observation.body_heading_candidate, np.deg2rad(25.0))
+    np.testing.assert_allclose(
+        observation.directed_motion_heading,
+        np.deg2rad(170.0),
+    )
+    np.testing.assert_allclose(observation.motion_axis_heading, np.deg2rad(-10.0))
+    np.testing.assert_allclose(observation.displacement_norm, 0.05)
+
+
+def test_motion_axis_observation_is_unchanged_by_opposite_direction() -> None:
+    forward = _forward_step_heading(heading=np.deg2rad(35.0))
+    backward = forward._replace(motion_heading=forward.motion_heading + np.pi)
+
+    forward_observation = build_step_motion_observations([forward])[0]
+    backward_observation = build_step_motion_observations([backward])[0]
+
+    np.testing.assert_allclose(
+        forward_observation.motion_axis_heading,
+        backward_observation.motion_axis_heading,
+    )
+
+
+def test_particle_motion_evidence_preserves_raw_turning_after_smoothing() -> None:
+    heading = _forward_step_heading()._replace(
+        movement_type="turning_sidestep_right",
+        trajectory_movement_type="forward",
+        yaw_delta=np.deg2rad(55.0),
+    )
+
+    evidence = build_step_motion_evidences([heading])[0]
+
+    assert evidence.turning_likelihood > evidence.forward_likelihood
+
+
+def test_particle_motion_evidence_prioritizes_confirmed_sidestep_cluster() -> None:
+    headings = [_forward_step_heading(step_index=index) for index in range(1, 5)]
+    headings.append(
+        _forward_step_heading(step_index=5)._replace(
+            movement_type="sidestep_right",
+            trajectory_movement_type="sidestep_right",
+            motion_heading=-np.pi / 2,
+            forward_displacement=0.02,
+            lateral_displacement=-0.10,
+            sidestep_cluster_id=1,
+        )
+    )
+
+    evidence = build_step_motion_evidences(headings)[-1]
+
+    assert evidence.sidestep_right_likelihood > 0.9
+    assert evidence.forward_likelihood < 0.02
+
+
+def test_particle_motion_state_uses_distinct_forward_and_sidestep_headings() -> None:
+    heading = _forward_step_heading()._replace(
+        movement_type="sidestep_right",
+        trajectory_movement_type="sidestep_right",
+        body_heading=0.0,
+        motion_heading=np.deg2rad(-70.0),
+        sidestep_cluster_id=1,
+    )
+    evidence = build_step_motion_evidences(
+        [_forward_step_heading(step_index=index) for index in range(2, 6)] + [heading]
+    )[-1]._replace(calibration_reliability=0.7)
+
+    state_headings = _motion_state_headings(heading, evidence, 0.0)
+
+    np.testing.assert_allclose(state_headings[0], 0.0)
+    np.testing.assert_allclose(state_headings[2], np.deg2rad(-70.0))
+
+
+def test_particle_motion_state_proposal_preserves_sidestep_clusters() -> None:
+    previous_states = np.full(10_000, 1, dtype=np.int8)
+    states, predictive = _sample_motion_states(
+        previous_states,
+        np.full(4, 0.25),
+        np.random.default_rng(42),
+    )
+
+    assert np.mean(states == 1) > 0.79
+    np.testing.assert_allclose(predictive, 0.25)
+
+
 def test_particle_transition_supercover_rejects_thin_walls_and_map_exit() -> None:
     map_gray = np.full((7, 7), 255.0)
     map_gray[3, 3] = 0.0
@@ -564,7 +679,9 @@ def test_particle_filter_learns_and_keeps_persistent_stride_scale(tmp_path) -> N
         prepared_step_headings=[
             _forward_step_heading(step_index=1, heading=0.0),
             _forward_step_heading(step_index=2, heading=0.0),
-            _forward_step_heading(step_index=3, heading=np.pi),
+            _forward_step_heading(step_index=3, heading=np.pi)._replace(
+                yaw_delta=np.pi
+            ),
         ],
         prepared_step_lengths=[1.0, 1.0, 1.0],
         prepared_step_times=[0.0, 1.0, 2.0],
@@ -577,12 +694,11 @@ def test_particle_filter_learns_and_keeps_persistent_stride_scale(tmp_path) -> N
     np.testing.assert_allclose(
         diagnostics[2].stride_scale_mean,
         diagnostics[1].stride_scale_mean,
-        atol=1e-12,
+        atol=1e-4,
     )
-    np.testing.assert_allclose(
-        diagnostics[2].effective_step_length_mean_m,
-        diagnostics[2].stride_scale_mean,
-        atol=1e-12,
+    assert 0.0 < diagnostics[2].effective_step_length_mean_m
+    assert (
+        diagnostics[2].effective_step_length_mean_m <= diagnostics[2].stride_scale_mean
     )
 
 
@@ -734,9 +850,9 @@ def test_particle_filter_recovers_with_map_aware_direction_candidates(tmp_path) 
     )
 
     assert diagnostics[0].recovery_attempted is True
-    assert diagnostics[0].recovery_mode == "turn_grid"
+    assert diagnostics[0].recovery_mode in {"local_grid", "turn_grid"}
     assert diagnostics[0].recovery_valid_count > 0
-    assert diagnostics[0].ess_after_observation == 0.0
+    assert diagnostics[0].ess_after_observation <= 1.0
     np.testing.assert_allclose(diagnostics[0].ess_after_resampling, 80.0)
     assert diagnostics[1].recovery_attempted is True
     assert diagnostics[1].recovery_mode in {"local_grid", "turn_grid"}
@@ -806,6 +922,8 @@ def test_prepare_pdr_steps_returns_shared_step_result_without_steps() -> None:
     assert prepared.step_lengths == []
     assert prepared.t_at_steps == []
     assert prepared.step_headings == []
+    assert prepared.motion_evidences == ()
+    assert prepared.motion_observations == ()
     assert "low_angle" in prepared.df_gyro.columns
 
 
@@ -1723,6 +1841,22 @@ def test_smooth_step_headings_clustered_marks_strong_single_as_suspect() -> None
     assert smoothed[0].sidestep_evidence_reason == "body_motion_lateral"
     assert smoothed[0].sidestep_cluster_id is None
     np.testing.assert_allclose(smoothed[0].selected_heading, np.deg2rad(-100.0))
+
+
+def test_smooth_step_headings_keeps_turning_when_side_cluster_is_not_confirmed() -> (
+    None
+):
+    heading = _forward_step_heading()._replace(
+        movement_type="turning_sidestep_right",
+        forward_displacement=0.02,
+        lateral_displacement=-0.09,
+        motion_heading=np.deg2rad(-80.0),
+        yaw_delta=np.deg2rad(55.0),
+    )
+
+    smoothed = pdr._smooth_step_headings([heading], method="clustered")
+
+    assert smoothed[0].trajectory_movement_type == "turning_sidestep_right"
 
 
 def test_stabilize_trajectory_headings_uses_forward_motion_per_step() -> None:

@@ -240,7 +240,7 @@ uv run rikka run --forward-heading-source motion
 
 ```sh
 MPLBACKEND=Agg uv run python \
-  scripts/agent_evaluate_pf_ground_truth.py \
+  agent/agent_evaluate_pf_ground_truth.py \
   --plot-path output/diagnostics/pf_ground_truth_comparison.png
 ```
 

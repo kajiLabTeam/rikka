@@ -118,6 +118,7 @@ def main() -> None:
             prepared_step_headings=prepared.step_headings,
             prepared_step_lengths=prepared.step_lengths,
             prepared_step_times=prepared.t_at_steps,
+            prepared_motion_evidences=prepared.motion_evidences,
             sigma_init_heading=args.sigma_init_heading,
             sigma_heading=args.sigma_heading,
             sigma_sl_ratio=args.sigma_step_length_ratio,
@@ -153,6 +154,30 @@ def main() -> None:
                 "checkpoint_replays": sum(
                     item.recovery_mode == "checkpoint_replay" for item in diagnostics
                 ),
+                "recoveries": sum(
+                    item.recovery_mode not in {"none", "failed_hold"}
+                    for item in diagnostics
+                ),
+                "turn_grid_recoveries": sum(
+                    item.recovery_mode == "turn_grid" for item in diagnostics
+                ),
+                "representative_sidestep_steps": sum(
+                    item.representative_motion_state.startswith("sidestep")
+                    for item in diagnostics
+                ),
+                "mean_sidestep_probability": float(
+                    np.mean(
+                        [
+                            item.sidestep_left_state_probability
+                            + item.sidestep_right_state_probability
+                            for item in diagnostics
+                        ]
+                    )
+                ),
+                "representative_turning_steps": sum(
+                    item.representative_motion_state == "turning"
+                    for item in diagnostics
+                ),
                 "max_position_spread_m": max(
                     item.position_spread_rms_m for item in diagnostics
                 ),
@@ -160,7 +185,7 @@ def main() -> None:
         )
 
     if args.plot_path is not None:
-        columns = 3
+        columns = min(3, len(args.seeds))
         rows_count = int(np.ceil(len(args.seeds) / columns))
         figure, axes = plt.subplots(rows_count, columns, figsize=(15, 5 * rows_count))
         for axis, seed, trajectory, metrics in zip(

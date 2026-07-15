@@ -21,7 +21,7 @@ particle filter の決定論的回帰を確認し、複数 seed の軌跡精度�
 4. 既定のセンサーデータ、正解軌跡、フロアマップが存在することを確認し、既存の評価スクリプトを既定 seed `[0, 1, 2, 10, 42, 100]` で実行する。
 
    ```sh
-   MPLBACKEND=Agg uv run python scripts/agent_evaluate_pf_ground_truth.py
+   MPLBACKEND=Agg uv run python agent/agent_evaluate_pf_ground_truth.py
    ```
 
 5. 各 seed の `wall_crossings` と `recovery_failures` がともに 0 であることを合格条件にする。
