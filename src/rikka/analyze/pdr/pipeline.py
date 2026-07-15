@@ -15,6 +15,7 @@
     任意の静止画・ステップ診断図・アニメーション生成の順に処理する。
 """
 
+from dataclasses import asdict, fields
 from pathlib import Path
 
 import numpy as np
@@ -30,6 +31,7 @@ from ...config import (
     SIDESTEP_LATERAL_RATIO,
     SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
     SIDESTEP_SMOOTHING_METHOD,
+    SIDESTEP_SUSPECT_MODE,
     USER_HEIGHT_M,
 )
 from .common import (
@@ -78,7 +80,7 @@ def run(
     sidestep_smoothing: str = SIDESTEP_SMOOTHING_METHOD,
     forward_heading_source: str = FORWARD_HEADING_SOURCE,
     sidestep_heading_source: str = "motion",
-    sidestep_suspect_mode: str = "motion",
+    sidestep_suspect_mode: str = SIDESTEP_SUSPECT_MODE,
     particle_seed: int | None = None,
 ) -> pd.DataFrame:
     """PDRのメインパイプラインを実行する。
@@ -262,11 +264,13 @@ def run(
     # particle filter は prepared_steps を受け取り、同じステップ列を地図制約で補正する。
     if use_particle_filter:
         from ..particle_filter import (  # noqa: PLC0415
+            ParticleFilterStepDiagnostics,
             plot_particle_filter_trajectory,
             run_particle_filter,
             save_particle_animation,
         )
 
+        particle_diagnostics: list[ParticleFilterStepDiagnostics] = []
         (
             trajectory,
             step_lengths,
@@ -297,6 +301,7 @@ def run(
             sidestep_heading_source=selected_sidestep_heading_source,
             sidestep_suspect_mode=selected_sidestep_suspect_mode,
             seed=particle_seed,
+            diagnostics_collector=particle_diagnostics,
         )
 
         print(f"Peaks detected: {len(peaks)}")
@@ -328,6 +333,17 @@ def run(
         step_heading_path = output_dir / "step_headings.csv"
         df_step_headings.to_csv(step_heading_path, index=False)
         print(f"Step headings saved to {step_heading_path}")
+
+        diagnostic_columns = [
+            field.name for field in fields(ParticleFilterStepDiagnostics)
+        ]
+        df_particle_diagnostics = pd.DataFrame(
+            [asdict(item) for item in particle_diagnostics],
+            columns=diagnostic_columns,
+        )
+        diagnostics_path = output_dir / "particle_diagnostics.csv"
+        df_particle_diagnostics.to_csv(diagnostics_path, index=False)
+        print(f"Particle diagnostics saved to {diagnostics_path}")
 
         if step_detection.method == "paper_vertical_threshold":
             df_step_segments = _build_step_segments_dataframe(

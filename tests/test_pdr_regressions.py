@@ -7,12 +7,50 @@ import pandas as pd
 
 from rikka.analyze import pdr
 from rikka.analyze.particle_filter import (
+    ParticleFilterStepDiagnostics,
+    _effective_sample_size,
+    _evaluate_particle_transitions,
     _normalize_floormap_gray,
+    _reconstruct_particle_paths,
     _reconstruct_resampled_paths,
+    _replay_from_checkpoint,
+    _select_reachable_mean_path,
     _snap_trajectory_to_walkable_pixels,
+    _systematic_resample,
     run_particle_filter,
 )
 from rikka.analyze.sensor_plot import _project_acceleration_to_step_axes
+
+
+def _forward_step_heading(
+    step_index: int = 1,
+    heading: float = 0.0,
+) -> pdr.StepHeading:
+    """PF回帰テスト用の確定済み前進ステップを返す。"""
+    return pdr.StepHeading(
+        step_index=step_index,
+        timestamp_s=float(step_index - 1),
+        gyro_heading=heading,
+        accel_method1_heading=None,
+        accel_method2_heading=None,
+        selected_heading=heading,
+        source="trajectory_motion",
+        confidence=0.0,
+        angle_diff_method1=None,
+        angle_diff_method2=None,
+        segment_start_index=None,
+        segment_end_index=None,
+        peak1_index=None,
+        peak2_index=None,
+        body_heading=heading,
+        motion_heading=heading,
+        movement_type="forward",
+        forward_displacement=1.0,
+        lateral_displacement=0.0,
+        motion_confidence=1.0,
+        motion_reject_reason=None,
+        trajectory_movement_type="forward",
+    )
 
 
 def test_process_sensor_data_resets_index_and_uses_time_delta_for_gyro() -> None:
@@ -328,31 +366,14 @@ def test_run_returns_and_saves_timestamped_trajectory_without_steps(
 
 def test_run_particle_filter_seed_makes_particles_deterministic(tmp_path) -> None:
     floormap_path = tmp_path / "map.png"
-    plt.imsave(floormap_path, np.ones((20, 20), dtype=float), cmap="gray")
-    step_heading = pdr.StepHeading(
-        step_index=1,
-        timestamp_s=0.0,
-        gyro_heading=0.0,
-        accel_method1_heading=None,
-        accel_method2_heading=None,
-        selected_heading=0.0,
-        source="trajectory_motion",
-        confidence=0.0,
-        angle_diff_method1=None,
-        angle_diff_method2=None,
-        segment_start_index=None,
-        segment_end_index=None,
-        peak1_index=None,
-        peak2_index=None,
-        body_heading=0.0,
-        motion_heading=0.0,
-        movement_type="forward",
-        forward_displacement=1.0,
-        lateral_displacement=0.0,
-        motion_confidence=1.0,
-        motion_reject_reason=None,
-        trajectory_movement_type="forward",
+    plt.imsave(
+        floormap_path,
+        np.ones((20, 20), dtype=float),
+        cmap="gray",
+        vmin=0.0,
+        vmax=1.0,
     )
+    step_heading = _forward_step_heading()
 
     first = run_particle_filter(
         np.array([0]),
@@ -387,6 +408,377 @@ def test_run_particle_filter_seed_makes_particles_deterministic(tmp_path) -> Non
 
     np.testing.assert_allclose(np.asarray(first[0]), np.asarray(second[0]))
     np.testing.assert_allclose(first[3], second[3])
+
+
+def test_effective_sample_size_handles_uniform_and_concentrated_weights() -> None:
+    assert _effective_sample_size(np.full(4, 0.25)) == 4.0
+    assert _effective_sample_size(np.array([1.0, 0.0, 0.0, 0.0])) == 1.0
+    assert _effective_sample_size(np.zeros(4)) == 0.0
+
+
+def test_systematic_resampling_is_reproducible() -> None:
+    indices = _systematic_resample(
+        np.array([0.1, 0.2, 0.7]),
+        np.random.default_rng(7),
+    )
+
+    assert indices.tolist() == [1, 2, 2]
+
+
+def test_particle_transition_supercover_rejects_thin_walls_and_map_exit() -> None:
+    map_gray = np.full((7, 7), 255.0)
+    map_gray[3, 3] = 0.0
+    previous = np.array([[1.0, 3.0], [1.0, 1.0], [1.0, 5.0], [1.0, 1.0]])
+    proposed = np.array([[5.0, 3.0], [5.0, 5.0], [5.0, 5.0], [8.0, 1.0]])
+
+    valid = _evaluate_particle_transitions(
+        previous,
+        proposed,
+        map_gray,
+        gx_mean=0.0,
+        gz_mean=1.0,
+        origin_px=(0, 0),
+        scale=1.0,
+    )
+
+    assert valid.tolist() == [False, False, True, False]
+
+
+def test_particle_transition_supercover_treats_corner_touch_as_collision() -> None:
+    map_gray = np.full((4, 4), 255.0)
+    map_gray[1, 2] = 0.0
+
+    valid = _evaluate_particle_transitions(
+        np.array([[1.0, 1.0]]),
+        np.array([[2.0, 2.0]]),
+        map_gray,
+        gx_mean=0.0,
+        gz_mean=1.0,
+        origin_px=(0, 0),
+        scale=1.0,
+    )
+
+    assert valid.tolist() == [False]
+
+
+def test_particle_filter_keeps_weights_without_unneeded_resampling(tmp_path) -> None:
+    floormap_path = tmp_path / "map.png"
+    plt.imsave(
+        floormap_path,
+        np.ones((20, 20), dtype=float),
+        cmap="gray",
+        vmin=0.0,
+        vmax=1.0,
+    )
+    diagnostics: list[ParticleFilterStepDiagnostics] = []
+
+    run_particle_filter(
+        np.array([0]),
+        pd.DataFrame({"low_angle": [0.0]}),
+        pd.DataFrame({"h_y": [0.0], "h_z": [0.0]}),
+        gx_mean=0.0,
+        gz_mean=9.8,
+        floormap_path=floormap_path,
+        origin_px=(5, 5),
+        scale=1.0,
+        n_particles=12,
+        prepared_step_headings=[_forward_step_heading()],
+        prepared_step_lengths=[1.0],
+        prepared_step_times=[0.0],
+        seed=123,
+        diagnostics_collector=diagnostics,
+    )
+
+    assert len(diagnostics) == 1
+    np.testing.assert_allclose(diagnostics[0].ess_after_observation, 12.0)
+    assert diagnostics[0].resampled is False
+    assert diagnostics[0].unique_parent_count == 12
+
+
+def test_particle_filter_bounds_heading_drift_in_open_area(tmp_path) -> None:
+    floormap_path = tmp_path / "open_map.png"
+    plt.imsave(
+        floormap_path,
+        np.ones((150, 150), dtype=float),
+        cmap="gray",
+        vmin=0.0,
+        vmax=1.0,
+    )
+    n_steps = 60
+    diagnostics: list[ParticleFilterStepDiagnostics] = []
+
+    result = run_particle_filter(
+        np.arange(n_steps),
+        pd.DataFrame({"low_angle": np.zeros(n_steps)}),
+        pd.DataFrame({"h_y": np.zeros(n_steps), "h_z": np.zeros(n_steps)}),
+        gx_mean=0.0,
+        gz_mean=9.8,
+        floormap_path=floormap_path,
+        origin_px=(20, 70),
+        scale=1.0,
+        n_particles=500,
+        prepared_step_headings=[
+            _forward_step_heading(step_index=i + 1) for i in range(n_steps)
+        ],
+        prepared_step_lengths=[1.0] * n_steps,
+        prepared_step_times=[float(i) for i in range(n_steps)],
+        seed=42,
+        diagnostics_collector=diagnostics,
+    )
+
+    assert diagnostics[-1].heading_drift_std_deg < 7.5
+    assert all(item.trajectory_mode == "weighted_mean" for item in diagnostics)
+    trajectory = np.asarray(result[0], dtype=float)
+    headings_deg = np.degrees(
+        np.arctan2(np.diff(trajectory[:, 1]), np.diff(trajectory[:, 0]))
+    )
+    assert float(np.mean(np.abs(headings_deg))) < 10.0
+
+
+def test_particle_filter_learns_and_keeps_persistent_stride_scale(tmp_path) -> None:
+    map_gray = np.ones((50, 50), dtype=float)
+    map_gray[:, 32] = 0.0
+    floormap_path = tmp_path / "stride_constraint_map.png"
+    plt.imsave(floormap_path, map_gray, cmap="gray", vmin=0.0, vmax=1.0)
+    diagnostics: list[ParticleFilterStepDiagnostics] = []
+
+    run_particle_filter(
+        np.arange(3),
+        pd.DataFrame({"low_angle": np.zeros(3)}),
+        pd.DataFrame({"h_y": np.zeros(3), "h_z": np.zeros(3)}),
+        gx_mean=0.0,
+        gz_mean=9.8,
+        floormap_path=floormap_path,
+        origin_px=(10, 25),
+        scale=0.1,
+        n_particles=500,
+        sigma_init_heading=0.0,
+        sigma_heading=0.0,
+        sigma_sl_ratio=0.0,
+        stride_scale_prior_mean=1.0,
+        stride_scale_init_sigma=0.15,
+        stride_scale_retention=1.0,
+        stride_scale_process_sigma=0.0,
+        stride_scale_rejuvenation_sigma=0.0,
+        resample_ess_ratio=0.99,
+        prepared_step_headings=[
+            _forward_step_heading(step_index=1, heading=0.0),
+            _forward_step_heading(step_index=2, heading=0.0),
+            _forward_step_heading(step_index=3, heading=np.pi),
+        ],
+        prepared_step_lengths=[1.0, 1.0, 1.0],
+        prepared_step_times=[0.0, 1.0, 2.0],
+        seed=42,
+        diagnostics_collector=diagnostics,
+    )
+
+    assert diagnostics[1].resampled is True
+    assert diagnostics[1].stride_scale_mean < diagnostics[0].stride_scale_mean - 0.03
+    np.testing.assert_allclose(
+        diagnostics[2].stride_scale_mean,
+        diagnostics[1].stride_scale_mean,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        diagnostics[2].effective_step_length_mean_m,
+        diagnostics[2].stride_scale_mean,
+        atol=1e-12,
+    )
+
+
+def test_particle_filter_rejects_invalid_stride_scale_range(tmp_path) -> None:
+    floormap_path = tmp_path / "open_map.png"
+    plt.imsave(
+        floormap_path,
+        np.ones((5, 5), dtype=float),
+        cmap="gray",
+        vmin=0.0,
+        vmax=1.0,
+    )
+
+    with np.testing.assert_raises_regex(ValueError, "stride_scale_min"):
+        run_particle_filter(
+            np.array([], dtype=int),
+            pd.DataFrame({"low_angle": []}),
+            pd.DataFrame({"h_y": [], "h_z": []}),
+            gx_mean=0.0,
+            gz_mean=9.8,
+            floormap_path=floormap_path,
+            origin_px=(2, 2),
+            scale=1.0,
+            n_particles=4,
+            prepared_step_headings=[],
+            prepared_step_lengths=[],
+            prepared_step_times=[],
+            stride_scale_min=1.1,
+            stride_scale_max=1.0,
+        )
+
+
+def test_checkpoint_replay_reconstructs_wall_valid_multi_step_path() -> None:
+    map_gray = np.zeros((30, 30), dtype=float)
+    for y in range(2, 28):
+        for x in range(2, 28):
+            if abs(x - y) <= 2:
+                map_gray[y, x] = 255.0
+    n_particles = 20
+
+    result = _replay_from_checkpoint(
+        checkpoint_particles=np.zeros((n_particles, 2), dtype=float),
+        checkpoint_heading_correction=np.zeros(n_particles),
+        checkpoint_heading_drift=np.zeros(n_particles),
+        checkpoint_stride_scale=np.ones(n_particles),
+        checkpoint_weights=np.full(n_particles, 1.0 / n_particles),
+        angles=np.zeros(2),
+        step_lengths=np.full(2, 3.0),
+        n_particles=n_particles,
+        map_gray=map_gray,
+        gx_mean=0.0,
+        gz_mean=9.8,
+        origin_px=(5, 5),
+        scale=1.0,
+        heading_sigma=np.deg2rad(5.0),
+        rng=np.random.default_rng(42),
+    )
+
+    assert result is not None
+    assert result.replay_positions.shape == (2, n_particles, 2)
+    assert result.recovery.mode == "checkpoint_replay"
+    starts = np.concatenate(
+        [
+            np.zeros((1, n_particles, 2)),
+            result.replay_positions[:-1],
+        ],
+        axis=0,
+    )
+    assert _evaluate_particle_transitions(
+        starts.reshape(-1, 2),
+        result.replay_positions.reshape(-1, 2),
+        map_gray,
+        gx_mean=0.0,
+        gz_mean=9.8,
+        origin_px=(5, 5),
+        scale=1.0,
+    ).all()
+
+
+def test_reachable_mean_path_falls_back_without_using_zero_weight_path() -> None:
+    map_gray = np.full((7, 7), 255.0)
+    map_gray[3, 3] = 0.0
+    upper_path = np.array([[1.0, 3.0], [2.0, 2.0], [3.0, 1.0], [4.0, 2.0], [5.0, 3.0]])
+    lower_path = np.array([[1.0, 3.0], [2.0, 4.0], [3.0, 5.0], [4.0, 4.0], [5.0, 3.0]])
+    wall_path = np.array([[1.0, 3.0], [2.0, 3.0], [3.0, 3.0], [4.0, 3.0], [5.0, 3.0]])
+
+    selected, modes, sources = _select_reachable_mean_path(
+        np.stack([upper_path, lower_path, wall_path]),
+        np.array([0.5, 0.5, 0.0]),
+        map_gray,
+        gx_mean=0.0,
+        gz_mean=1.0,
+        origin_px=(0, 0),
+        scale=1.0,
+    )
+
+    assert "particle_fallback" in modes
+    assert 2 not in sources
+    assert _evaluate_particle_transitions(
+        selected[:-1],
+        selected[1:],
+        map_gray,
+        gx_mean=0.0,
+        gz_mean=1.0,
+        origin_px=(0, 0),
+        scale=1.0,
+    ).all()
+
+
+def test_particle_filter_recovers_with_map_aware_direction_candidates(tmp_path) -> None:
+    map_gray = np.zeros((21, 21), dtype=float)
+    map_gray[1:20, 10] = 1.0
+    floormap_path = tmp_path / "vertical_corridor.png"
+    plt.imsave(floormap_path, map_gray, cmap="gray", vmin=0.0, vmax=1.0)
+    diagnostics: list[ParticleFilterStepDiagnostics] = []
+
+    result = run_particle_filter(
+        np.array([0, 1]),
+        pd.DataFrame({"low_angle": [0.0]}),
+        pd.DataFrame({"h_y": [0.0], "h_z": [0.0]}),
+        gx_mean=0.0,
+        gz_mean=9.8,
+        floormap_path=floormap_path,
+        origin_px=(10, 10),
+        scale=1.0,
+        n_particles=80,
+        sigma_init_heading=0.0,
+        sigma_heading=0.0,
+        sigma_sl_ratio=0.0,
+        stride_scale_init_sigma=0.0,
+        stride_scale_process_sigma=0.0,
+        stride_scale_rejuvenation_sigma=0.0,
+        prepared_step_headings=[
+            _forward_step_heading(step_index=1)._replace(
+                movement_type="turning",
+                trajectory_movement_type="turning",
+            ),
+            _forward_step_heading(step_index=2)._replace(
+                movement_type="turning",
+                trajectory_movement_type="turning",
+            ),
+        ],
+        prepared_step_lengths=[3.0, 3.0],
+        prepared_step_times=[0.0, 1.0],
+        seed=42,
+        recovery_valid_ratio=0.5,
+        recovery_heading_sigma=0.03,
+        diagnostics_collector=diagnostics,
+    )
+
+    assert diagnostics[0].recovery_attempted is True
+    assert diagnostics[0].recovery_mode == "turn_grid"
+    assert diagnostics[0].recovery_valid_count > 0
+    assert diagnostics[0].ess_after_observation == 0.0
+    np.testing.assert_allclose(diagnostics[0].ess_after_resampling, 80.0)
+    assert diagnostics[1].recovery_attempted is True
+    assert diagnostics[1].recovery_mode in {"local_grid", "turn_grid"}
+    assert diagnostics[1].recovery_valid_count > 0
+    np.testing.assert_allclose(
+        [item.stride_scale_mean for item in diagnostics],
+        [1.03, 1.03],
+        atol=1e-12,
+    )
+    assert result[0][1] != [0.0, 0.0]
+    trajectory = np.asarray(result[0], dtype=float)
+    assert _evaluate_particle_transitions(
+        trajectory[:-1],
+        trajectory[1:],
+        _normalize_floormap_gray(plt.imread(floormap_path)),
+        gx_mean=0.0,
+        gz_mean=9.8,
+        origin_px=(10, 10),
+        scale=1.0,
+    ).all()
+
+
+def test_particle_filter_rejects_origin_on_wall(tmp_path) -> None:
+    floormap_path = tmp_path / "wall.png"
+    plt.imsave(floormap_path, np.zeros((5, 5), dtype=float), cmap="gray")
+
+    with np.testing.assert_raises_regex(ValueError, "origin_px"):
+        run_particle_filter(
+            np.array([], dtype=int),
+            pd.DataFrame({"low_angle": []}),
+            pd.DataFrame({"h_y": [], "h_z": []}),
+            gx_mean=0.0,
+            gz_mean=9.8,
+            floormap_path=floormap_path,
+            origin_px=(2, 2),
+            scale=1.0,
+            n_particles=4,
+            prepared_step_headings=[],
+            prepared_step_lengths=[],
+            prepared_step_times=[],
+            seed=1,
+        )
 
 
 def test_prepare_pdr_steps_returns_shared_step_result_without_steps() -> None:
@@ -1321,7 +1713,11 @@ def test_smooth_step_headings_clustered_marks_strong_single_as_suspect() -> None
         motion_reject_reason=None,
     )
 
-    smoothed = pdr._smooth_step_headings([heading], method="clustered")
+    smoothed = pdr._smooth_step_headings(
+        [heading],
+        method="clustered",
+        sidestep_suspect_mode="motion",
+    )
 
     assert smoothed[0].trajectory_movement_type == "sidestep_suspect_right"
     assert smoothed[0].sidestep_evidence_reason == "body_motion_lateral"
@@ -1365,7 +1761,10 @@ def test_stabilize_trajectory_headings_uses_forward_motion_per_step() -> None:
         ),
     ]
 
-    stabilized = pdr._stabilize_trajectory_headings(headings)
+    stabilized = pdr._stabilize_trajectory_headings(
+        headings,
+        forward_heading_source="motion",
+    )
 
     np.testing.assert_allclose(stabilized[0].body_heading, np.deg2rad(80.0))
     np.testing.assert_allclose(stabilized[1].body_heading, np.deg2rad(100.0))
@@ -1400,7 +1799,10 @@ def test_stabilize_trajectory_headings_rejects_initial_forward_outlier() -> None
         motion_reject_reason=None,
     )
 
-    stabilized = pdr._stabilize_trajectory_headings([heading])
+    stabilized = pdr._stabilize_trajectory_headings(
+        [heading],
+        forward_heading_source="motion",
+    )
 
     np.testing.assert_allclose(stabilized[0].selected_heading, 0.0, atol=1e-12)
     assert stabilized[0].source == "trajectory_initial_body_fallback"
@@ -1442,7 +1844,10 @@ def test_stabilize_trajectory_headings_limits_same_type_heading_jump() -> None:
         ),
     ]
 
-    stabilized = pdr._stabilize_trajectory_headings(headings)
+    stabilized = pdr._stabilize_trajectory_headings(
+        headings,
+        forward_heading_source="motion",
+    )
 
     np.testing.assert_allclose(stabilized[0].selected_heading, 0.0, atol=1e-12)
     np.testing.assert_allclose(stabilized[1].selected_heading, np.deg2rad(25.0))
@@ -1758,7 +2163,11 @@ def test_estimate_step_motion_uses_trajectory_movement_type_override() -> None:
         trajectory_movement_type="forward",
     )
 
-    motion = pdr.estimate_step_motion(heading, 1.0)
+    motion = pdr.estimate_step_motion(
+        heading,
+        1.0,
+        forward_heading_source="motion",
+    )
 
     assert motion is not None
     assert motion.movement_type == "forward"
@@ -1829,7 +2238,11 @@ def test_estimate_step_motion_sidestep_defaults_to_motion_heading() -> None:
         trajectory_movement_type="sidestep_right",
     )
 
-    motion = pdr.estimate_step_motion(heading, 1.0)
+    motion = pdr.estimate_step_motion(
+        heading,
+        1.0,
+        sidestep_suspect_mode="motion",
+    )
 
     assert motion is not None
     assert motion.movement_type == "sidestep_right"
@@ -1935,7 +2348,11 @@ def test_estimate_step_motion_sidestep_suspect_uses_motion_heading() -> None:
         trajectory_movement_type="sidestep_suspect_right",
     )
 
-    motion = pdr.estimate_step_motion(heading, 1.0)
+    motion = pdr.estimate_step_motion(
+        heading,
+        1.0,
+        sidestep_suspect_mode="motion",
+    )
 
     assert motion is not None
     assert motion.movement_type == "sidestep_suspect_right"
@@ -2148,6 +2565,30 @@ def test_reconstruct_resampled_paths_traces_final_particle_ancestors() -> None:
     )
 
 
+def test_reconstruct_particle_paths_supports_identity_parent_steps() -> None:
+    position_history = [
+        np.array([[0.0, 0.0], [10.0, 0.0]]),
+        np.array([[1.0, 0.0], [11.0, 0.0]]),
+        np.array([[12.0, 0.0], [2.0, 0.0]]),
+    ]
+    parent_history = [
+        np.array([0, 1]),
+        np.array([1, 0]),
+    ]
+
+    paths = _reconstruct_particle_paths(position_history, parent_history)
+
+    np.testing.assert_allclose(
+        paths,
+        np.array(
+            [
+                [[10.0, 0.0], [11.0, 0.0], [12.0, 0.0]],
+                [[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]],
+            ]
+        ),
+    )
+
+
 def test_snap_trajectory_to_walkable_pixels_moves_wall_points() -> None:
     map_gray = np.zeros((5, 5), dtype=float)
     map_gray[2, 1] = 255.0
@@ -2247,7 +2688,13 @@ def test_project_acceleration_to_step_axes_requires_gyro_angle() -> None:
 
 def test_particle_animation_respects_save_animation_flag(tmp_path, monkeypatch) -> None:
     map_path = tmp_path / "map.png"
-    plt.imsave(map_path, np.ones((8, 8)), cmap="gray")
+    plt.imsave(
+        map_path,
+        np.ones((8, 8)),
+        cmap="gray",
+        vmin=0.0,
+        vmax=1.0,
+    )
 
     df_acc = pd.DataFrame(
         {
@@ -2302,6 +2749,10 @@ def test_particle_animation_respects_save_animation_flag(tmp_path, monkeypatch) 
     first_trajectory = pd.read_csv(tmp_path / "first" / "trajectory.csv")
     assert first_trajectory.columns.tolist() == ["timestamp_s", "x", "y"]
     assert first_trajectory.empty
+    first_diagnostics = pd.read_csv(tmp_path / "first" / "particle_diagnostics.csv")
+    assert first_diagnostics.empty
+    assert "ess_after_observation" in first_diagnostics.columns
+    assert "stride_scale_mean" in first_diagnostics.columns
 
     pdr.run(
         df_acc=df_acc,
