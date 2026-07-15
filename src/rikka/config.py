@@ -18,14 +18,14 @@ from math import isfinite
 # Data directory path
 # Change this path to use different input data
 
-DATA_DIR = "input/1turn_rightsidestep_3turn_leftsidestep5"
+DATA_DIR = "input/sensor_data/1turn_rightsidestep_3turn_leftsidestep"
 
 # フロアマップ設定
 # 背景として表示するフロアマップ画像のパス
 FLOORMAP_PATH = "input/Floormap_building14_5floor.png"
 # 軌跡の起点（原点）がフロアマップ上で対応するピクセル座標 (x_px, y_px)
 # 実際の歩行開始位置に合わせて調整すること
-FLOORMAP_ORIGIN_PX: tuple[int, int] = (2050, 600)
+FLOORMAP_ORIGIN_PX: tuple[int, int] = (2050, 400)
 # 1ピクセルあたりのメートル数（1px = 1cm = 0.01m）
 
 FLOORMAP_SCALE = 0.01
@@ -133,7 +133,8 @@ HEADING_METHOD = "gyro_accel_motion"
 # forward 判定ステップを軌跡へ積むときの方位ソース
 # "body"  : ジャイロ由来の体/端末方向を使う
 # "motion": 水平加速度から得た移動方向を使う
-FORWARD_HEADING_SOURCE = "motion"
+FORWARD_HEADING_SOURCE = "body"
+SIDESTEP_SUSPECT_MODE = "forward"
 
 # 加速度平面成分方位の信頼度パラメータ
 ACCEL_HEADING_MIN_PEAK_NORM = 1.0
@@ -161,6 +162,19 @@ K_FORWARD = 9.0
 
 # パーティクルフィルタ設定
 PF_NUM_PARTICLES = 500
-PF_SIGMA_INIT_HEADING = 0.15  # 初期方向ばらつき [rad]（±9°）
-PF_SIGMA_HEADING = 0.05  # ステップごとの方位角ドリフト [rad/step]（±3°）
-PF_SIGMA_STEP_LENGTH_RATIO = 0.08  # ステップ長ノイズ比率（±8%）
+PF_SIGMA_INIT_HEADING = 0.03  # 初期方向ばらつき [rad]
+PF_SIGMA_HEADING = 0.01  # ステップごとの方位角ドリフト [rad/step]
+PF_SIGMA_STEP_LENGTH_RATIO = 0.01  # 永続倍率で説明できない歩ごとの歩幅ノイズ
+PF_STRIDE_SCALE_PRIOR_MEAN = 1.03  # 正解軌跡長と決定論的歩幅合計から得た事前中心
+PF_STRIDE_SCALE_INIT_SIGMA = 0.05  # 粒子ごとの初期歩幅倍率ばらつき
+PF_STRIDE_SCALE_RETENTION = 0.995  # 学習した歩幅倍率偏差の1歩ごとの保持率
+PF_STRIDE_SCALE_PROCESS_SIGMA = 0.002  # 歩幅倍率の1歩ごとの変動
+PF_STRIDE_SCALE_REJUVENATION_SIGMA = 0.003  # 再標本化後の歩幅倍率多様化
+PF_STRIDE_SCALE_MIN = 0.90  # 歩幅倍率の下限
+PF_STRIDE_SCALE_MAX = 1.15  # 歩幅倍率の上限
+PF_HEADING_DRIFT_RETENTION = 0.85  # 通常方位ドリフトの1歩ごとの保持率
+PF_RESAMPLE_ESS_RATIO = 0.5  # ESSが粒子数に占める割合を下回ると再標本化
+PF_REJUVENATION_SIGMA_HEADING = 0.02  # 再標本化後の方位多様化 [rad]
+PF_RECOVERY_VALID_RATIO = 0.05  # 有効な重み付き粒子率が下回ると復旧
+PF_RECOVERY_HEADING_SIGMA = 0.08  # local recoveryの方位分散 [rad]
+PF_RECOVERY_MAX_ATTEMPTS = 5  # recovery候補を追加生成する最大回数

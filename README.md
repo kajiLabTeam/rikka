@@ -5,8 +5,8 @@ PDR（Pedestrian Dead Reckoning）ライブラリです。
 
 現在の標準設定は、ジャイロを体の向き、水平加速度を横歩き判定用の
 移動特徴として使う `gyro_accel_motion` です。通常歩行の軌跡方位は
-`motion_heading` を使います。同方向にまとまった横歩きは確定横歩きとして、
-強い単発候補は横歩き疑いとして軌跡へ反映し、それ以外の単発判定は前進扱いにします。
+`body_heading`、同方向にまとまった確定横歩きは`motion_heading`を使います。
+確定しなかった単発候補は前進扱いにします。
 
 ## セットアップ
 
@@ -29,13 +29,20 @@ brew install ffmpeg
 
 ## 入力データ
 
-`input/<データフォルダ>/` に phyphox 形式の CSV を置きます。
+`input/sensor_data/<データフォルダ>/` に phyphox 形式の CSV を置きます。
+正解経路の動画・CSV・画像は `input/correct_path/<経路フォルダ>/` に分けて
+配置します。フロアマップ画像は `input/` 直下に置きます。
 
 ```text
 input/
-└── my_walk/
-    ├── Accelerometer.csv
-    └── Gyroscope.csv
+├── sensor_data/
+│   └── my_walk/
+│       ├── Accelerometer.csv
+│       └── Gyroscope.csv
+├── correct_path/
+│   └── my_walk/
+│       └── walk_trace.csv
+└── Floormap_building14_5floor.png
 ```
 
 対応する列名は次の通りです。
@@ -48,13 +55,13 @@ input/
 現在の既定入力は次です。
 
 ```python
-DATA_DIR = "input/1turn_rightsidestep_3turn_leftsidestep5"
+DATA_DIR = "input/sensor_data/1turn_rightsidestep_3turn_leftsidestep5"
 ```
 
 別データを使う場合は、CLI の `-d` で指定できます。
 
 ```sh
-UV_CACHE_DIR=.uv-cache uv run rikka run -d input/my_walk
+UV_CACHE_DIR=.uv-cache uv run rikka run -d input/sensor_data/my_walk
 ```
 
 ## 基本コマンド
@@ -103,7 +110,7 @@ UV_CACHE_DIR=.uv-cache uv run rikka sensor
 
 ```mermaid
 flowchart TD
-    input_dir["input/<data_dir>/"] --> acc_csv["Accelerometer.csv"]
+    input_dir["input/sensor_data/<data_dir>/"] --> acc_csv["Accelerometer.csv"]
     input_dir --> gyro_csv["Gyroscope.csv"]
     floormap["input/Floormap_building14_5floor.png"] --> plot_pdr
     floormap --> pf_map
@@ -123,23 +130,25 @@ flowchart TD
 
     prepared --> pdr_branch{"コマンド"}
     pdr_branch -->|rikka run / pdr| det_traj["通常 PDR\nstep_length × selected_heading を積み上げ"]
-    pdr_branch -->|rikka particle| pf["run_particle_filter()\n粒子をステップごとに予測・リサンプリング"]
+    pdr_branch -->|rikka particle| pf["run_particle_filter()\n全画素壁判定 / ESS適応リサンプリング / recovery"]
 
     pf_map["フロアマップ輝度\n通路/壁判定"] --> pf
-    pf --> pf_snap["平均軌跡を歩行可能画素へ補正"]
+    pf --> pf_path["重み付き平均を優先\n壁付近だけ同一祖先経路へ退避"]
 
     det_traj --> csv_common["CSV 出力\ntrajectory.csv / step_lengths.csv / step_headings.csv / gyro_bias.csv"]
     det_traj --> plot_pdr["plot_trajectory()\ntrajectory.png"]
     det_traj --> step_plots["plot_step_lengths() / plot_step_vectors()\nstep_lengths.png / step_vectors/step_*.png"]
 
-    pf_snap --> csv_common
-    pf_snap --> plot_pf["plot_particle_filter_trajectory()\npf_trajectory.png"]
+    pf_path --> csv_common
+    pf_path --> plot_pf["plot_particle_filter_trajectory()\npf_trajectory.png"]
+    pf --> pf_diagnostics["particle_diagnostics.csv\nESS / 多様性 / recovery"]
     pf --> anim["save_particle_animation()\nparticle_filter.mp4 または .gif"]
 
     csv_common --> output_dir["output/<timestamp>/"]
     plot_pdr --> output_dir
     step_plots --> output_dir
     plot_pf --> output_dir
+    pf_diagnostics --> output_dir
     anim --> output_dir
 ```
 
@@ -148,7 +157,7 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    input["input/<data_dir>/\nAccelerometer.csv / Gyroscope.csv"] --> load["load_sensor_data()"]
+    input["input/sensor_data/<data_dir>/\nAccelerometer.csv / Gyroscope.csv"] --> load["load_sensor_data()"]
     load --> preprocess["process_sensor_data()"]
     preprocess --> detect["detect_step_result()"]
     detect --> sensor_plot["plot_sensor_data()\nsensor_plot.png"]
@@ -161,14 +170,14 @@ flowchart LR
 
 | 項目 | 既定値 | 説明 |
 |---|---:|---|
-| `DATA_DIR` | `input/1turn_rightsidestep_3turn_leftsidestep5` | 入力データ |
+| `DATA_DIR` | `input/sensor_data/1turn_rightsidestep_3turn_leftsidestep5` | 入力データ |
 | `FLOORMAP_PATH` | `input/Floormap_building14_5floor.png` | 背景マップ |
-| `FLOORMAP_ORIGIN_PX` | `(2050, 600)` | 軌跡の開始ピクセル |
+| `FLOORMAP_ORIGIN_PX` | `(2050, 400)` | 軌跡の開始ピクセル |
 | `FLOORMAP_SCALE` | `0.01` | 1px あたりのメートル数 |
 | `INITIAL_DIRECTION` | `90.0` | 歩行開始方向 [deg] |
 | `STEP_DETECTION_METHOD` | `peak` | ステップ検出 |
 | `HEADING_METHOD` | `gyro_accel_motion` | 方位・移動方向推定 |
-| `FORWARD_HEADING_SOURCE` | `motion` | 通常歩行の軌跡方位は水平加速度由来の移動方向を使用 |
+| `FORWARD_HEADING_SOURCE` | `body` | 通常歩行はジャイロ由来の体・端末方向を使用 |
 | `GYRO_BIAS_METHOD` | `prewalk_robust` | ジャイロバイアス推定 |
 | `USER_HEIGHT_M` | `1.68` | Weinberg 歩幅補正用の身長 |
 | `SIDESTEP_LATERAL_RATIO` | `1.2` | 横方向/前方向の比率がこの値以上で横歩き候補 |
@@ -176,6 +185,15 @@ flowchart LR
 | `SIDESTEP_SMOOTHING_METHOD` | `clustered` | 同方向 evidence の連続クラスタを評価し、確定横歩きまたは横歩き疑いとして軌跡へ反映 |
 | `SIDESTEP_LENGTH_SCALE` | `1` | 横歩き歩幅の倍率 |
 | `TURNING_LENGTH_SCALE` | `0.3` | 旋回中歩幅の倍率 |
+| `PF_HEADING_DRIFT_RETENTION` | `0.85` | PFの通常方位ドリフトを次歩へ保持する割合 |
+| `PF_SIGMA_INIT_HEADING` | `0.03` | PFの初期方位ばらつき [rad] |
+| `PF_SIGMA_HEADING` | `0.01` | PFの1歩ごとの方位ノイズ [rad] |
+| `PF_SIGMA_STEP_LENGTH_RATIO` | `0.01` | 永続倍率で説明できない1歩ごとの歩幅ノイズ |
+| `PF_STRIDE_SCALE_PRIOR_MEAN` | `1.03` | 正解軌跡長から校正したPF歩幅倍率の事前中心 |
+| `PF_STRIDE_SCALE_RETENTION` | `0.995` | 学習した歩幅倍率偏差を次歩へ保持する割合 |
+| `PF_STRIDE_SCALE_MIN / MAX` | `0.90 / 1.15` | PFが保持する歩幅倍率の範囲 |
+| `PF_RESAMPLE_ESS_RATIO` | `0.5` | PFで再標本化を開始するESS比率 |
+| `PF_RECOVERY_VALID_RATIO` | `0.05` | PFでmap-aware recoveryを開始する有効粒子率 |
 
 `gyro_accel_motion` では次を分けて扱います。
 
@@ -209,15 +227,21 @@ flowchart LR
 2歩以上かつクラスタ全体の横方向変位が閾値を満たす場合、確定横歩きとして軌跡へ
 反映します。
 
-確定しなかった強い単発 evidence は、標準の `--sidestep-suspect-mode motion` では
-`trajectory_movement_type="sidestep_suspect_left/right"` として `motion_heading` を
-軌跡へ反映します。それ以外の単発判定は `trajectory_movement_type="forward"` として
-前進扱いにします。
-また、`forward` 判定ステップは水平加速度由来の `motion_heading` で軌跡へ積みます。
-ジャイロ由来の `body_heading` で積む場合は次を指定します。
+確定しなかった強い単発 evidence は、標準の `--sidestep-suspect-mode forward` では
+`trajectory_movement_type="forward"`として前進扱いにします。
+また、`forward`判定ステップはジャイロ由来の`body_heading`で軌跡へ積みます。
+比較のため水平加速度由来の`motion_heading`で積む場合は次を指定します。
 
 ```sh
-UV_CACHE_DIR=.uv-cache uv run rikka run --forward-heading-source body
+UV_CACHE_DIR=.uv-cache uv run rikka run --forward-heading-source motion
+```
+
+正解軌跡との複数seed比較を実行する場合:
+
+```sh
+MPLBACKEND=Agg UV_CACHE_DIR=.uv-cache uv run python \
+  scripts/agent_evaluate_pf_ground_truth.py \
+  --plot-path output/diagnostics/pf_ground_truth_comparison.png
 ```
 
 横歩き判定を軌跡へそのまま反映して比較したい場合:
@@ -249,7 +273,7 @@ UV_CACHE_DIR=.uv-cache uv run rikka run --sidestep-lateral-ratio 1.5
 
 ```sh
 UV_CACHE_DIR=.uv-cache uv run rikka run \
-  -d input/1turn_rightsidestep_3turn_leftsidestep2 \
+  -d input/sensor_data/1turn_rightsidestep_3turn_leftsidestep2 \
   --gyro-bias-method manual \
   --gyro-bias 0.002
 ```
@@ -274,7 +298,8 @@ UV_CACHE_DIR=.uv-cache uv run rikka run \
 
 | ファイル | 内容 |
 |---|---|
-| `pf_trajectory.png` | PF の平均軌跡 |
+| `pf_trajectory.png` | PF の平均優先・壁際祖先フォールバック軌跡 |
+| `particle_diagnostics.csv` | 各歩のESS、有効粒子数、位置・方位分散、歩幅倍率、recovery、軌跡選択モード |
 | `particle_filter.mp4` / `.gif` | パーティクル分布アニメーション |
 
 ## コード構成

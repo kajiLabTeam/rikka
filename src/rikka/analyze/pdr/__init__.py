@@ -47,6 +47,7 @@ from ...config import (
     SIDESTEP_LENGTH_SCALE,
     SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
     SIDESTEP_SMOOTHING_METHOD,
+    SIDESTEP_SUSPECT_MODE,
     STEP_DETECTION_METHOD,
     STEP_VERTICAL_SMOOTH_WINDOW,
     STEP_VERTICAL_THRESHOLD_PERCENTILE,
@@ -392,7 +393,7 @@ def run(
     sidestep_smoothing: str = SIDESTEP_SMOOTHING_METHOD,
     forward_heading_source: str = FORWARD_HEADING_SOURCE,
     sidestep_heading_source: str = "motion",
-    sidestep_suspect_mode: str = "motion",
+    sidestep_suspect_mode: str = SIDESTEP_SUSPECT_MODE,
     particle_seed: int | None = None,
 ) -> pd.DataFrame:
     """互換 facade 経由で PDR パイプラインを実行する。"""

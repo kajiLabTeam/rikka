@@ -22,6 +22,7 @@ from ...config import (
     BACKWARD_LENGTH_SCALE,
     FORWARD_HEADING_SOURCE,
     SIDESTEP_LENGTH_SCALE,
+    SIDESTEP_SUSPECT_MODE,
     TURNING_LENGTH_SCALE,
 )
 from .common import (
@@ -405,7 +406,7 @@ def _is_confirmed_sidestep_cluster(
 def _smooth_step_headings(
     step_headings: list[StepHeading],
     method: str = "none",
-    sidestep_suspect_mode: str = "motion",
+    sidestep_suspect_mode: str = SIDESTEP_SUSPECT_MODE,
 ) -> list[StepHeading]:
     """横歩き判定の軌跡反映を平滑化する。"""
     selected_method = _validate_sidestep_smoothing(method)
@@ -760,7 +761,7 @@ def estimate_step_motion(
     previous_heading: float | None = None,
     forward_heading_source: str = FORWARD_HEADING_SOURCE,
     sidestep_heading_source: str = "motion",
-    sidestep_suspect_mode: str = "motion",
+    sidestep_suspect_mode: str = SIDESTEP_SUSPECT_MODE,
 ) -> StepMotion | None:
     """状態別に1歩の移動方位と歩幅を決める。"""
     selected_forward_heading_source = _validate_forward_heading_source(
