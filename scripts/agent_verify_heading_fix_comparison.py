@@ -24,8 +24,8 @@ from rikka.config import (
 )
 
 DATASETS = (
-    Path("input/ryuki_1turn_rightsidestep_3turn_leftsidestep3"),
-    Path("input/ryuki_1turn_rightsidestep_3turn_leftsidestep4"),
+    Path("input/sensor_data/ryuki_1turn_rightsidestep_3turn_leftsidestep3"),
+    Path("input/sensor_data/ryuki_1turn_rightsidestep_3turn_leftsidestep4"),
 )
 OUTPUT_PATH = Path("output/diagnostics/ryuki_heading_fix_comparison.png")
 MOTION_BODY_REJECT_DEG = 90.0

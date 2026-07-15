@@ -25,6 +25,7 @@ from ...config import (
     SIDESTEP_LATERAL_RATIO,
     SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
     SIDESTEP_SMOOTHING_METHOD,
+    SIDESTEP_SUSPECT_MODE,
     STEP_LENGTH_METHOD,
     USER_HEIGHT_M,
     WEINBERG_K,
@@ -76,7 +77,7 @@ def estimate_trajectory_with_headings(
     sidestep_smoothing: str = SIDESTEP_SMOOTHING_METHOD,
     forward_heading_source: str = FORWARD_HEADING_SOURCE,
     sidestep_heading_source: str = "motion",
-    sidestep_suspect_mode: str = "motion",
+    sidestep_suspect_mode: str = SIDESTEP_SUSPECT_MODE,
 ) -> tuple[list[list[float]], list[float], list[float], list[StepHeading]]:
     """ステップピークとジャイロスコープ角度から2次元軌跡を推定する。
 
@@ -265,7 +266,7 @@ def prepare_pdr_steps(
     sidestep_smoothing: str = SIDESTEP_SMOOTHING_METHOD,
     forward_heading_source: str = FORWARD_HEADING_SOURCE,
     sidestep_heading_source: str = "motion",
-    sidestep_suspect_mode: str = "motion",
+    sidestep_suspect_mode: str = SIDESTEP_SUSPECT_MODE,
 ) -> PreparedPdrSteps:
     """通常PDRとPFが共用するステップ単位の推定結果を作る。"""
     selected_gyro_bias_method = _validate_gyro_bias_method(
