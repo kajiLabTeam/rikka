@@ -14,8 +14,8 @@ PDR（Pedestrian Dead Reckoning）ライブラリです。
 uv sync --all-groups
 ```
 
-AI エージェントや sandbox 環境で `uv` のホームキャッシュ権限に引っかかる場合は、
-リポジトリ内キャッシュを使います。
+AI エージェントや sandbox 環境で `uv` の既定キャッシュに対する権限エラーが
+発生した場合に限り、リポジトリ内キャッシュを使って再実行します。
 
 ```sh
 UV_CACHE_DIR=.uv-cache uv run pytest
@@ -61,7 +61,7 @@ DATA_DIR = "input/sensor_data/1turn_rightsidestep_3turn_leftsidestep5"
 別データを使う場合は、CLI の `-d` で指定できます。
 
 ```sh
-UV_CACHE_DIR=.uv-cache uv run rikka run -d input/sensor_data/my_walk
+uv run rikka run -d input/sensor_data/my_walk
 ```
 
 ## 基本コマンド
@@ -69,37 +69,37 @@ UV_CACHE_DIR=.uv-cache uv run rikka run -d input/sensor_data/my_walk
 標準設定で通常 PDR を実行します。プロット表示と PNG/CSV 保存を行います。
 
 ```sh
-UV_CACHE_DIR=.uv-cache uv run rikka run
+uv run rikka run
 ```
 
 プロット表示を止めてバッチ確認する場合だけ `--no-plot` を付けます。
 
 ```sh
-UV_CACHE_DIR=.uv-cache uv run rikka run --no-plot
+uv run rikka run --no-plot
 ```
 
 `pdr` は `run` の別名です。
 
 ```sh
-UV_CACHE_DIR=.uv-cache uv run rikka pdr
+uv run rikka pdr
 ```
 
 パーティクルフィルタ付きで実行します。
 
 ```sh
-UV_CACHE_DIR=.uv-cache uv run rikka particle
+uv run rikka particle
 ```
 
 グラフ表示なしでパーティクルフィルタのアニメーションだけ保存する場合:
 
 ```sh
-UV_CACHE_DIR=.uv-cache uv run rikka particle --no-plot --save-animation
+uv run rikka particle --no-plot --save-animation
 ```
 
 センサー波形を確認します。入力フォルダに `sensor_plot.png` を保存します。
 
 ```sh
-UV_CACHE_DIR=.uv-cache uv run rikka sensor
+uv run rikka sensor
 ```
 
 ## データフロー
@@ -233,13 +233,13 @@ flowchart LR
 比較のため水平加速度由来の`motion_heading`で積む場合は次を指定します。
 
 ```sh
-UV_CACHE_DIR=.uv-cache uv run rikka run --forward-heading-source motion
+uv run rikka run --forward-heading-source motion
 ```
 
 正解軌跡との複数seed比較を実行する場合:
 
 ```sh
-MPLBACKEND=Agg UV_CACHE_DIR=.uv-cache uv run python \
+MPLBACKEND=Agg uv run python \
   scripts/agent_evaluate_pf_ground_truth.py \
   --plot-path output/diagnostics/pf_ground_truth_comparison.png
 ```
@@ -247,23 +247,23 @@ MPLBACKEND=Agg UV_CACHE_DIR=.uv-cache uv run python \
 横歩き判定を軌跡へそのまま反映して比較したい場合:
 
 ```sh
-UV_CACHE_DIR=.uv-cache uv run rikka run --sidestep-smoothing none
+uv run rikka run --sidestep-smoothing none
 ```
 
 旧方式の単発横歩き抑制と比較したい場合:
 
 ```sh
-UV_CACHE_DIR=.uv-cache uv run rikka run --sidestep-smoothing isolated
+uv run rikka run --sidestep-smoothing isolated
 ```
 
 横歩き判定を増やす/減らす場合:
 
 ```sh
 # 拾いやすくする
-UV_CACHE_DIR=.uv-cache uv run rikka run --sidestep-lateral-ratio 1.0
+uv run rikka run --sidestep-lateral-ratio 1.0
 
 # 厳しくする
-UV_CACHE_DIR=.uv-cache uv run rikka run --sidestep-lateral-ratio 1.5
+uv run rikka run --sidestep-lateral-ratio 1.5
 ```
 
 ## ジャイロバイアス比較
@@ -272,7 +272,7 @@ UV_CACHE_DIR=.uv-cache uv run rikka run --sidestep-lateral-ratio 1.5
 比較用には手動バイアスも使えます。
 
 ```sh
-UV_CACHE_DIR=.uv-cache uv run rikka run \
+uv run rikka run \
   -d input/sensor_data/1turn_rightsidestep_3turn_leftsidestep2 \
   --gyro-bias-method manual \
   --gyro-bias 0.002
@@ -362,17 +362,17 @@ trajectory = run(
 ## 開発コマンド
 
 ```sh
-UV_CACHE_DIR=.uv-cache uv run ruff format
-UV_CACHE_DIR=.uv-cache uv run ruff check
-UV_CACHE_DIR=.uv-cache uv run mypy src/
-UV_CACHE_DIR=.uv-cache uv run pytest
-UV_CACHE_DIR=.uv-cache uv build
+uv run ruff format
+uv run ruff check
+uv run mypy src/
+uv run pytest
+uv build
 ```
 
 CI と同等の pre-commit チェック:
 
 ```sh
-UV_CACHE_DIR=.uv-cache uv run pre-commit run --all-files
+uv run pre-commit run --all-files
 ```
 
 リポジトリ管理の Git hook を使う場合:
