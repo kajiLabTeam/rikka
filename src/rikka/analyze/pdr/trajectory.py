@@ -52,6 +52,8 @@ from .sensors import process_sensor_data
 from .sidestep import (
     _smooth_step_headings,
     _stabilize_trajectory_headings,
+    build_step_motion_evidences,
+    build_step_motion_observations,
     estimate_step_motion,
 )
 from .step_detection import detect_step_result
@@ -342,4 +344,6 @@ def prepare_pdr_steps(
         forward_heading_source=selected_forward_heading_source,
         sidestep_heading_source=selected_sidestep_heading_source,
         sidestep_suspect_mode=selected_sidestep_suspect_mode,
+        motion_evidences=build_step_motion_evidences(step_headings),
+        motion_observations=build_step_motion_observations(step_headings),
     )

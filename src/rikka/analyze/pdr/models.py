@@ -113,6 +113,41 @@ class StepMotion(NamedTuple):
     length_scale: float
 
 
+class StepMotionEvidence(NamedTuple):
+    """PFが利用する1歩ごとの運動状態観測。"""
+
+    forward_likelihood: float
+    sidestep_left_likelihood: float
+    sidestep_right_likelihood: float
+    turning_likelihood: float
+    motion_reliability: float
+    calibration_reliability: float
+
+
+class StepMotionObservation(NamedTuple):
+    """端末方位、身体方位候補、移動軸を分離した1歩の観測。
+
+    ``motion_axis_heading`` は方向を確定しない modulo pi の軸であり、
+    ``directed_motion_heading`` の正負の向きは後段で再検証できるよう別に保持する。
+    """
+
+    step_index: int
+    timestamp_s: float
+    device_yaw_heading: float | None
+    body_heading_candidate: float | None
+    directed_motion_heading: float | None
+    motion_axis_heading: float | None
+    forward_displacement: float | None
+    lateral_displacement: float | None
+    displacement_norm: float
+    yaw_delta: float | None
+    motion_confidence: float
+    calibration_reliability: float
+    raw_movement_type: str
+    trajectory_movement_type: str
+    device_orientation_mode: str
+
+
 @dataclass(frozen=True)
 class PreparedPdrSteps:
     """通常PDRとPFで共用するステップ単位の推定結果。"""
@@ -133,3 +168,5 @@ class PreparedPdrSteps:
     forward_heading_source: str
     sidestep_heading_source: str
     sidestep_suspect_mode: str
+    motion_evidences: tuple[StepMotionEvidence, ...] = ()
+    motion_observations: tuple[StepMotionObservation, ...] = ()

@@ -29,7 +29,7 @@ description: Rikka の通常 PDR に関する変更を、関連テスト、全�
 6. heading または sidestep の比較が必要で、スクリプト内の対象データが今回の変更に適合するときだけ、次を実行する。
 
    ```sh
-   MPLBACKEND=Agg uv run python scripts/agent_verify_heading_fix_comparison.py
+   MPLBACKEND=Agg uv run python agent/agent_verify_heading_fix_comparison.py
    ```
 
 7. 新しい出力の `trajectory.csv`、`step_lengths.csv`、`step_headings.csv` を変更内容に応じて確認する。行数、非有限値、方位の不連続、movement type、終点を確認し、期待値を推測で合格扱いしない。
