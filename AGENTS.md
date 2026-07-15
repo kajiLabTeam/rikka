@@ -1,4 +1,4 @@
-# AGENT.md
+# AGENTS.md
 
 このリポジトリで作業する AI エージェント向けのガイドです。
 
@@ -8,8 +8,10 @@
 - コードコメントを書く場合、説明文は日本語で書いてください。
 - 既存の未コミット変更はユーザーの作業として扱い、明示的な依頼なしに戻さないでください。
 - `input/` には実験データ、`output/` には実行結果が入ります。不要な大容量ファイルや生成物をコミットしないでください。
-- AI エージェントが検証のために生成した `output/` 配下の実行結果は、検証が終わったら削除してください。
-- わからないこと，疑問に思ったことがあれば実行する前にニュアンスを整理して聞いて
+- AI エージェントが検証のために生成した `output/` 配下の実行結果だけを、検証後に削除してください。
+- 読み取り専用の調査と既存テストは、合理的な仮定を置いて進めてください。
+- 使用する実験データ、座標系、評価基準が結果を左右する場合は、実装や長時間評価の前に確認してください。
+- 依存関係の追加、設定の既定値変更、実験データの削除は、実行前に確認してください。
 
 ## プロジェクト概要
 
@@ -21,159 +23,59 @@
 - 入力データは phyphox 形式の `Accelerometer.csv` と `Gyroscope.csv` を想定します。
 - 通常 PDR と、パーティクルフィルタ付きマップマッチングの2系統があります。
 
-## 主要構成
+## 構成と設計契約
 
-- `src/rikka/__init__.py`: Click ベースの CLI 定義。`run`、`pdr`、`particle`、`sensor` コマンドを提供します。
-- `src/rikka/config.py`: 入力データ、フロアマップ、歩幅推定、パーティクルフィルタの既定値を定義します。
-- `src/rikka/analyze/pdr/`: 通常 PDR の処理を分割したパッケージです。`rikka.analyze.pdr` は互換 facade として維持されています。
-  - `common.py`: 共通定数、角度処理、モード検証、パラメータ検証を担当します。
-  - `models.py`: `StepHeading`、`StepMotion`、`PreparedPdrSteps` などの共有データ型を定義します。
-  - `sensors.py`: センサーデータ読み込み、列名正規化、加速度・ジャイロ前処理を担当します。
-  - `gyro_bias.py`: ジャイロバイアス推定を担当します。
-  - `step_detection.py`: ステップピーク・接地区間の検出を担当します。
-  - `step_length.py`: Weinberg / forward 系の歩幅推定を担当します。
-  - `heading.py`: ジャイロ・加速度・水平加速度からステップ方位候補を推定します。
-  - `sidestep.py`: 横歩き判定、クラスタ平滑化、軌跡用方位の安定化を担当します。
-  - `trajectory.py`: 決定論的 PDR 軌跡生成と `prepare_pdr_steps()` を担当します。
-  - `outputs.py`: CSV 出力用 DataFrame の生成を担当します。
-  - `plotting.py`: 通常 PDR の軌跡描画を担当します。
-  - `pipeline.py`: `run()` の実行 orchestration を担当します。
-  - `particle_api.py`: particle filter が利用する PDR API の bridge です。
-- `src/rikka/analyze/particle_filter.py`: パーティクルフィルタとフロアマップ上のマップマッチング、アニメーション出力を扱います。
-- `src/rikka/analyze/sensor_plot.py`: センサー波形と歩幅グラフの可視化を担当します。
-- `src/rikka/matplotlib_config.py`: Matplotlib のキャッシュ先を writable な一時ディレクトリへ設定します。
-- `src/rikka/ping.py`: 接続確認用の `ping()` を提供します。
-- `scripts/`: AI エージェントが調査・検証に使う補助スクリプトを置きます。通常 CLI やライブラリ API ではありません。
-  - `agent_verify_heading_fix_comparison.py`: heading / sidestep 補正の比較画像を生成する診断スクリプトです。
-- `input/`: サンプル・実験用センサーデータとフロアマップ画像を置く場所です。
-- `output/`: `rikka run` / `rikka particle` の実行結果がタイムスタンプ付きで出力されます。
+詳しい入力形式、データフロー、設定、出力は `README.md` を参照してください。
 
-## 入力と出力
+- `src/rikka/__init__.py` は Click ベースの CLI を定義します。
+- `src/rikka/config.py` の既定値は CLI のデフォルトにも使われます。
+- `src/rikka/analyze/pdr/` は通常 PDR の実装で、`rikka.analyze.pdr` は互換 facade です。
+- `src/rikka/analyze/particle_filter.py` はマップマッチングと粒子フィルタを扱います。
+- 通常 PDR と particle filter は `prepare_pdr_steps()` のステップ情報を共有します。
+- particle filter から PDR 内部処理を利用する場合は `pdr/particle_api.py` を bridge にします。
+- `scripts/agent_*.py` はエージェントの診断・検証用で、通常のライブラリ API ではありません。
 
-入力データは次の形で配置します。
+## 開発・品質チェック
 
-```text
-input/
-└── my_walk/
-    ├── Accelerometer.csv
-    └── Gyroscope.csv
-```
-
-`Accelerometer.csv` は `Time (s)`, `Acceleration x (m/s^2)`, `Acceleration y (m/s^2)`, `Acceleration z (m/s^2)` を想定します。
-`Gyroscope.csv` は `Time (s)`, `Gyroscope x (rad/s)`, `Gyroscope y (rad/s)`, `Gyroscope z (rad/s)` を想定します。
-`X (m/s^2)` / `X (rad/s)` 形式の列名にも対応しています。
-
-通常 PDR とパーティクルフィルタは `output/<timestamp>/` に `trajectory.csv`、`step_lengths.csv`、グラフ画像を保存します。
-`sensor` コマンドは入力フォルダ内に `sensor_plot.png` を保存します。
-
-## 開発コマンド
-
-依存関係を同期します。
+パッケージ管理とコマンド実行には `uv` を使用します。
 
 ```sh
 uv sync --all-groups
-```
-
-通常 PDR を実行します。
-
-```sh
-uv run rikka run
-```
-
-`run` と同じ処理を別名で実行します。
-
-```sh
-uv run rikka pdr
-```
-
-パーティクルフィルタ付きで実行します。MP4 出力には ffmpeg が必要です。
-
-```sh
-uv run rikka particle
-```
-
-センサーデータを可視化します。
-
-```sh
-uv run rikka sensor
-```
-
-フロアマップや起点を CLI から指定できます。
-
-```sh
-uv run rikka run -d input/my_walk -f input/map.png --origin-px 1000 500 --scale 0.01 --direction 90 --no-plot
-```
-
-## 品質チェック
-
-AI エージェントが `uv` コマンドを実行するときは、ホームディレクトリ配下の
-キャッシュ権限で止まらないよう、リポジトリ内キャッシュを使ってください。
-
-```sh
-UV_CACHE_DIR=.uv-cache uv run pytest
-```
-
-同様に `uv run ruff ...`、`uv run mypy ...`、`uv build` なども
-`UV_CACHE_DIR=.uv-cache` を付けて実行してください。ユーザーはこの方針を承認済みです。
-
-フォーマットします。
-
-```sh
 uv run ruff format
-```
-
-リントします。
-
-```sh
 uv run ruff check
-```
-
-自動修正付きでリントします。
-
-```sh
-uv run ruff check --fix
-```
-
-型チェックします。
-
-```sh
 uv run mypy src/
-```
-
-テストを実行します。
-
-```sh
 uv run pytest
-```
-
-パッケージをビルドします。
-
-```sh
 uv build
 ```
 
-## コミット前と CI
+`uv` の既定キャッシュ先に対する権限エラーが発生した場合に限り、同じコマンドへ
+`UV_CACHE_DIR=.uv-cache` を付けて再実行してください。
 
-リポジトリ管理の Git hook を使う場合は、最初に次を設定します。
-
-```sh
-git config core.hooksPath .githooks
-```
-
-CI と同等の pre-commit チェックを手元で実行します。
+CI と同等のチェックは次のとおりです。CI、依存関係、ビルド設定へ影響する変更では必ず実行してください。
 
 ```sh
 uv run pre-commit run --all-files
+uv build
 ```
 
-CI は GitHub Actions で `uv sync --all-groups`、`pre-commit run --all-files`、`uv build` を実行します。
-AI エージェントが CI 修正や CI に影響する変更を行った場合は、修正後に少なくとも次を実行し、
-CI と同等のチェックが通っていることを確認してください。
+Git hook を利用する場合は `git config core.hooksPath .githooks` を設定します。
 
-```sh
-UV_CACHE_DIR=.uv-cache uv run pre-commit run --all-files
-UV_CACHE_DIR=.uv-cache uv build
-```
+## 変更別の最低検証
+
+- Python 実装: 関連テストと `uv run ruff check`
+- heading、sidestep、step detection、step length、trajectory: `tests/test_pdr_regressions.py` と必要に応じた代表データ実行
+- particle filter: 固定 seed の回帰テストと複数 seed 評価
+- CLI、`config.py` の既定値: `tests/test_smoke.py` と該当コマンドの `--help`
+- CI、依存関係、ビルド設定: `uv run pre-commit run --all-files` と `uv build`
+- ドキュメントのみ: 原則テスト不要。ただし記載コマンドと現在の実装を照合する
+
+CI やバッチ確認では `--no-plot` または `plot=False` を使ってください。
+
+## 生成物の扱い
+
+- 検証前に既存の `output/` を確認してください。
+- 自分が生成した出力ディレクトリだけを記録し、検証後に削除してください。
+- 検証前から存在した `output/` や `input/` 内のデータを削除しないでください。
 
 ## 実装時の注意
 
