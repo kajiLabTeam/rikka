@@ -80,6 +80,11 @@ class StepHeading(NamedTuple):
     sidestep_evidence_reason: str | None = None
     sidestep_cluster_id: int | None = None
     device_orientation_mode: str = "normal"
+    decoded_motion_mode: str | None = None
+    decoded_motion_confidence: float = 0.0
+    device_body_offset: float = 0.0
+    dynamic_body_heading_confidence: float = 0.0
+    body_heading_update_reason: str | None = None
 
 
 class GyroBiasResult(NamedTuple):

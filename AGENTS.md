@@ -34,6 +34,7 @@
 - 通常 PDR と particle filter は `prepare_pdr_steps()` のステップ情報を共有します。
 - particle filter から PDR 内部処理を利用する場合は `pdr/particle_api.py` を bridge にします。
 - `agent/agent_*.py` はエージェントの診断・検証用で、通常のライブラリ API ではありません。
+- 必要な診断・比較・回帰評価コードは `agent/` に追加し、繰り返し利用する場合は `.agents/skills/` 配下の Skill から呼び出して構いません。
 - `agent/EXPERIMENT_LOG.md` は過去の試行、失敗、採用判断を残す実験ログです。
 
 ## 開発・品質チェック
@@ -111,5 +112,8 @@ CI やバッチ確認では `--no-plot` または `plot=False` を使ってく�
 - 通常 PDR と particle filter で共有するステップ情報は `prepare_pdr_steps()` が作ります。particle 側で同じ heading / step length 推定を重複実装しないでください。
 - `particle_filter.py` から PDR 側の内部処理を使う場合は、`pdr/particle_api.py` に bridge を追加してから利用してください。`pdr/__init__.py` の private re-export へ直接依存しないでください。
 - `agent/agent_*.py` はエージェント検証用です。恒常的な機能として扱わず、必要な検証目的・入力データ・出力先が分かる名前と docstring を保ってください。
+- 新しい検証コードは `agent/agent_<目的>.py` の形式で命名し、モジュール docstring に役割、入力、出力、処理フローを記載してください。
+- 検証コードを Skill から使う場合は、対象 Skill の `SKILL.md` に起動条件、実行コマンド、必要入力、合否判定、生成物の削除方法を記載してください。
+- 検証コードは実行して動作確認し、通常機能に必要な処理を `agent/` だけへ実装しないでください。製品コードで共有すべき処理は `src/rikka/` に置いてください。
 - プロット処理は `plt.show()` を呼びます。CI やバッチ確認では `--no-plot` または `plot=False` を使ってください。
 - `particle` は ffmpeg がない場合、GIF 出力へフォールバックします。
