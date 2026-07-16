@@ -64,6 +64,7 @@ PDR と particle filter の改善で、過去に試した仮説、条件、結�
 | EXP-016 | 横歩き歩幅補正 | 暫定採用・再検討 | 固定倍率0.8を採用したが、5〜8も共通正解ルートと確定したためPF精度を再検討する |
 | EXP-017 | データ7・8の共通正解ルート再評価 | 調査完了・修正候補あり | 横歩き開始の方位跳びと区間別歩幅誤差を分離し、固定倍率だけでは直せないと確認した |
 | EXP-018 | 確率的な適応PDRと局所歩幅状態 | 一部採用・既定無効 | 通常PDRは全5記録で改善したがPFの最悪seedが悪化する記録が残るため明示指定で評価を継続する |
+| EXP-019 | particle filter責務分割（挙動非変更） | 採用（挙動非変更の基盤） | facade・乱数順・診断列を維持し、内部実装を責務別モジュールへ分割する |
 
 ## 過去の試行詳細
 
@@ -389,6 +390,34 @@ PDR と particle filter の改善で、過去に試した仮説、条件、結�
 - 結論: 確率状態と歩境界内歩幅観測、横歩き開始ガードは通常PDRでは全記録を改善した。一方、地図制約だけで広い歩幅状態や経路枝を選ぶPFは短い誤枝を優遇し、全記録の最悪seed改善を満たさない。adaptiveは実装・診断・CLIを残すが既定へ昇格しない。
 - 採用内容: `StepLengthObservation`、`StepMotionPosterior`、`AdaptivePdrState/Result`、因果`update_step()`、offline状態平滑化、`--motion-estimation`/`--smoothing`、診断CSV、適応評価スクリプト。既定値は`legacy`を維持する。
 - 再検証する条件: 地図上の有効/無効だけでなく旋回列尤度と歩幅事前を経路全体で比較できるfixed-lag smootherを導入したとき、または歩ごとの実測距離・状態ラベルを追加したとき。既定変更前に無印と5〜8の全seedで最大RMSE非悪化を確認する。
+
+### EXP-019: particle filter責務分割（挙動非変更）
+
+- 日付: 2026-07-16
+- 状態: 採用（挙動非変更の基盤）
+- 関連箇所・commit: 未コミット差分、`src/rikka/analyze/particle_filter.py` の互換facade、`src/rikka/analyze/particle/` 配下10モジュール、`tests/test_pdr_regressions.py` のcharacterization tests
+- 仮説: 巨大化したparticle filterを責務別モジュールへ分割しても、facadeのAPI、乱数消費順、診断列、recoveryの状態遷移を固定すれば軌跡挙動を維持できる。
+- 入力: Skill既定の `input/sensor_data/1turn_rightsidestep_3turn_leftsidestep`、`input/correct_path/1turn_rightsidestep_3turn_leftsidestep/walk_trace (3).csv`、`input/Floormap_building14_5floor.png`。
+- 比較条件: 分割前のcharacterization testsとEXP-016の無印legacy基準に対し、`particle_filter.py`を互換facadeとし、models、resampling、motion、map constraints、paths、recovery、diagnostics、runner、plottingへ責務を移した分割後実装を比較した。
+- seed: `[0, 1, 2, 10, 42, 100]`。
+- 実行コマンド:
+  - `uv run pytest tests/test_pdr_regressions.py -k "particle or resampling or recovery or transition or reconstruct"`
+  - `MPLBACKEND=Agg uv run python agent/agent_evaluate_pf_ground_truth.py`
+  - `uv run pytest`
+  - `uv run ruff check`
+  - `uv run mypy src/`
+  - `uv run pre-commit run --all-files`
+  - `uv build`
+- 指標・観察結果:
+  - 全6 seedで `wall_crossings == 0`、`recovery_failures == 0` だった。
+  - seed順の正規化弧長RMSEは `[1.7833802526, 0.9655818195, 1.0622112233, 1.1406177501, 1.3866890836, 1.0516287796]` m、中央値 `1.1014144867` m、最大値 `1.7833802526` mだった。
+  - 終点誤差は中央値 `1.2167457001` m、最大値 `3.8717314163` m、推定距離は中央値 `70.5215405576` m、最大値 `70.9321464063` mだった。
+  - 最大位置spreadは中央値 `1.0453484375` m、最大値 `1.4926275320` mだった。
+  - checkpoint replayはseed順で `[1, 1, 2, 1, 1, 0]` 回、中央値 `1` 回、最大値 `2` 回だった。
+  - 全120テスト、Ruff、Mypy、pre-commit、buildが成功した。
+- 結論: 乱数順、診断列、APIを維持した責務分割後も、EXP-016の無印基準RMSE中央値/最大値 `1.10/1.78` mと整合し、地図制約とrecoveryの合格条件を満たした。
+- 採用内容: `particle_filter.py`を互換facadeとして残し、内部実装を`particle/`配下10モジュールへ分割する。characterization testsでfacade公開名、診断フィールド順、固定seed出力を固定する。
+- 再検証する条件: facade公開名、RNGの生成・消費順、recovery処理、runnerの状態管理を変更するとき。
 
 ## 進行中の試行
 
