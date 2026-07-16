@@ -88,6 +88,16 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--plot-path", type=Path)
     parser.add_argument("--enable-recovery-branches", action="store_true")
+    parser.add_argument(
+        "--motion-estimation",
+        choices=("legacy", "adaptive"),
+        default="legacy",
+    )
+    parser.add_argument(
+        "--smoothing",
+        choices=("causal", "offline"),
+        default="causal",
+    )
     return parser.parse_args()
 
 
@@ -102,8 +112,13 @@ def main() -> None:
     map_gray = _normalize_floormap_gray(plt.imread(args.floormap))
 
     df_acc, df_gyro = load_sensor_data(args.data_dir)
-    prepared = prepare_pdr_steps(df_acc, df_gyro)
-    rows: list[dict[str, float | int]] = []
+    prepared = prepare_pdr_steps(
+        df_acc,
+        df_gyro,
+        motion_estimation=args.motion_estimation,
+        smoothing_mode=args.smoothing,
+    )
+    rows: list[dict[str, float | int | str]] = []
     trajectories: list[np.ndarray] = []
     for seed in args.seeds:
         diagnostics: list[ParticleFilterStepDiagnostics] = []
@@ -120,6 +135,7 @@ def main() -> None:
             prepared_step_lengths=prepared.step_lengths,
             prepared_step_times=prepared.t_at_steps,
             prepared_motion_evidences=prepared.motion_evidences,
+            prepared_motion_posteriors=prepared.motion_posteriors,
             preserve_recovery_branches=args.enable_recovery_branches,
             sigma_init_heading=args.sigma_init_heading,
             sigma_heading=args.sigma_heading,
@@ -143,6 +159,8 @@ def main() -> None:
         rows.append(
             {
                 "seed": seed,
+                "motion_estimation": args.motion_estimation,
+                "smoothing": args.smoothing,
                 "arc_rmse_m": float(np.sqrt(np.mean(np.square(errors)))),
                 "endpoint_error_m": float(np.linalg.norm(trajectory[-1] - truth[-1])),
                 "estimated_length_m": float(

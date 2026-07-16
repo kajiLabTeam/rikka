@@ -65,6 +65,7 @@ from .particle_branches import branch_preserving_resample
 from .pdr.particle_api import (
     StepHeading,
     StepMotionEvidence,
+    StepMotionPosterior,
     StepSegment,
     build_particle_motion_headings,
     build_step_motion_evidences,
@@ -698,12 +699,19 @@ def _generate_recovery_candidates(
     rng: np.random.Generator,
     allow_turn_candidates: bool = False,
     preserve_route_branches: bool = True,
+    allow_stride_adaptation: bool = False,
+    stride_scale_min: float = 0.5,
+    stride_scale_max: float = 1.6,
 ) -> _RecoveryResult | None:
     """決定論的方位に近い壁非交差候補から復旧粒子を生成する。"""
     local_degrees = np.array(
         [0.0, 5.0, -5.0, 10.0, -10.0, 20.0, -20.0, 30.0, -30.0, 45.0, -45.0]
     )
-    normal_length_factors = np.array([1.0, 0.9, 1.1])
+    normal_length_factors = (
+        np.array([1.0, 0.85, 0.7, 1.15, 1.3])
+        if allow_stride_adaptation
+        else np.array([1.0, 0.9, 1.1])
+    )
     stages = [("local_grid", local_degrees, normal_length_factors)]
     if allow_turn_candidates:
         stages.append(
@@ -757,11 +765,13 @@ def _generate_recovery_candidates(
             if base_lengths.ndim == 0
             else base_lengths[parent_indices]
         )
+        effective_stride_scales = (
+            length_factor
+            if allow_stride_adaptation
+            else candidate_stride_scales * length_factor
+        )
         lengths = np.clip(
-            parent_lengths
-            * candidate_stride_scales
-            * length_factor
-            * (1.0 + residual_noise),
+            parent_lengths * effective_stride_scales * (1.0 + residual_noise),
             0.0,
             None,
         )
@@ -782,7 +792,13 @@ def _generate_recovery_candidates(
             continue
 
         heading_cost = np.square(offsets[valid] / max(heading_sigma, np.deg2rad(5.0)))
-        length_cost = np.square((length_factor[valid] - 1.0) / 0.1)
+        length_cost_sigma = 0.22 if allow_stride_adaptation else 0.1
+        length_cost_center = (
+            candidate_stride_scales[valid] if allow_stride_adaptation else 1.0
+        )
+        length_cost = np.square(
+            (length_factor[valid] - length_cost_center) / length_cost_sigma
+        )
         costs = heading_cost + length_cost
         if not preserve_route_branches:
             valid_indexes = np.flatnonzero(valid)
@@ -803,7 +819,13 @@ def _generate_recovery_candidates(
                 particles=candidates[select],
                 heading_correction=parent_correction[select],
                 heading_drift=_normalize_angle(parent_drift[select] + selected_offsets),
-                stride_scale=candidate_stride_scales[select],
+                stride_scale=np.clip(
+                    selected_factors
+                    if allow_stride_adaptation
+                    else candidate_stride_scales[select],
+                    stride_scale_min,
+                    stride_scale_max,
+                ),
                 motion_state=proposed_motion_state[parent_indices[select]],
                 parent_indices=parent_indices[select],
                 valid_count=int(np.count_nonzero(valid)),
@@ -862,7 +884,11 @@ def _generate_recovery_candidates(
         particles=particles_all[select],
         heading_correction=selected_correction,
         heading_drift=selected_drift,
-        stride_scale=stride_scales_all[select],
+        stride_scale=np.clip(
+            selected_factors if allow_stride_adaptation else stride_scales_all[select],
+            stride_scale_min,
+            stride_scale_max,
+        ),
         motion_state=proposed_motion_state[parents_all[select]],
         parent_indices=parents_all[select],
         valid_count=len(particles_all),
@@ -892,6 +918,9 @@ def _replay_from_checkpoint(
     heading_sigma: float,
     rng: np.random.Generator,
     checkpoint_motion_state: np.ndarray | None = None,
+    allow_stride_adaptation: bool = False,
+    stride_scale_min: float = 0.5,
+    stride_scale_max: float = 1.6,
 ) -> _CheckpointReplayResult | None:
     """同じ小方位差で最大3歩を再生し、壁非交差経路を返す。"""
     if len(angles) == 0 or len(angles) != len(step_lengths):
@@ -899,7 +928,11 @@ def _replay_from_checkpoint(
     offset_degrees = np.array(
         [0.0, 5.0, -5.0, 10.0, -10.0, 20.0, -20.0, 30.0, -30.0, 45.0, -45.0]
     )
-    length_factors = np.array([1.0, 0.9, 1.1])
+    length_factors = (
+        np.array([1.0, 0.85, 0.7, 1.15, 1.3])
+        if allow_stride_adaptation
+        else np.array([1.0, 0.9, 1.1])
+    )
     combinations = np.array(
         [(offset, factor) for offset in offset_degrees for factor in length_factors]
     )
@@ -917,7 +950,12 @@ def _replay_from_checkpoint(
     for angle, step_length in zip(angles, step_lengths, strict=True):
         theta = angle + parent_correction + parent_drift + offsets
         proposed = current.copy()
-        lengths = step_length * candidate_stride_scales * length_factor
+        effective_stride_scales = (
+            length_factor
+            if allow_stride_adaptation
+            else candidate_stride_scales * length_factor
+        )
+        lengths = step_length * effective_stride_scales
         proposed[:, 0] += lengths * np.cos(theta)
         proposed[:, 1] += lengths * np.sin(theta)
         valid &= _evaluate_particle_transitions(
@@ -940,7 +978,13 @@ def _replay_from_checkpoint(
 
     valid_indices = np.flatnonzero(valid)
     heading_cost = np.square(offsets[valid] / max(heading_sigma, np.deg2rad(5.0)))
-    length_cost = np.square((length_factor[valid] - 1.0) / 0.1)
+    length_cost_sigma = 0.22 if allow_stride_adaptation else 0.1
+    length_cost_center = (
+        candidate_stride_scales[valid] if allow_stride_adaptation else 1.0
+    )
+    length_cost = np.square(
+        (length_factor[valid] - length_cost_center) / length_cost_sigma
+    )
     costs = heading_cost + length_cost
     probabilities = checkpoint_weights[parent_indices[valid]] * np.exp(
         -0.5 * (costs - costs.min())
@@ -960,7 +1004,13 @@ def _replay_from_checkpoint(
         particles=current[select],
         heading_correction=parent_correction[select],
         heading_drift=_normalize_angle(parent_drift[select] + selected_offsets),
-        stride_scale=candidate_stride_scales[select],
+        stride_scale=np.clip(
+            selected_factors
+            if allow_stride_adaptation
+            else candidate_stride_scales[select],
+            stride_scale_min,
+            stride_scale_max,
+        ),
         motion_state=(
             np.zeros(n_particles, dtype=np.int8)
             if checkpoint_motion_state is None
@@ -1020,6 +1070,7 @@ def run_particle_filter(
     prepared_step_lengths: list[float] | None = None,
     prepared_step_times: list[float] | None = None,
     prepared_motion_evidences: tuple[StepMotionEvidence, ...] | None = None,
+    prepared_motion_posteriors: tuple[StepMotionPosterior, ...] | None = None,
     seed: int | None = None,
     heading_drift_retention: float = PF_HEADING_DRIFT_RETENTION,
     resample_ess_ratio: float = PF_RESAMPLE_ESS_RATIO,
@@ -1152,6 +1203,24 @@ def run_particle_filter(
     )
     if recovery_max_attempts <= 0:
         raise ValueError("recovery_max_attempts は正の整数を指定してください")
+    adaptive_stride_state = bool(
+        prepared_motion_posteriors
+        and any(
+            posterior.length_std_m / max(posterior.length_mean_m, 1e-6) >= 0.18
+            for posterior in prepared_motion_posteriors
+        )
+    )
+    effective_stride_scale_min = (
+        min(stride_scale_min, 0.6) if adaptive_stride_state else stride_scale_min
+    )
+    effective_stride_scale_max = (
+        max(stride_scale_max, 1.5) if adaptive_stride_state else stride_scale_max
+    )
+    effective_stride_init_sigma = (
+        max(stride_scale_init_sigma, 0.12)
+        if adaptive_stride_state
+        else stride_scale_init_sigma
+    )
     rng = np.random.default_rng(seed)
     stride_rng = np.random.default_rng(
         None if seed is None else np.random.SeedSequence([seed, 0x53545249])
@@ -1184,9 +1253,9 @@ def run_particle_filter(
     motion_state = np.full(n_particles, _MOTION_FORWARD, dtype=np.int8)
     stride_scale = np.clip(
         stride_scale_prior_mean
-        + stride_rng.normal(0.0, stride_scale_init_sigma, n_particles),
-        stride_scale_min,
-        stride_scale_max,
+        + stride_rng.normal(0.0, effective_stride_init_sigma, n_particles),
+        effective_stride_scale_min,
+        effective_stride_scale_max,
     )
     weights = np.ones(n_particles) / n_particles
 
@@ -1222,6 +1291,10 @@ def run_particle_filter(
     if prepared_motion_evidences is not None and not using_prepared_steps:
         raise ValueError(
             "prepared_motion_evidences は prepared step 一式と同時に指定してください"
+        )
+    if prepared_motion_posteriors is not None and not using_prepared_steps:
+        raise ValueError(
+            "prepared_motion_posteriors は prepared step 一式と同時に指定してください"
         )
     if not using_prepared_steps:
         device_orientation_mode = estimate_device_orientation_mode(
@@ -1318,6 +1391,12 @@ def run_particle_filter(
                 "prepared_motion_evidences と prepared_step_headings の"
                 "長さが一致しません"
             )
+        if prepared_motion_posteriors:
+            if len(prepared_motion_posteriors) != len(stabilized_step_headings):
+                raise ValueError(
+                    "prepared_motion_posteriors と prepared_step_headings の"
+                    "長さが一致しません"
+                )
     particle_motion_headings = build_particle_motion_headings(stabilized_step_headings)
 
     previous_heading: float | None = None
@@ -1339,6 +1418,11 @@ def run_particle_filter(
         ),
         start=1,
     ):
+        motion_posterior = (
+            prepared_motion_posteriors[step_number - 1]
+            if prepared_motion_posteriors
+            else None
+        )
         if particle_heading is None:
             continue
         angle_det = particle_heading
@@ -1381,9 +1465,14 @@ def run_particle_filter(
 
         # 通常ドリフトだけを平均回帰させ、recovery補正は独立に保持する。
         proposed_correction = heading_correction_before
+        heading_process_sigma = (
+            max(sigma_heading, 0.15 * motion_posterior.heading_std)
+            if motion_posterior is not None
+            else sigma_heading
+        )
         proposed_drift = _normalize_angle(
             heading_drift_retention * heading_drift_before
-            + rng.normal(0, sigma_heading, n_particles)
+            + rng.normal(0, heading_process_sigma, n_particles)
         )
         observation_likelihoods = _motion_state_likelihoods(motion_evidence)
         proposed_motion_state, _state_predictive_likelihoods = _sample_motion_states(
@@ -1398,12 +1487,28 @@ def run_particle_filter(
         )
         particle_base_headings = state_headings[proposed_motion_state]
         theta = particle_base_headings + proposed_correction + proposed_drift
+        relative_length_uncertainty = (
+            motion_posterior.length_std_m / max(motion_posterior.length_mean_m, 1e-6)
+            if motion_posterior is not None
+            else 0.0
+        )
+        adaptive_recovery_scale = (
+            motion_posterior is not None and relative_length_uncertainty >= 0.18
+        )
+        step_stride_process_sigma = (
+            max(
+                stride_scale_process_sigma,
+                min(0.05, 0.12 * relative_length_uncertainty),
+            )
+            if motion_posterior is not None
+            else stride_scale_process_sigma
+        )
         proposed_stride_scale = np.clip(
             stride_scale_prior_mean
             + stride_scale_retention * (stride_scale_before - stride_scale_prior_mean)
-            + stride_rng.normal(0.0, stride_scale_process_sigma, n_particles),
-            stride_scale_min,
-            stride_scale_max,
+            + stride_rng.normal(0.0, step_stride_process_sigma, n_particles),
+            effective_stride_scale_min,
+            effective_stride_scale_max,
         )
         if (
             motion_evidence.calibration_reliability >= 0.85
@@ -1446,7 +1551,24 @@ def run_particle_filter(
         valid_count = int(np.count_nonzero(valid_transition))
         valid_weight_mask = valid_transition & (weights_before > 0.0)
         valid_weight_count = int(np.count_nonzero(valid_weight_mask))
-        posterior_weights = weights_before * valid_transition.astype(float)
+        if motion_posterior is None:
+            stride_observation_likelihood = np.ones(n_particles, dtype=float)
+        else:
+            stride_prior_sigma = float(
+                np.clip(1.5 * relative_length_uncertainty, 0.10, 0.30)
+            )
+            stride_observation_likelihood = np.exp(
+                -0.5
+                * np.square(
+                    (proposed_stride_scale - stride_scale_prior_mean)
+                    / stride_prior_sigma
+                )
+            )
+        posterior_weights = (
+            weights_before
+            * valid_transition.astype(float)
+            * stride_observation_likelihood
+        )
         valid_weight_mass = float(posterior_weights.sum())
         ess_after_observation = (
             _effective_sample_size(posterior_weights / valid_weight_mass)
@@ -1490,7 +1612,11 @@ def run_particle_filter(
                 recovery_max_attempts,
                 rng,
                 allow_turn_candidates=(
-                    step_heading.trajectory_movement_type == "turning"
+                    (
+                        motion_posterior is not None
+                        and motion_posterior.turning_probability >= 0.25
+                    )
+                    or step_heading.trajectory_movement_type == "turning"
                     or step_heading.movement_type == "turning"
                     or "sidestep"
                     in (
@@ -1506,6 +1632,9 @@ def run_particle_filter(
                     )
                 ),
                 preserve_route_branches=preserve_recovery_branches,
+                allow_stride_adaptation=adaptive_recovery_scale,
+                stride_scale_min=effective_stride_scale_min,
+                stride_scale_max=effective_stride_scale_max,
             )
             if recovery is None:
                 completed_steps = len(step_lengths)
@@ -1545,6 +1674,9 @@ def run_particle_filter(
                         recovery_heading_sigma,
                         rng,
                         checkpoint_motion_state=motion_state_history[checkpoint_step],
+                        allow_stride_adaptation=adaptive_recovery_scale,
+                        stride_scale_min=effective_stride_scale_min,
+                        stride_scale_max=effective_stride_scale_max,
                     )
                 if replay_result is None:
                     fallback_recovery = _generate_recovery_candidates(
@@ -1568,6 +1700,9 @@ def run_particle_filter(
                         rng,
                         allow_turn_candidates=True,
                         preserve_route_branches=preserve_recovery_branches,
+                        allow_stride_adaptation=adaptive_recovery_scale,
+                        stride_scale_min=effective_stride_scale_min,
+                        stride_scale_max=effective_stride_scale_max,
                     )
                     if fallback_recovery is None:
                         # 全候補とreplayが失敗した場合だけ直前位置を保持する。
@@ -1699,16 +1834,21 @@ def run_particle_filter(
                         heading_drift
                         + rng.normal(0, rejuvenation_sigma_heading, n_particles)
                     )
-                if stride_scale_rejuvenation_sigma > 0.0:
+                effective_rejuvenation_sigma = (
+                    max(stride_scale_rejuvenation_sigma, 0.02)
+                    if adaptive_stride_state
+                    else stride_scale_rejuvenation_sigma
+                )
+                if effective_rejuvenation_sigma > 0.0:
                     stride_scale = np.clip(
                         stride_scale
                         + stride_rng.normal(
                             0.0,
-                            stride_scale_rejuvenation_sigma,
+                            effective_rejuvenation_sigma,
                             n_particles,
                         ),
-                        stride_scale_min,
-                        stride_scale_max,
+                        effective_stride_scale_min,
+                        effective_stride_scale_max,
                     )
                 weights = np.full(n_particles, 1.0 / n_particles)
                 parent_indices = indices

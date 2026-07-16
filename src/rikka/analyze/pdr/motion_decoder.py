@@ -245,10 +245,7 @@ def _side_segment_stats(
         _range_sum(prefixes.axis_cos2, start, end),
     ) / max(axis_weight, _EPSILON)
     confidence = (
-        mean_side_strength
-        * axis_concentration
-        * signed_consistency
-        * mean_calibration
+        mean_side_strength * axis_concentration * signed_consistency * mean_calibration
     )
     return _SegmentStats(
         confidence=_clip01(confidence),
@@ -264,9 +261,7 @@ def _side_segment_stats(
 def _valid_side_segment(stats: _SegmentStats, state: int) -> bool:
     """区間が指定方向の高信頼な横歩き条件を満たすか返す。"""
     direction_matches = (
-        stats.signed_lateral_sum > 0.0
-        if state == 1
-        else stats.signed_lateral_sum < 0.0
+        stats.signed_lateral_sum > 0.0 if state == 1 else stats.signed_lateral_sum < 0.0
     )
     return (
         direction_matches
@@ -274,8 +269,7 @@ def _valid_side_segment(stats: _SegmentStats, state: int) -> bool:
         and stats.mean_calibration >= _MIN_CALIBRATION_RELIABILITY
         and stats.mean_side_strength >= _MIN_SIDE_STRENGTH
         and stats.axis_concentration >= _MIN_AXIS_CONCENTRATION
-        and stats.signed_lateral_consistency
-        >= _MIN_SIGNED_LATERAL_CONSISTENCY
+        and stats.signed_lateral_consistency >= _MIN_SIGNED_LATERAL_CONSISTENCY
         and stats.confidence >= _MIN_SIDE_CONFIDENCE
     )
 
@@ -293,9 +287,7 @@ def _build_turn_likelihoods(
         end = min(len(yaw_values), index + 2)
         neighborhood_yaw = abs(sum(yaw_values[start:end]))
         likelihoods.append(
-            _clip01(
-                max(abs(yaw_delta), neighborhood_yaw) / _TURNING_THRESHOLD_RAD
-            )
+            _clip01(max(abs(yaw_delta), neighborhood_yaw) / _TURNING_THRESHOLD_RAD)
         )
     return tuple(likelihoods)
 
@@ -322,8 +314,7 @@ def _decode_state_indexes(
     """semi-Markov動的計画法で最良の状態番号列を復元する。"""
     negative_infinity = float("-inf")
     scores = [
-        [negative_infinity for _state in _MOTION_MODES]
-        for _end in range(length + 1)
+        [negative_infinity for _state in _MOTION_MODES] for _end in range(length + 1)
     ]
     back_pointers: list[list[tuple[int, int | None] | None]] = [
         [None for _state in _MOTION_MODES] for _end in range(length + 1)

@@ -18,7 +18,14 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .models import GyroBiasResult, StepDetectionResult, StepHeading, StepSegment
+from .models import (
+    GyroBiasResult,
+    StepDetectionResult,
+    StepHeading,
+    StepLengthObservation,
+    StepMotionPosterior,
+    StepSegment,
+)
 from .time_utils import _time_at_index
 
 
@@ -309,6 +316,39 @@ def _build_step_headings_dataframe(step_headings: list[StepHeading]) -> pd.DataF
         for heading in step_headings
     ]
     return pd.DataFrame(rows, columns=columns)
+
+
+def _build_step_length_observations_dataframe(
+    observations: tuple[StepLengthObservation, ...],
+) -> pd.DataFrame:
+    """歩幅の物理観測と品質を診断CSV用に変換する。"""
+    return pd.DataFrame(
+        [observation._asdict() for observation in observations],
+        columns=StepLengthObservation._fields,
+    )
+
+
+def _build_motion_posteriors_dataframe(
+    posteriors: tuple[StepMotionPosterior, ...],
+) -> pd.DataFrame:
+    """適応PDRの状態・方位・歩幅事後分布を診断CSV用に変換する。"""
+    rows = []
+    for posterior in posteriors:
+        values = posterior._asdict()
+        values["heading_mean_deg"] = _angle_to_deg(posterior.heading_mean)
+        values["heading_std_deg"] = _angle_to_deg(posterior.heading_std)
+        values["device_body_offset_mean_deg"] = _angle_to_deg(
+            posterior.device_body_offset_mean
+        )
+        values["device_body_offset_std_deg"] = _angle_to_deg(
+            posterior.device_body_offset_std
+        )
+        del values["heading_mean"]
+        del values["heading_std"]
+        del values["device_body_offset_mean"]
+        del values["device_body_offset_std"]
+        rows.append(values)
+    return pd.DataFrame(rows)
 
 
 def _step_plot_signal(

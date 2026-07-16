@@ -24,6 +24,7 @@ from ...config import (
     STEP_LENGTH_WINDOW,
     WEINBERG_K,
 )
+from .models import StepHeading, StepLengthObservation
 from .time_utils import _sample_gyro_angle, _time_at_index
 
 
@@ -44,6 +45,82 @@ def estimate_step_length(
     acc_max = float(segment.max())  # v_acc 最大値 [m/s²]（上向きバウンド付近）
     acc_min = float(segment.min())  # v_acc 最小値 [m/s²]（下向きバウンド付近）
     return float(k * (acc_max - acc_min) ** 0.25)
+
+
+def build_step_length_observation(
+    df_acc: pd.DataFrame,
+    step_heading: StepHeading,
+    nominal_length_m: float,
+    k: float = WEINBERG_K,
+) -> StepLengthObservation:
+    """検出済みの1歩区間から歩幅観測と品質を作る。
+
+    接地境界が利用できる場合は固定幅窓ではなくその区間を使う。区間が短すぎる、
+    または列が不足する場合だけ従来の歩幅を採用し、不確かさを大きくする。
+    """
+    n = len(df_acc)
+    start = step_heading.segment_start_index
+    end = step_heading.segment_end_index
+    fallback_reason: str | None = None
+    if start is None or end is None or not (0 <= start < end < n):
+        peak = step_heading.peak1_index
+        if peak is None:
+            peak = min(max(step_heading.step_index, 0), max(n - 1, 0))
+        start = max(0, peak - STEP_LENGTH_WINDOW)
+        end = min(n - 1, peak + STEP_LENGTH_WINDOW)
+        fallback_reason = "step_interval_unavailable"
+
+    vertical = df_acc["v_acc"].iloc[start : end + 1].dropna()
+    sample_count = len(vertical)
+    if sample_count < 3:
+        amplitude = 0.0
+        interval_length = nominal_length_m
+        fallback_reason = "insufficient_vertical_samples"
+    else:
+        amplitude = max(float(vertical.max() - vertical.min()), 0.0)
+        interval_length = float(
+            k * amplitude**0.25 * max(step_heading.step_length_scale, 1e-6)
+        )
+
+    period: float | None = None
+    try:
+        period_value = _time_at_index(df_acc, end) - _time_at_index(df_acc, start)
+        if np.isfinite(period_value) and period_value > 0.0:
+            period = float(period_value)
+    except (IndexError, KeyError, ValueError):
+        fallback_reason = fallback_reason or "step_period_unavailable"
+
+    if "h_norm" in df_acc.columns:
+        horizontal = df_acc["h_norm"].iloc[start : end + 1].dropna().to_numpy()
+        horizontal_energy = (
+            float(np.sqrt(np.mean(np.square(horizontal))))
+            if len(horizontal) > 0
+            else 0.0
+        )
+    else:
+        horizontal_energy = 0.0
+        fallback_reason = fallback_reason or "horizontal_energy_unavailable"
+
+    duration_quality = (
+        0.0 if period is None else float(np.exp(-0.5 * ((period - 0.65) / 0.35) ** 2))
+    )
+    sample_quality = min(sample_count / 30.0, 1.0)
+    quality = float(np.clip(0.55 * sample_quality + 0.45 * duration_quality, 0.0, 1.0))
+    if fallback_reason is not None:
+        quality *= 0.65
+    log_length_sigma = float(0.10 + 0.24 * (1.0 - quality))
+
+    return StepLengthObservation(
+        step_index=step_heading.step_index,
+        nominal_length_m=float(nominal_length_m),
+        interval_length_m=interval_length,
+        step_period_s=period,
+        vertical_amplitude=amplitude,
+        horizontal_energy=horizontal_energy,
+        quality=quality,
+        log_length_sigma=log_length_sigma,
+        fallback_reason=fallback_reason,
+    )
 
 
 def _estimate_initial_forward_angle(

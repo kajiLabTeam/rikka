@@ -31,6 +31,7 @@ from ...config import (
     WEINBERG_K,
     compute_weinberg_k,
 )
+from .adaptive_estimator import estimate_adaptive_pdr
 from .common import (
     _validate_forward_heading_source,
     _validate_heading_method,
@@ -47,7 +48,7 @@ from .heading import (
     _resolve_motion_heading_correction,
     resolve_step_heading,
 )
-from .models import PreparedPdrSteps, StepHeading, StepSegment
+from .models import PreparedPdrSteps, StepHeading, StepMotionPosterior, StepSegment
 from .motion_refinement import refine_step_headings_with_motion_model
 from .sensors import process_sensor_data
 from .sidestep import (
@@ -60,6 +61,7 @@ from .sidestep import (
 from .step_detection import detect_step_result
 from .step_length import (
     _estimate_initial_forward_angle,
+    build_step_length_observation,
     estimate_step_length,
     estimate_step_length_forward,
 )
@@ -280,6 +282,8 @@ def prepare_pdr_steps(
     sidestep_heading_source: str = "motion",
     sidestep_suspect_mode: str = SIDESTEP_SUSPECT_MODE,
     motion_refinement: bool = True,
+    motion_estimation: str = "legacy",
+    smoothing_mode: str = "causal",
 ) -> PreparedPdrSteps:
     """通常PDRとPFが共用するステップ単位の推定結果を作る。"""
     selected_gyro_bias_method = _validate_gyro_bias_method(
@@ -309,6 +313,12 @@ def prepare_pdr_steps(
         "sidestep_min_lateral_displacement",
         sidestep_min_lateral_displacement,
     )
+    if motion_estimation not in {"legacy", "adaptive"}:
+        raise ValueError(
+            "motion_estimation は legacy または adaptive を指定してください"
+        )
+    if smoothing_mode not in {"causal", "offline"}:
+        raise ValueError("smoothing_mode は causal または offline を指定してください")
 
     # PDR と particle filter の両方が同じ前処理・ステップ検出・heading 推定を使う。
     processed_acc, processed_gyro = process_sensor_data(
@@ -338,6 +348,42 @@ def prepare_pdr_steps(
             motion_refinement=motion_refinement,
         )
     )
+    motion_evidences = build_step_motion_evidences(step_headings)
+    length_observations = tuple(
+        build_step_length_observation(
+            processed_acc,
+            step_heading,
+            step_length,
+            weinberg_k,
+        )
+        for step_heading, step_length in zip(
+            step_headings,
+            step_lengths,
+            strict=True,
+        )
+    )
+    motion_posteriors: tuple[StepMotionPosterior, ...] = ()
+    if motion_estimation == "adaptive":
+        adaptive_result = estimate_adaptive_pdr(
+            step_headings,
+            length_observations,
+            motion_evidences,
+            smoothing_mode,
+        )
+        step_headings = adaptive_result.step_headings
+        step_lengths = adaptive_result.step_lengths
+        motion_posteriors = adaptive_result.posteriors
+        trajectory = [[0.0, 0.0]]
+        for heading, length in zip(step_headings, step_lengths, strict=True):
+            assert heading.selected_heading is not None
+            trajectory.append(
+                [
+                    trajectory[-1][0]
+                    + length * float(np.cos(heading.selected_heading)),
+                    trajectory[-1][1]
+                    + length * float(np.sin(heading.selected_heading)),
+                ]
+            )
 
     return PreparedPdrSteps(
         df_acc=processed_acc,
@@ -356,6 +402,10 @@ def prepare_pdr_steps(
         forward_heading_source=selected_forward_heading_source,
         sidestep_heading_source=selected_sidestep_heading_source,
         sidestep_suspect_mode=selected_sidestep_suspect_mode,
-        motion_evidences=build_step_motion_evidences(step_headings),
+        motion_evidences=motion_evidences,
         motion_observations=build_step_motion_observations(step_headings),
+        length_observations=length_observations,
+        motion_posteriors=motion_posteriors,
+        motion_estimation=motion_estimation,
+        smoothing_mode=smoothing_mode,
     )

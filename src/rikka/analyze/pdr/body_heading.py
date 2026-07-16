@@ -29,9 +29,7 @@ _MIN_AXIS_CONCENTRATION = 0.7
 _HUBER_DELTA_RAD = float(np.deg2rad(20.0))
 _UPDATE_GAIN = 0.25
 _MAX_UPDATE_RAD = float(np.deg2rad(5.0))
-_SUPPORTED_MOTION_MODES = frozenset(
-    {"forward", "sidestep_left", "sidestep_right"}
-)
+_SUPPORTED_MOTION_MODES = frozenset({"forward", "sidestep_left", "sidestep_right"})
 
 
 class DynamicBodyHeadingEstimate(NamedTuple):
@@ -52,8 +50,7 @@ def _normalize_angle(angle: float) -> float:
 def _axis_residual(observed_axis: float, predicted_heading: float) -> float:
     """modulo pi の観測軸を予測方位に近い枝へ持ち上げた残差を返す。"""
     return float(
-        (observed_axis - predicted_heading + np.pi / 2.0) % np.pi
-        - np.pi / 2.0
+        (observed_axis - predicted_heading + np.pi / 2.0) % np.pi - np.pi / 2.0
     )
 
 
@@ -80,9 +77,7 @@ def _observation_quality(observation: StepMotionObservation) -> float:
     )
     return float(
         np.clip(
-            observation.motion_confidence
-            * displacement_quality
-            * calibration_weight,
+            observation.motion_confidence * displacement_quality * calibration_weight,
             0.0,
             1.0,
         )
@@ -233,9 +228,7 @@ def estimate_dynamic_body_headings(
                                 estimate_confidence = float(
                                     np.clip(
                                         (1.0 - _UPDATE_GAIN) * estimate_confidence
-                                        + _UPDATE_GAIN
-                                        * window_quality
-                                        * concentration,
+                                        + _UPDATE_GAIN * window_quality * concentration,
                                         0.0,
                                         1.0,
                                     )

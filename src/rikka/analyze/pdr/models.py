@@ -153,6 +153,63 @@ class StepMotionObservation(NamedTuple):
     device_orientation_mode: str
 
 
+class StepLengthObservation(NamedTuple):
+    """1歩区間から得た歩幅の物理観測と不確かさ。"""
+
+    step_index: int
+    nominal_length_m: float
+    interval_length_m: float
+    step_period_s: float | None
+    vertical_amplitude: float
+    horizontal_energy: float
+    quality: float
+    log_length_sigma: float
+    fallback_reason: str | None
+
+
+class StepMotionPosterior(NamedTuple):
+    """運動状態、方位、歩幅、端末姿勢ずれの1歩ごとの事後分布。"""
+
+    step_index: int
+    forward_probability: float
+    sidestep_left_probability: float
+    sidestep_right_probability: float
+    turning_probability: float
+    heading_mean: float
+    heading_std: float
+    length_mean_m: float
+    length_std_m: float
+    device_body_offset_mean: float
+    device_body_offset_std: float
+    selected_mode: str
+    source: str
+
+
+class AdaptivePdrState(NamedTuple):
+    """逐次更新できる適応PDRの内部状態。"""
+
+    heading_mean: float | None
+    heading_variance: float
+    forward_log_scale_mean: float
+    forward_log_scale_variance: float
+    sidestep_log_scale_mean: float
+    sidestep_log_scale_variance: float
+    device_body_offset_mean: float
+    device_body_offset_variance: float
+    mode_probabilities: tuple[float, float, float, float]
+    step_count: int
+
+
+@dataclass(frozen=True)
+class AdaptivePdrResult:
+    """適応PDRが返す因果推定またはオフライン平滑化結果。"""
+
+    step_headings: list[StepHeading]
+    step_lengths: list[float]
+    posteriors: tuple[StepMotionPosterior, ...]
+    final_state: AdaptivePdrState
+
+
 @dataclass(frozen=True)
 class PreparedPdrSteps:
     """通常PDRとPFで共用するステップ単位の推定結果。"""
@@ -175,3 +232,7 @@ class PreparedPdrSteps:
     sidestep_suspect_mode: str
     motion_evidences: tuple[StepMotionEvidence, ...] = ()
     motion_observations: tuple[StepMotionObservation, ...] = ()
+    length_observations: tuple[StepLengthObservation, ...] = ()
+    motion_posteriors: tuple[StepMotionPosterior, ...] = ()
+    motion_estimation: str = "legacy"
+    smoothing_mode: str = "causal"

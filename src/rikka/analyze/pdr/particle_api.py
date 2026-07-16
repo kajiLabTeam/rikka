@@ -47,6 +47,7 @@ from .models import (
     StepHeading,
     StepMotionEvidence,
     StepMotionObservation,
+    StepMotionPosterior,
     StepSegment,
 )
 from .plotting import (
@@ -80,6 +81,7 @@ __all__ = [
     "StepHeading",
     "StepMotionEvidence",
     "StepMotionObservation",
+    "StepMotionPosterior",
     "StepSegment",
     "build_step_motion_evidences",
     "build_step_motion_observations",
