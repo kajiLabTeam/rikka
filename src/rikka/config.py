@@ -18,7 +18,7 @@ from math import isfinite
 # Data directory path
 # Change this path to use different input data
 
-DATA_DIR = "input/sensor_data/1turn_rightsidestep_3turn_leftsidestep5"
+DATA_DIR = "input/sensor_data/1turn_rightsidestep_3turn_leftsidestep7"
 
 # フロアマップ設定
 # 背景として表示するフロアマップ画像のパス
@@ -149,7 +149,7 @@ SIDESTEP_LATERAL_RATIO = 1.2
 SIDESTEP_MIN_LATERAL_DISPLACEMENT_M = 0.03
 SIDESTEP_SMOOTHING_METHOD = "clustered"
 MOTION_HEADING_CALIBRATION_STEPS = 8
-SIDESTEP_LENGTH_SCALE = 1
+SIDESTEP_LENGTH_SCALE = 0.8
 TURNING_LENGTH_SCALE = 0.3
 BACKWARD_LENGTH_SCALE = 1
 TURNING_YAW_DELTA_THRESHOLD_DEG = 35.0

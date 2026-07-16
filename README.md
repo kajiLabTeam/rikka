@@ -3,9 +3,10 @@
 スマートフォンの加速度計・ジャイロスコープ CSV から歩行軌跡を推定する
 PDR（Pedestrian Dead Reckoning）ライブラリです。
 
-現在の標準設定は、ジャイロを体の向き、水平加速度を横歩き判定用の
-移動特徴として使う `gyro_accel_motion` です。通常歩行の軌跡方位は
-`body_heading`、同方向にまとまった確定横歩きは`motion_heading`を使います。
+現在の標準設定は、ジャイロの端末方位と水平加速度の移動軸を分離する
+`gyro_accel_motion` です。横歩きを連続区間で復号し、安定区間から端末と身体の
+時変方位差を推定します。通常歩行は補正後の `body_heading`、確定横歩きは
+`motion_heading` を使い、端末だけを曲げた量が進行方向へ直接入らないようにしています。
 確定しなかった単発候補は前進扱いにします。
 
 ## セットアップ
@@ -124,7 +125,7 @@ flowchart TD
     step_detect --> heading
     preprocess --> step_length["estimate_step_length()\nWeinberg などで歩幅候補を推定"]
     step_detect --> step_length
-    heading --> sidestep["sidestep smoothing / heading stabilize\n横歩き判定を軌跡用 movement_type に整理"]
+    heading --> sidestep["motion segment decode / dynamic body heading\nsidestep smoothing / heading stabilize"]
     step_length --> sidestep
     sidestep --> prepared["prepare_pdr_steps()\ntrajectory候補 / step_lengths / t_at_steps / step_headings"]
 
@@ -183,7 +184,7 @@ flowchart LR
 | `SIDESTEP_LATERAL_RATIO` | `1.2` | 横方向/前方向の比率がこの値以上で横歩き候補 |
 | `SIDESTEP_MIN_LATERAL_DISPLACEMENT_M` | `0.03` | 横歩き判定に必要な横方向変位 [m] |
 | `SIDESTEP_SMOOTHING_METHOD` | `clustered` | 同方向 evidence の連続クラスタを評価し、確定横歩きまたは横歩き疑いとして軌跡へ反映 |
-| `SIDESTEP_LENGTH_SCALE` | `1` | 横歩き歩幅の倍率 |
+| `SIDESTEP_LENGTH_SCALE` | `0.8` | 横歩き歩幅の倍率 |
 | `TURNING_LENGTH_SCALE` | `0.3` | 旋回中歩幅の倍率 |
 | `PF_HEADING_DRIFT_RETENTION` | `0.85` | PFの通常方位ドリフトを次歩へ保持する割合 |
 | `PF_SIGMA_INIT_HEADING` | `0.03` | PFの初期方位ばらつき [rad] |
@@ -221,6 +222,9 @@ flowchart LR
 | `forward_displacement` | 体方向への変位特徴 |
 | `lateral_displacement` | 横方向への変位特徴 |
 | `motion_heading_correction_deg` | 水平加速度方向の補正角 |
+| `decoded_motion_mode` | 区間復号した `forward / sidestep_left / sidestep_right` |
+| `device_body_offset_deg` | 歩ごとに推定した端末−身体方位差 |
+| `body_heading_update_reason` | 動的方位を更新したか、更新を止めた理由 |
 
 標準設定の `clustered` では、同方向の横歩き evidence が連続する区間をクラスタとして
 評価します。条件を満たす1歩の隙間は最大1つまでクラスタに含め、横歩き evidence が
@@ -318,6 +322,9 @@ PDR 本体は `src/rikka/analyze/pdr/` パッケージに分割されていま�
 | `pdr/step_length.py` | Weinberg / forward 系の歩幅推定 |
 | `pdr/heading.py` | ジャイロ・加速度・水平加速度からのステップ方位候補推定 |
 | `pdr/sidestep.py` | 横歩き判定、クラスタ平滑化、軌跡用方位の安定化 |
+| `pdr/motion_decoder.py` | 移動軸と体軸特徴から前進・左右横歩きを区間復号 |
+| `pdr/body_heading.py` | 端末yawと移動軸から時変の端末−身体方位差を推定 |
+| `pdr/motion_refinement.py` | 区間復号、動的身体方位、既存横歩きclusterを統合 |
 | `pdr/trajectory.py` | 決定論的 PDR 軌跡生成と `prepare_pdr_steps()` |
 | `pdr/outputs.py` | CSV 出力用 DataFrame 生成 |
 | `pdr/plotting.py` | 通常 PDR の軌跡描画 |
@@ -342,6 +349,9 @@ trajectory = run(df_acc=df_acc, df_gyro=df_gyro)
 
 `df_acc` と `df_gyro` は両方渡すか、両方省略してください。片方だけ渡すと
 `ValueError` になります。
+
+区間復号・動的身体方位と従来clusterをAPIで比較する場合は、
+`prepare_pdr_steps(..., motion_refinement=False)` で従来処理を実行できます。
 
 グラフを表示しない場合:
 

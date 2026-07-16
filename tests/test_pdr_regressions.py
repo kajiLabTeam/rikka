@@ -6,10 +6,12 @@ import numpy as np
 import pandas as pd
 
 from rikka.analyze import pdr
+from rikka.analyze.particle_branches import branch_preserving_resample
 from rikka.analyze.particle_filter import (
     ParticleFilterStepDiagnostics,
     _effective_sample_size,
     _evaluate_particle_transitions,
+    _generate_recovery_candidates,
     _motion_state_headings,
     _normalize_floormap_gray,
     _reconstruct_particle_paths,
@@ -20,6 +22,11 @@ from rikka.analyze.particle_filter import (
     _snap_trajectory_to_walkable_pixels,
     _systematic_resample,
     run_particle_filter,
+)
+from rikka.analyze.pdr.body_heading import estimate_dynamic_body_headings
+from rikka.analyze.pdr.motion_decoder import decode_step_motion_segments
+from rikka.analyze.pdr.motion_refinement import (
+    refine_step_headings_with_motion_model,
 )
 from rikka.analyze.pdr.particle_api import (
     build_step_motion_evidences,
@@ -477,6 +484,148 @@ def test_motion_axis_observation_is_unchanged_by_opposite_direction() -> None:
         forward_observation.motion_axis_heading,
         backward_observation.motion_axis_heading,
     )
+
+
+def test_motion_segment_decoder_confirms_consistent_two_step_side_segment() -> None:
+    headings = [
+        _forward_step_heading(step_index=1),
+        _forward_step_heading(step_index=2)._replace(
+            body_heading=0.0,
+            motion_heading=np.pi / 2,
+            forward_displacement=0.01,
+            lateral_displacement=0.10,
+        ),
+        _forward_step_heading(step_index=3)._replace(
+            body_heading=0.0,
+            motion_heading=np.pi / 2,
+            forward_displacement=0.02,
+            lateral_displacement=0.11,
+        ),
+        _forward_step_heading(step_index=4),
+    ]
+
+    result = decode_step_motion_segments(build_step_motion_observations(headings))
+
+    assert result.motion_modes == (
+        "forward",
+        "sidestep_left",
+        "sidestep_left",
+        "forward",
+    )
+
+
+def test_motion_segment_decoder_rejects_opposite_side_signs() -> None:
+    headings = [
+        _forward_step_heading(step_index=1)._replace(
+            body_heading=0.0,
+            motion_heading=np.pi / 2,
+            forward_displacement=0.01,
+            lateral_displacement=0.10,
+        ),
+        _forward_step_heading(step_index=2)._replace(
+            body_heading=0.0,
+            motion_heading=-np.pi / 2,
+            forward_displacement=0.01,
+            lateral_displacement=-0.10,
+        ),
+    ]
+
+    result = decode_step_motion_segments(build_step_motion_observations(headings))
+
+    assert result.motion_modes == ("forward", "forward")
+
+
+def test_dynamic_body_heading_absorbs_persistent_device_only_rotation() -> None:
+    headings = [
+        _forward_step_heading(step_index=index)._replace(
+            gyro_heading=np.deg2rad(min(30.0, (index - 1) * 5.0)),
+            body_heading=np.deg2rad(min(30.0, (index - 1) * 5.0)),
+            motion_heading=0.0,
+            forward_displacement=0.10,
+            lateral_displacement=0.0,
+        )
+        for index in range(1, 10)
+    ]
+    observations = build_step_motion_observations(headings)
+
+    estimates = estimate_dynamic_body_headings(
+        observations,
+        ["forward"] * len(observations),
+    )
+
+    assert estimates[-1].updated is True
+    assert estimates[-1].body_heading is not None
+    assert abs(estimates[-1].body_heading) < np.deg2rad(20.0)
+    assert estimates[-1].device_body_offset < 0.0
+
+
+def test_motion_refinement_suppresses_low_calibration_false_side_run() -> None:
+    headings = [
+        _forward_step_heading(step_index=index)._replace(
+            movement_type="sidestep_left",
+            trajectory_movement_type=None,
+            body_heading=0.0,
+            motion_heading=np.pi / 2,
+            forward_displacement=0.01,
+            lateral_displacement=0.10,
+        )
+        for index in range(1, 5)
+    ]
+
+    refined = refine_step_headings_with_motion_model(
+        headings,
+        "clustered",
+        "forward",
+    )
+
+    assert all(heading.trajectory_movement_type == "forward" for heading in refined)
+    assert all(heading.decoded_motion_mode == "forward" for heading in refined)
+
+
+def test_branch_resampling_protects_small_positive_branch() -> None:
+    weights = np.array([0.98, 0.01, 0.01])
+    branch_ids = np.array([0, 1, 1])
+
+    parents, resampled_branches, diagnostics = branch_preserving_resample(
+        weights,
+        branch_ids,
+        np.random.default_rng(7),
+        output_count=100,
+    )
+
+    assert len(parents) == 100
+    assert np.count_nonzero(resampled_branches == 1) >= 10
+    assert diagnostics.active_branch_count == 2
+    assert diagnostics.min_protected_branch_count == 10
+
+
+def test_recovery_keeps_local_and_turn_route_branches_on_open_map() -> None:
+    n_particles = 20
+    result = _generate_recovery_candidates(
+        previous_particles=np.zeros((n_particles, 2), dtype=float),
+        previous_heading_correction=np.zeros(n_particles),
+        previous_heading_drift=np.zeros(n_particles),
+        previous_stride_scale=np.ones(n_particles),
+        proposed_motion_state=np.zeros(n_particles, dtype=np.int8),
+        previous_weights=np.full(n_particles, 1.0 / n_particles),
+        angle_det=0.0,
+        step_length=1.0,
+        sigma_step_length_ratio=0.0,
+        n_particles=n_particles,
+        map_gray=np.full((30, 30), 255.0),
+        gx_mean=0.0,
+        gz_mean=9.8,
+        origin_px=(15, 15),
+        scale=1.0,
+        heading_sigma=0.08,
+        max_attempts=5,
+        rng=np.random.default_rng(9),
+        allow_turn_candidates=True,
+    )
+
+    assert result is not None
+    assert set(result.route_branch_ids.tolist()) == {0, 1, 2, 3}
+    assert len(result.particles) == n_particles
 
 
 def test_particle_motion_evidence_preserves_raw_turning_after_smoothing() -> None:
@@ -1106,7 +1255,7 @@ def test_estimate_step_motion_uses_sidestep_left_adjustment() -> None:
     assert motion is not None
     assert motion.movement_type == "sidestep_left"
     np.testing.assert_allclose(motion.heading, np.pi / 2, atol=1e-12)
-    np.testing.assert_allclose(motion.length, pdr.SIDESTEP_LENGTH_SCALE, atol=1e-12)
+    np.testing.assert_allclose(motion.length, 0.8, atol=1e-12)
 
 
 def test_estimate_step_motion_uses_sidestep_right_adjustment() -> None:

@@ -48,6 +48,7 @@ from .heading import (
     resolve_step_heading,
 )
 from .models import PreparedPdrSteps, StepHeading, StepSegment
+from .motion_refinement import refine_step_headings_with_motion_model
 from .sensors import process_sensor_data
 from .sidestep import (
     _smooth_step_headings,
@@ -80,6 +81,7 @@ def estimate_trajectory_with_headings(
     forward_heading_source: str = FORWARD_HEADING_SOURCE,
     sidestep_heading_source: str = "motion",
     sidestep_suspect_mode: str = SIDESTEP_SUSPECT_MODE,
+    motion_refinement: bool = True,
 ) -> tuple[list[list[float]], list[float], list[float], list[StepHeading]]:
     """ステップピークとジャイロスコープ角度から2次元軌跡を推定する。
 
@@ -184,10 +186,18 @@ def estimate_trajectory_with_headings(
         raw_step_times.append(_step_output_time(df_acc, peaks, i))
 
     # 横歩き判定を平滑化し、軌跡用 heading として安定化する。
-    smoothed_step_headings = _smooth_step_headings(
-        raw_step_headings,
-        selected_sidestep_smoothing,
-        selected_sidestep_suspect_mode,
+    smoothed_step_headings = (
+        refine_step_headings_with_motion_model(
+            raw_step_headings,
+            selected_sidestep_smoothing,
+            selected_sidestep_suspect_mode,
+        )
+        if motion_refinement
+        else _smooth_step_headings(
+            raw_step_headings,
+            selected_sidestep_smoothing,
+            selected_sidestep_suspect_mode,
+        )
     )
     stabilized_step_headings = _stabilize_trajectory_headings(
         smoothed_step_headings,
@@ -269,6 +279,7 @@ def prepare_pdr_steps(
     forward_heading_source: str = FORWARD_HEADING_SOURCE,
     sidestep_heading_source: str = "motion",
     sidestep_suspect_mode: str = SIDESTEP_SUSPECT_MODE,
+    motion_refinement: bool = True,
 ) -> PreparedPdrSteps:
     """通常PDRとPFが共用するステップ単位の推定結果を作る。"""
     selected_gyro_bias_method = _validate_gyro_bias_method(
@@ -324,6 +335,7 @@ def prepare_pdr_steps(
             forward_heading_source=selected_forward_heading_source,
             sidestep_heading_source=selected_sidestep_heading_source,
             sidestep_suspect_mode=selected_sidestep_suspect_mode,
+            motion_refinement=motion_refinement,
         )
     )
 

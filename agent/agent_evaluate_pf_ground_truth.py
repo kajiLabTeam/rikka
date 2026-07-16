@@ -87,6 +87,7 @@ def _parse_args() -> argparse.Namespace:
         default=PF_SIGMA_STEP_LENGTH_RATIO,
     )
     parser.add_argument("--plot-path", type=Path)
+    parser.add_argument("--enable-recovery-branches", action="store_true")
     return parser.parse_args()
 
 
@@ -119,6 +120,7 @@ def main() -> None:
             prepared_step_lengths=prepared.step_lengths,
             prepared_step_times=prepared.t_at_steps,
             prepared_motion_evidences=prepared.motion_evidences,
+            preserve_recovery_branches=args.enable_recovery_branches,
             sigma_init_heading=args.sigma_init_heading,
             sigma_heading=args.sigma_heading,
             sigma_sl_ratio=args.sigma_step_length_ratio,

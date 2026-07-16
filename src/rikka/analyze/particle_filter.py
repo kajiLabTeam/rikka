@@ -61,6 +61,7 @@ from ..config import (
     TURNING_LENGTH_SCALE,
     WEINBERG_K,
 )
+from .particle_branches import branch_preserving_resample
 from .pdr.particle_api import (
     StepHeading,
     StepMotionEvidence,
@@ -139,6 +140,8 @@ class ParticleFilterStepDiagnostics:
     recovery_replay_steps: int
     trajectory_mode: str
     trajectory_source_index: int | None
+    recovery_candidate_branch_count: int = 0
+    recovery_selected_branch_count: int = 0
 
 
 def _systematic_resample(weights: np.ndarray, rng: np.random.Generator) -> np.ndarray:
@@ -652,6 +655,7 @@ class _RecoveryResult:
     heading_delta_deg: float
     step_scale: float
     mean_cost: float
+    route_branch_ids: np.ndarray
 
 
 @dataclass(frozen=True)
@@ -660,6 +664,17 @@ class _CheckpointReplayResult:
 
     recovery: _RecoveryResult
     replay_positions: np.ndarray
+
+
+def _recovery_route_branch_ids(offsets: np.ndarray) -> np.ndarray:
+    """recovery方位差を直進・左・右・後退の経路族へ分類する。"""
+    degrees = np.degrees(_normalize_angle(offsets))
+    absolute_degrees = np.abs(degrees)
+    branch_ids = np.zeros(len(offsets), dtype=np.int8)
+    branch_ids[(degrees >= 60.0) & (absolute_degrees < 135.0)] = 1
+    branch_ids[(degrees <= -60.0) & (absolute_degrees < 135.0)] = 2
+    branch_ids[absolute_degrees >= 135.0] = 3
+    return branch_ids
 
 
 def _generate_recovery_candidates(
@@ -682,6 +697,7 @@ def _generate_recovery_candidates(
     max_attempts: int,
     rng: np.random.Generator,
     allow_turn_candidates: bool = False,
+    preserve_route_branches: bool = True,
 ) -> _RecoveryResult | None:
     """決定論的方位に近い壁非交差候補から復旧粒子を生成する。"""
     local_degrees = np.array(
@@ -698,9 +714,19 @@ def _generate_recovery_candidates(
             )
         )
 
-    for stage_number, (mode, offset_degrees, length_factors) in enumerate(
+    candidate_particles: list[np.ndarray] = []
+    candidate_parent_indices: list[np.ndarray] = []
+    candidate_parent_corrections: list[np.ndarray] = []
+    candidate_parent_drifts: list[np.ndarray] = []
+    candidate_stride_scales_list: list[np.ndarray] = []
+    candidate_offsets: list[np.ndarray] = []
+    candidate_length_factors: list[np.ndarray] = []
+    candidate_costs: list[np.ndarray] = []
+    attempts = 0
+    for stage_number, (_mode, offset_degrees, length_factors) in enumerate(
         stages[:max_attempts], start=1
     ):
+        attempts = stage_number
         combinations = np.array(
             [(offset, factor) for offset in offset_degrees for factor in length_factors]
         )
@@ -755,42 +781,98 @@ def _generate_recovery_candidates(
         if not valid.any():
             continue
 
-        valid_indices = np.flatnonzero(valid)
         heading_cost = np.square(offsets[valid] / max(heading_sigma, np.deg2rad(5.0)))
         length_cost = np.square((length_factor[valid] - 1.0) / 0.1)
         costs = heading_cost + length_cost
-        probabilities = previous_weights[parent_indices[valid]] * np.exp(
-            -0.5 * (costs - costs.min())
-        )
-        probabilities /= probabilities.sum()
-        selected_local = rng.choice(
-            len(valid_indices),
-            size=n_particles,
-            replace=len(valid_indices) < n_particles,
-            p=probabilities,
-        )
-        select = valid_indices[selected_local]
-        selected_offsets = offsets[select]
-        selected_factors = length_factor[select]
-        selected_costs = heading_cost[selected_local] + length_cost[selected_local]
-        selected_correction = parent_correction[select]
-        selected_drift = _normalize_angle(parent_drift[select] + selected_offsets)
-        return _RecoveryResult(
-            particles=candidates[select],
-            heading_correction=selected_correction,
-            heading_drift=selected_drift,
-            stride_scale=candidate_stride_scales[select],
-            motion_state=proposed_motion_state[parent_indices[select]],
-            parent_indices=parent_indices[select],
-            valid_count=int(np.count_nonzero(valid)),
-            attempts=stage_number,
-            mode=mode,
-            heading_delta_deg=float(np.degrees(np.mean(np.abs(selected_offsets)))),
-            step_scale=float(np.mean(selected_factors)),
-            mean_cost=float(np.mean(selected_costs)),
-        )
+        if not preserve_route_branches:
+            valid_indexes = np.flatnonzero(valid)
+            probabilities = previous_weights[parent_indices[valid]] * np.exp(
+                -0.5 * (costs - costs.min())
+            )
+            probabilities /= probabilities.sum()
+            selected_local = rng.choice(
+                len(valid_indexes),
+                size=n_particles,
+                replace=len(valid_indexes) < n_particles,
+                p=probabilities,
+            )
+            select = valid_indexes[selected_local]
+            selected_offsets = offsets[select]
+            selected_factors = length_factor[select]
+            return _RecoveryResult(
+                particles=candidates[select],
+                heading_correction=parent_correction[select],
+                heading_drift=_normalize_angle(parent_drift[select] + selected_offsets),
+                stride_scale=candidate_stride_scales[select],
+                motion_state=proposed_motion_state[parent_indices[select]],
+                parent_indices=parent_indices[select],
+                valid_count=int(np.count_nonzero(valid)),
+                attempts=stage_number,
+                mode=_mode,
+                heading_delta_deg=float(np.degrees(np.mean(np.abs(selected_offsets)))),
+                step_scale=float(np.mean(selected_factors)),
+                mean_cost=float(np.mean(costs[selected_local])),
+                route_branch_ids=np.zeros(n_particles, dtype=np.int8),
+            )
+        candidate_particles.append(candidates[valid])
+        candidate_parent_indices.append(parent_indices[valid])
+        candidate_parent_corrections.append(parent_correction[valid])
+        candidate_parent_drifts.append(parent_drift[valid])
+        candidate_stride_scales_list.append(candidate_stride_scales[valid])
+        candidate_offsets.append(offsets[valid])
+        candidate_length_factors.append(length_factor[valid])
+        candidate_costs.append(costs)
 
-    return None
+        # turn候補を使わない従来経路では、local候補が見つかれば次段階はない。
+        if not allow_turn_candidates:
+            break
+
+    if not candidate_particles:
+        return None
+
+    particles_all = np.concatenate(candidate_particles)
+    parents_all = np.concatenate(candidate_parent_indices)
+    corrections_all = np.concatenate(candidate_parent_corrections)
+    drifts_all = np.concatenate(candidate_parent_drifts)
+    stride_scales_all = np.concatenate(candidate_stride_scales_list)
+    offsets_all = np.concatenate(candidate_offsets)
+    length_factors_all = np.concatenate(candidate_length_factors)
+    costs_all = np.concatenate(candidate_costs)
+    route_branch_ids = _recovery_route_branch_ids(offsets_all)
+    log_probabilities = np.log(previous_weights[parents_all]) - 0.5 * costs_all
+    relative_log_probabilities = np.clip(
+        log_probabilities - float(np.max(log_probabilities)),
+        -700.0,
+        0.0,
+    )
+    probabilities = np.exp(relative_log_probabilities)
+    probabilities /= probabilities.sum()
+    select, selected_route_branch_ids, _branch_diagnostics = branch_preserving_resample(
+        probabilities,
+        route_branch_ids,
+        rng,
+        output_count=n_particles,
+    )
+    selected_offsets = offsets_all[select]
+    selected_factors = length_factors_all[select]
+    selected_costs = costs_all[select]
+    selected_correction = corrections_all[select]
+    selected_drift = _normalize_angle(drifts_all[select] + selected_offsets)
+    return _RecoveryResult(
+        particles=particles_all[select],
+        heading_correction=selected_correction,
+        heading_drift=selected_drift,
+        stride_scale=stride_scales_all[select],
+        motion_state=proposed_motion_state[parents_all[select]],
+        parent_indices=parents_all[select],
+        valid_count=len(particles_all),
+        attempts=attempts,
+        mode=("turn_grid" if np.any(selected_route_branch_ids != 0) else "local_grid"),
+        heading_delta_deg=float(np.degrees(np.mean(np.abs(selected_offsets)))),
+        step_scale=float(np.mean(selected_factors)),
+        mean_cost=float(np.mean(selected_costs)),
+        route_branch_ids=selected_route_branch_ids,
+    )
 
 
 def _replay_from_checkpoint(
@@ -891,6 +973,7 @@ def _replay_from_checkpoint(
         heading_delta_deg=float(np.degrees(np.mean(np.abs(selected_offsets)))),
         step_scale=float(np.mean(selected_factors)),
         mean_cost=float(np.mean(selected_costs)),
+        route_branch_ids=np.zeros(n_particles, dtype=np.int8),
     )
     selected_positions = np.stack(
         [positions[select] for positions in replay_positions],
@@ -945,6 +1028,7 @@ def run_particle_filter(
     recovery_heading_sigma: float = PF_RECOVERY_HEADING_SIGMA,
     recovery_max_attempts: int = PF_RECOVERY_MAX_ATTEMPTS,
     diagnostics_collector: list[ParticleFilterStepDiagnostics] | None = None,
+    preserve_recovery_branches: bool = False,
 ) -> tuple[list[list[float]], list[float], list[float], np.ndarray, list[StepHeading]]:
     """パーティクルフィルタでマップマッチング付き歩行軌跡を推定する。
 
@@ -985,6 +1069,7 @@ def run_particle_filter(
         recovery_heading_sigma: local recoveryの方位分散 [rad]
         recovery_max_attempts: recovery候補を追加生成する最大回数
         diagnostics_collector: 指定時に1歩ごとの診断値を追記するリスト
+        preserve_recovery_branches: recoveryで複数の経路方位族を保護するか
 
     Returns:
         tuple: (平均優先・壁際祖先フォールバック軌跡の座標リスト,
@@ -1380,6 +1465,8 @@ def run_particle_filter(
         recovery_cost: float | None = None
         recovery_checkpoint_step: int | None = None
         recovery_replay_steps = 0
+        recovery_candidate_branch_count = 0
+        recovery_selected_branch_count = 0
         resampled = False
 
         if recovery_attempted:
@@ -1418,6 +1505,7 @@ def run_particle_filter(
                         )
                     )
                 ),
+                preserve_route_branches=preserve_recovery_branches,
             )
             if recovery is None:
                 completed_steps = len(step_lengths)
@@ -1479,6 +1567,7 @@ def run_particle_filter(
                         recovery_max_attempts,
                         rng,
                         allow_turn_candidates=True,
+                        preserve_route_branches=preserve_recovery_branches,
                     )
                     if fallback_recovery is None:
                         # 全候補とreplayが失敗した場合だけ直前位置を保持する。
@@ -1505,6 +1594,10 @@ def run_particle_filter(
                         recovery_heading_delta_deg = fallback_recovery.heading_delta_deg
                         recovery_step_scale = fallback_recovery.step_scale
                         recovery_cost = fallback_recovery.mean_cost
+                        recovery_candidate_branch_count = int(
+                            np.unique(fallback_recovery.route_branch_ids).size
+                        )
+                        recovery_selected_branch_count = recovery_candidate_branch_count
                         resampled = True
                 else:
                     recovery = replay_result.recovery
@@ -1566,6 +1659,10 @@ def run_particle_filter(
                     recovery_cost = recovery.mean_cost
                     recovery_checkpoint_step = checkpoint_step
                     recovery_replay_steps = replay_depth
+                    recovery_candidate_branch_count = int(
+                        np.unique(recovery.route_branch_ids).size
+                    )
+                    recovery_selected_branch_count = recovery_candidate_branch_count
                     resampled = True
             else:
                 particles = recovery.particles
@@ -1581,6 +1678,10 @@ def run_particle_filter(
                 recovery_heading_delta_deg = recovery.heading_delta_deg
                 recovery_step_scale = recovery.step_scale
                 recovery_cost = recovery.mean_cost
+                recovery_candidate_branch_count = int(
+                    np.unique(recovery.route_branch_ids).size
+                )
+                recovery_selected_branch_count = recovery_candidate_branch_count
                 resampled = True
         else:
             if valid_weight_mass <= 0.0:
@@ -1745,6 +1846,8 @@ def run_particle_filter(
                     recovery_replay_steps=recovery_replay_steps,
                     trajectory_mode="pending",
                     trajectory_source_index=None,
+                    recovery_candidate_branch_count=(recovery_candidate_branch_count),
+                    recovery_selected_branch_count=(recovery_selected_branch_count),
                 )
             )
 

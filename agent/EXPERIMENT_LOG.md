@@ -36,6 +36,7 @@ PDR と particle filter の改善で、過去に試した仮説、条件、結�
 
 - particle filter の良否を単一seedだけで判断しない。同じseedは再現確認、複数seedは安定性評価に使う。
 - 同期していない正解軌跡とセンサー軌跡を行番号で直接比較しない。開始点を合わせ、正規化弧長で形状比較する。
+- `1turn_rightsidestep_3turn_leftsidestep5`〜`8` は無印データと同じルート・歩行手順の反復計測であり、`walk_trace (3).csv` を共通の正解軌跡として扱う。時刻・歩数は同期していないため、各歩ラベルではなく正規化弧長上のルート形状を正解とする。
 - 通常 PDR と particle filter で heading や step length を別々に推定しない。`prepare_pdr_steps()` の結果を共有する。
 - 単発の強い横歩き evidence を、直ちに確定横歩きとして軌跡へ反映しない。連続クラスタと横変位を確認する。
 - `prewalk_robust` がすべてのデータで最良とは限らない。既知の曲がりがあるデータでは手動biasとの比較を行う。
@@ -57,6 +58,11 @@ PDR と particle filter の改善で、過去に試した仮説、条件、結�
 | EXP-010 | 符号非依存の横歩きcluster | 見送り | 終点だけ改善し途中形状を悪化させるため採用しない |
 | EXP-011 | PF運動状態の方位・歩幅反映範囲 | 一部採用 | 校正不十分かつ確定cluster内だけ状態別運動を反映する |
 | EXP-012 | 行き止まりrecoveryの停止・後退候補 | 一部採用 | 停止候補は見送り、局所候補全滅時の後退候補を採用する |
+| EXP-013 | 端末方位・身体方位候補・移動軸の観測分離 | 採用 | 三者を分離保持し、後段の区間復号と動的方位推定で使う |
+| EXP-014 | 区間復号と動的身体方位 | 採用・継続評価 | 高信頼区間の補完と低校正偽陽性抑制を統合し、端末yawの過剰反映を抑える |
+| EXP-015 | PF recoveryの経路枝quota | 実験機能のみ・既定無効 | 安全性は維持したが誤枝保護でspreadと一部seedが悪化した |
+| EXP-016 | 横歩き歩幅補正 | 暫定採用・再検討 | 固定倍率0.8を採用したが、5〜8も共通正解ルートと確定したためPF精度を再検討する |
+| EXP-017 | データ7・8の共通正解ルート再評価 | 調査完了・修正候補あり | 横歩き開始の方位跳びと区間別歩幅誤差を分離し、固定倍率だけでは直せないと確認した |
 
 ## 過去の試行詳細
 
@@ -161,7 +167,7 @@ PDR と particle filter の改善で、過去に試した仮説、条件、結�
 - 状態: 採用
 - 関連箇所・commit: `190/particle-filter-sidestep` の未コミット差分、`src/rikka/analyze/pdr/sidestep.py`、`src/rikka/analyze/particle_filter.py`
 - 仮説: 横歩きclusterが不成立でも、生の分類が `turning_sidestep_*` なら端末の旋回情報まで `forward` に落とすべきではない。
-- 入力: `input/sensor_data/1turn_rightsidestep_3turn_leftsidestep5`〜`...8`。同じ歩行手順の参考形状として `input/correct_path/1turn_rightsidestep_3turn_leftsidestep/walk_trace (3).csv` を使用したが、5〜8固有の正解軌跡ではない。
+- 入力: `input/sensor_data/1turn_rightsidestep_3turn_leftsidestep5`〜`...8`。同じルートを反復計測したデータとして、共通の正解軌跡 `input/correct_path/1turn_rightsidestep_3turn_leftsidestep/walk_trace (3).csv` を使用する。
 - 比較条件: clustered平滑化で未確定の `turning_sidestep_*` を `forward` にする従来処理と、生の旋回付き分類を保持する処理。通常PDRを先に比較し、その共有ステップをPFへ渡した。
 - seed: 通常PDRはseedなし。PFは `[0, 1, 2, 10, 42, 100]`。
 - 実行コマンド:
@@ -174,7 +180,7 @@ PDR と particle filter の改善で、過去に試した仮説、条件、結�
   - 最終PFの全seedで `wall_crossings == 0`、`recovery_failures == 0` を確認した。
 - 結論: 横歩き確定の可否と旋回有無は別の情報として扱う。横歩きを抑制しても、閾値以上のyawを伴う生の `turning_sidestep_*` は消さない。
 - 採用内容: 平滑化で横歩きを抑制する際の移動タイプを共通関数で決め、生の旋回付き分類を保持する。PF運動観測も平滑化後だけでなく生分類と `yaw_delta` から旋回尤度を作る。
-- 再検証する条件: 端末だけを大きく回した非歩行旋回データ、旋回しながら横歩きしないデータ、5〜8固有の正解軌跡を追加したとき。
+- 再検証する条件: 端末だけを大きく回した非歩行旋回データ、旋回しながら横歩きしないデータ、反復ごとの歩ラベルや旋回境界を追加したとき。
 
 ### EXP-010: 符号非依存の横歩きcluster
 
@@ -188,7 +194,7 @@ PDR と particle filter の改善で、過去に試した仮説、条件、結�
 - 実行コマンド: `MPLBACKEND=Agg UV_CACHE_DIR=.uv-cache uv run rikka run -d input/sensor_data/1turn_rightsidestep_3turn_leftsidestep8 --no-plot`。同形式で5〜7と横歩きなし2データも実行した。
 - 指標・観察結果:
   - データ8の32歩目は横変位 `+0.125` m、35歩目は `-0.091` mで、間の33、34歩も弱い横変位を持っていた。この案では32〜35歩が1つの横歩きclusterになった。
-  - データ8の通常PDR終点は `[3.08, 4.24]` mから `[3.29, 0.71]` mへ参考形状の終点に近づいた。
+  - データ8の通常PDR終点は `[3.08, 4.24]` mから `[3.29, 0.71]` mへ共通正解軌跡の終点に近づいた。
   - しかし軌跡比較では、最初の横歩き区間以降が大きく内側へ曲がり、途中形状が旋回保持だけの案より悪化した。左右方向の根拠も歩ごとに一致しなかった。
   - `nosidestep_1turn_3turn` は横歩きcluster 0だった。`ryuki_nosidestep_1turn_3turn` は端末姿勢校正信頼度が約0.282で、生分類自体が横歩きへ偏っており7 cluster、横歩き系76歩になった。この問題は符号非依存clusterだけでは解決できなかった。
 - 結論: 終点改善だけでは採用できない。符号反転を許す場合も、移動軸の一貫性と左右方向を別の観測で保証する必要がある。
@@ -201,7 +207,7 @@ PDR と particle filter の改善で、過去に試した仮説、条件、結�
 - 状態: 一部採用
 - 関連箇所・commit: `190/particle-filter-sidestep` の未コミット差分、`src/rikka/analyze/pdr/models.py`、`src/rikka/analyze/pdr/sidestep.py`、`src/rikka/analyze/particle_filter.py`
 - 仮説: forward・左右横歩き・旋回の状態をPF粒子ごとに持ち、PDRの運動観測と状態遷移を組み合わせれば、低信頼度データでも確定横歩きclusterをPFへ反映できる。
-- 入力: `1turn_rightsidestep_3turn_leftsidestep5`〜`...8`、フロアマップ、同一手順のshape reference。
+- 入力: `1turn_rightsidestep_3turn_leftsidestep5`〜`...8`、フロアマップ、同一ルートの共通正解軌跡。
 - 比較条件:
   - 従来: PDRの確定方位・歩幅を全粒子へ共通適用。
   - 案A: 全歩で粒子状態別のbody/motion headingと歩幅倍率を適用。
@@ -211,13 +217,13 @@ PDR と particle filter の改善で、過去に試した仮説、条件、結�
 - 実行コマンド: `MPLCONFIGDIR=/tmp/rikka-mpl MPLBACKEND=Agg UV_CACHE_DIR=.uv-cache uv run python agent/agent_evaluate_pf_ground_truth.py --data-dir input/sensor_data/1turn_rightsidestep_3turn_leftsidestep7 --seeds 0 1 2 10 42 100`。同形式で5、6、8も実行した。
 - 指標・観察結果:
   - データ7のPDRは34〜38歩と66〜70歩の計10歩を横歩きとしたが、従来PFの代表横歩き状態はseedごとに0〜3歩だった。
-  - 案Aではデータ7の代表横歩き状態が9〜13歩になり、shape-reference RMSEは `[4.50, 7.17, 8.24, 2.23, 3.10, 2.38]` m、中央値約3.80 mまで下がった。一方で最大値は8.24 mへ悪化し、seed 1の最大位置spreadは約7.89 mになった。
+  - 案Aではデータ7の代表横歩き状態が9〜13歩になり、正解軌跡RMSEは `[4.50, 7.17, 8.24, 2.23, 3.10, 2.38]` m、中央値約3.80 mまで下がった。一方で最大値は8.24 mへ悪化し、seed 1の最大位置spreadは約7.89 mになった。
   - 案Aを校正信頼度の高いデータ5、6にも適用すると、それまで安定していたPDR方位を状態が上書きし、内側へのloopが増えたため全歩適用は見送った。
   - 最終案のデータ7代表横歩き状態は全seedで8〜9歩。RMSEは `[5.72, 5.78, 6.31, 5.80, 5.79, 6.24]` mで、従来の約5.68〜5.80 mに対する形状精度の明確な改善は確認できなかったが、状態診断とPDR確定clusterの不一致は解消した。
-  - 最終6seedのRMSE中央値/最大値は、データ5が7.05/8.93 m、データ6が5.61/10.30 m、データ7が5.80/6.31 m、データ8が6.35/9.60 m。これは5〜8固有の正解ではなくshape referenceに対する値である。
+  - 最終6seedの正解軌跡RMSE中央値/最大値は、データ5が7.05/8.93 m、データ6が5.61/10.30 m、データ7が5.80/6.31 m、データ8が6.35/9.60 m。
 - 結論: 低校正信頼度で確定したclusterをPF状態へ反映することには意味があるが、確率状態がcluster外の方位・歩幅を変更するとseed分岐を増やす。状態診断の改善と軌跡精度の改善を同一視しない。
 - 採用内容: `StepMotionEvidence`、PF運動状態遷移、状態確率・entropy・遷移数の診断を追加する。状態別方位・歩幅の実反映は校正不十分かつ確定横歩きcluster内に限定する。
-- 再検証する条件: 5〜8固有の正解軌跡、各歩の移動状態ラベル、低校正信頼度かつ横歩きなしの追加データを用意したとき。状態遷移確率を変える場合も6seed全体で再評価する。
+- 再検証する条件: 各歩の移動状態ラベル、低校正信頼度かつ横歩きなしの追加データを用意したとき。状態遷移確率を変える場合も6seed全体で再評価する。
 
 ### EXP-012: 行き止まりrecoveryの停止・後退候補
 
@@ -263,6 +269,98 @@ PDR と particle filter の改善で、過去に試した仮説、条件、結�
 - 結論: 観測の分離を軌跡振る舞いを変えずに追加できた。これは横歩き区間デコーダと動的な端末−身体オフセット推定の入力に使う。
 - 採用内容: `StepMotionObservation`、`build_step_motion_observations()`、`PreparedPdrSteps.motion_observations` を追加し、PFからは `pdr/particle_api.py` を通して利用可能にした。
 - 再検証する条件: 観測フィールドを追加するとき、区間デコーダが移動軸の向きを確定するとき、PFの粒子状態へ反映するとき。
+
+### EXP-014: 区間復号と動的身体方位の統合
+
+- 日付: 2026-07-16
+- 状態: 採用・継続評価
+- 関連箇所・commit: `190/particle-filter-sidestep` の未コミット差分、`pdr/motion_decoder.py`、`pdr/body_heading.py`、`pdr/motion_refinement.py`、`pdr/trajectory.py`
+- 仮説: 横歩きを1歩ごとの符号ではなく modulo pi の移動軸と連続区間で復号し、端末yawと身体方位の時変差を別状態で推定すれば、端末を曲げた量が進行方向へ直接反映されにくくなる。
+- 入力: `1turn_rightsidestep_3turn_leftsidestep5`〜`8`、`nosidestep_1turn_3turn`、`ryuki_nosidestep_1turn_3turn`、同一ルートの共通正解軌跡、フロアマップ。正解軌跡はルート形状の正解とするが、時刻非同期のため歩境界は正解扱いしていない。
+- 比較条件: 従来cluster / 区間decoderのshadow / decoder→動的body offset→体軸再射影→再decode。最終統合は、高信頼decoderで欠落を補完し、校正信頼度 `< 0.45` のときだけdecoder-forwardでlegacy偽陽性を抑制した。高校正のlegacy clusterは保持した。
+- seed: 通常PDRはseedなし。PFは `[0, 1, 2, 10, 42, 100]`。
+- 実行コマンド:
+  - `MPLBACKEND=Agg UV_CACHE_DIR=.uv-cache uv run python /private/tmp/rikka_motion_baseline.py`
+  - `MPLBACKEND=Agg UV_CACHE_DIR=.uv-cache uv run python /private/tmp/rikka_plot_refinement.py`
+  - `MPLBACKEND=Agg UV_CACHE_DIR=.uv-cache uv run rikka run -d input/sensor_data/1turn_rightsidestep_3turn_leftsidestep5 --no-plot`（末尾を6〜8へ変更）
+  - `MPLCONFIGDIR=/tmp/rikka-mpl MPLBACKEND=Agg UV_CACHE_DIR=.uv-cache uv run python agent/agent_evaluate_pf_ground_truth.py --data-dir input/sensor_data/1turn_rightsidestep_3turn_leftsidestep5 --seeds 0 1 2 10 42 100`（末尾を6〜8へ変更）
+- 指標・観察結果:
+  - 通常PDRの横歩き区間はデータ5が34〜42、69〜75、82歩、6が37〜43、48、68〜70、72〜80歩、7が34〜40、66〜70歩、8が32〜33、42、62、68〜70、77歩となった。データ8の従来欠落区間32〜33歩を補完し、データ7の既存良好clusterを保持した。
+  - `ryuki_nosidestep_1turn_3turn` は従来の7 cluster・横歩き系76歩から0へ減少した。`nosidestep_1turn_3turn` も0を維持した。
+  - 通常PDR終点の従来→変更後は、5 `[10.03, 9.53]`→`[7.17, 9.00]`、6 `[-17.12, -2.00]`→`[-16.41, 0.04]`、7 `[-0.91, 9.19]`→`[0.21, 8.62]`、8 `[3.08, 4.24]`→`[3.40, -1.03]` m。共通正解軌跡はほぼ始点へ戻るが、途中形状を隠さないよう終点だけでは合否を決めていない。
+  - 比較画像ではデータ8の中盤の大きな膨らみが縮小し、横歩きなしデータの偽clusterが消えた。一方、データ8は共通正解軌跡RMSEの中央値が悪化した。
+  - 最終PFのRMSE中央値/最大値は、5が6.03/6.79 m（EXP-011の7.05/8.93）、6が2.02/2.28 m（5.61/10.30）、7が5.01/6.22 m（5.80/6.31）、8が7.49/9.19 m（6.35/9.60）。全24実行で壁交差0、recovery failure 0。
+  - recovery回数の中央値/最大値は5が17/21、6が20.5/23、7が7.5/16、8が19/21。
+- 結論: 端末yawを身体方位と即断せず、区間で確定した移動モードから動的に端末−身体差を更新する方式を採用する。世界移動方位は二重補正せず、body headingと体軸射影だけを更新する。
+- 採用内容: semi-Markov区間decoder、3歩因果窓・Huber残差・最大5度/歩の動的body offset、低校正fallback、診断CSV列、`motion_refinement=False` によるAPI比較経路。
+- 再検証する条件: 5〜8の歩ラベルが得られたとき、1歩だけの実横歩き・端末だけを曲げた非旋回データを追加したとき、デコーダ閾値や更新上限を変えるとき。
+
+### EXP-015: PF recovery候補の経路枝quota
+
+- 日付: 2026-07-16
+- 状態: 実験機能のみ保持・既定無効
+- 関連箇所・commit: `src/rikka/analyze/particle_branches.py`、`src/rikka/analyze/particle_filter.py`、`agent/agent_evaluate_pf_ground_truth.py`
+- 仮説: local recoveryで有効候補が1つでも見つかったときにturn候補を破棄せず、直進・左・右・後退族へ最低quotaを与えれば誤分岐の行き止まり前に別枝を残せる。
+- 入力: データ5〜8、共通正解軌跡、フロアマップ。
+- 比較条件: 従来のlocal早期returnと、local+turnの全有効候補を4族に分類し `ceil(sqrt(N))` quotaを与える方式。`--enable-recovery-branches` で後者を明示有効化した。
+- seed: `[0, 1, 2, 10, 42, 100]`。
+- 実行コマンド: `MPLCONFIGDIR=/tmp/rikka-mpl MPLBACKEND=Agg UV_CACHE_DIR=.uv-cache uv run python agent/agent_evaluate_pf_ground_truth.py --data-dir input/sensor_data/1turn_rightsidestep_3turn_leftsidestep6 --seeds 0 1 2 10 42 100 --enable-recovery-branches`（末尾を5、7、8へ変更）。
+- 指標・観察結果:
+  - 合成open mapで20粒子を4族へ各5粒子残し、少数枝が即消滅しないことを確認した。
+  - 有効時も全seedで壁交差0、recovery failure 0だった。
+  - データ6のRMSE中央値/最大値は従来recovery 2.02/2.28 mに対し枝quota 4.14/8.14 m、最大spreadは1.36 mから4.90 mへ悪化した。
+  - データ8は従来recoveryのRMSE中央値/最大値7.49/9.19 mに対し枝quota 9.19/10.83 m、最大spreadは1.09 mから5.30 mへ悪化した。
+  - データ5の一部seedは大きく改善したが、6・8の誤枝保護とseed間ばらつきを相殺できなかった。
+- 結論: 地図の壁通過可否だけで枝quotaを与えると、正枝と同時に誤枝も保護してspreadを増やす。経路枝保持は実装を残すが既定無効とする。
+- 採用内容: 枝内systematic resampling、枝quota、recovery枝診断、`preserve_recovery_branches=False` の安全な既定。
+- 再検証する条件: 旋回イベントの身体方位確率、分岐後数歩の区間尤度、または正解経路ラベルで誤枝を間引けるようになったとき。
+
+### EXP-016: 横歩き歩幅補正
+
+- 日付: 2026-07-16
+- 状態: 暫定採用・再検討
+- 関連箇所・commit: `src/rikka/config.py`、`src/rikka/analyze/pdr/sidestep.py`、`190/particle-filter-sidestep` の未コミット差分
+- 仮説: 横歩きにも前進と同じWeinberg係数を使い倍率1.0を掛けると、4乗根で上下加速度振幅差が圧縮され、実際より長い横歩きとして軌跡が歪む。移動状態確定後に横歩き歩幅だけ縮小すれば改善できる。
+- 入力: 共通正解軌跡に対応する無印データと`1turn_rightsidestep_3turn_leftsidestep5`〜`8`、横歩きなし2データ、フロアマップ。
+- 比較条件: 固定倍率0.30〜1.0、全前進歩・直近8歩・直近12歩の中央値による適応cap、decoder confidence比例、cluster外単発旋回の追加縮小。PFは主要候補を6 seedで比較した。
+- seed: PFは `[0, 1, 2, 10, 42, 100]`。
+- 実行コマンド:
+  - `PYTHONPATH=. MPLCONFIGDIR=/tmp/rikka-mpl MPLBACKEND=Agg UV_CACHE_DIR=.uv-cache uv run python /tmp/rikka_step_length_experiment.py`
+  - `PYTHONPATH=. MPLCONFIGDIR=/tmp/rikka-mpl MPLBACKEND=Agg UV_CACHE_DIR=.uv-cache uv run python /tmp/rikka_pf_step_scale_eval.py`
+  - `PYTHONPATH=. MPLCONFIGDIR=/tmp/rikka-mpl MPLBACKEND=Agg UV_CACHE_DIR=.uv-cache uv run python /tmp/rikka_pf_exact_scale_eval.py`
+- 指標・観察結果:
+  - 倍率1.0では横歩き/前進の歩幅中央値比がデータ7で0.979、データ8で0.960だった。上下加速度振幅は横歩きの方が小さいが、Weinberg式の4乗根で歩幅差が小さくなっていた。
+  - PDR正解軌跡RMSEは倍率1.0→0.8で、データ5が7.549→6.865 m、6が8.229→7.963 m、7が5.186→4.346 m、8が4.202→3.818 mとなった。無印データも2.804→2.656 mへ改善した。
+  - 適応capは固定倍率を明確に上回らなかった。cluster外単発旋回だけを0.3へ縮める案は5〜8で改善したが、正解対応データを悪化させた。decoder confidenceは単発旋回の方が連続clusterより高く、歩幅倍率へ直接使えなかった。
+  - 正解対応データのPFでは倍率0.8がRMSE中央値/最大値1.10/1.78 mで、倍率1.0の1.52/4.41 m、0.85の1.33/1.86 mより良かった。recovery中央値は7回、failureは0だった。
+  - データ5〜8の倍率0.8 PFは全24実行で壁交差0、failure 0だった。正解軌跡RMSE中央値/最大値は5が5.63/7.83、6が3.33/11.59、7が5.74/9.90、8が7.83/9.44 mで、一部seedは倍率1.0より悪化した。
+  - 横歩きなし2データは横歩き判定0で、補正による軌跡差は0だった。
+- 結論: 強い縮小0.55〜0.60はPDR正解軌跡を最も縮めるが、PFのデータ6・7で不安定だった。適応式や単発例外より単純で、無印データのPDR/PFとデータ5〜8のPDRを同時に改善した固定0.8を採用した。ただし5〜8も同じ正解ルートであるため、PF指標悪化は未解決の精度問題として扱う。
+- 採用内容: `SIDESTEP_LENGTH_SCALE = 0.8`。通常PDRとPFは `prepare_pdr_steps()` を通して同じ補正済み歩幅を共有する。
+- 再検証する条件: 横歩きの実測距離、歩ごとの移動状態ラベルが得られたとき。倍率変更時は無印データと5〜8を同じ6 seedで再評価する。
+
+### EXP-017: データ7・8の共通正解ルート再評価
+
+- 日付: 2026-07-16
+- 状態: 調査完了・修正候補あり
+- 関連箇所・commit: `pdr/sidestep.py`、`pdr/motion_refinement.py`、`pdr/step_length.py`、`particle_filter.py`、`190/particle-filter-sidestep` の未コミット差分
+- 仮説: データ7・8の異常は横歩き歩幅だけでなく、横歩き開始時の方位不連続と、同一記録内の区間ごとの歩幅変化を固定Weinberg係数で表現できないことから生じる。
+- 入力: `1turn_rightsidestep_3turn_leftsidestep7`、`...8`、両データと同じルートの共通正解軌跡、既存PF出力 `20260716_090806_814339`、`20260716_100940_843472`、`20260716_101030_133947`。
+- 比較条件: motion refinement有効/無効、旋回なし横歩き開始の方位差45/60/75度ガード、正解軌跡と推定軌跡の旋回間区間長比較。
+- seed: 通常PDRはseedなし。既存PF出力は各実行時seedに従う。過去の6 seed集計はEXP-016を参照。
+- 実行コマンド:
+  - `PYTHONPATH=. MPLCONFIGDIR=/tmp/rikka-mpl MPLBACKEND=Agg UV_CACHE_DIR=.uv-cache uv run python /tmp/rikka_diagnose_78.py`
+  - `PYTHONPATH=. MPLCONFIGDIR=/tmp/rikka-mpl MPLBACKEND=Agg UV_CACHE_DIR=.uv-cache uv run python /tmp/rikka_sidestep_onset_guard.py`
+- 指標・観察結果:
+  - 共通正解ルートをRDP 0.5 mで単純化した旋回間距離は約 `[24.35, 12.00, 13.05, 11.92, 11.13]` mだった。
+  - データ7の推定区間距離は `[22.77, 11.58, 15.75, 11.16, 8.83]` m、データ8は `[22.79, 11.84, 16.63, 11.96, 7.58]` mだった。両方で3区間目が21〜27%過大、最終区間が21〜32%過小となり、単一の全体歩幅倍率では同時に補正できない。
+  - データ7は最初の横歩き開始時に直前方位約154度から約73度へ、旋回なしで約81度跳んだ。2回目の横歩き開始にも同種の跳びがあり、大きな内側ループの主因になった。
+  - 旋回なし横歩き開始で45度を超える方位跳びを直前方位へ戻す一時案は、PDR正解軌跡RMSEをデータ7で4.346→3.081 m、8で3.818→3.683 mへ改善した。データ5は不変、6は7.963→7.830 mだった。
+  - motion refinement無効/有効のRMSEはデータ7が4.572/4.346 m、8が2.912/3.818 mだった。データ8の32〜33歩補完はルート正解基準では悪化しており、補完の採用条件を再検討する必要がある。
+  - 既存PF画像ではデータ8が下側通路を往復し、データ7が外周を一周せず右縦通路へ早期復帰していた。3区間目の過大歩幅で旋回観測前に壁へ到達し、recoveryが地図上で通行可能な誤分岐を選ぶことと整合する。
+- 結論: データ7は横歩き開始時の方位連続性、データ8は区間別歩幅変動と32〜33歩の補完条件が主要課題である。固定 `SIDESTEP_LENGTH_SCALE` の再調整だけでは解決しない。PFでは区間内歩幅倍率の下限・学習と、旋回列に整合するrecovery枝評価を一緒に検証する必要がある。
+- 採用内容: 評価前提と診断結果のみ記録。製品コードへの方位ガード・PF歩幅状態変更は未採用。
+- 再検証する条件: 横歩き開始ガードを本実装するとき、PF stride scale範囲やprocess noiseを変更するとき、データ8の32〜33歩を確定横歩きへ補完する条件を変更するとき。
 
 ## 進行中の試行
 

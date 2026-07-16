@@ -57,6 +57,7 @@ from ...config import (
     WINDOW_GYRO,
 )
 from . import pipeline as _pipeline
+from .body_heading import DynamicBodyHeadingEstimate, estimate_dynamic_body_headings
 from .common import (
     DEVICE_ORIENTATION_MODES,
     FORWARD_HEADING_SOURCES,
@@ -127,6 +128,13 @@ from .models import (
     StepMotionObservation,
     StepSegment,
 )
+from .motion_decoder import (
+    DecodedMotionSegment,
+    MotionDecodeResult,
+    decode_step_motion_modes,
+    decode_step_motion_segments,
+)
+from .motion_refinement import refine_step_headings_with_motion_model
 from .outputs import (
     _angle_to_deg,
     _build_gyro_bias_dataframe,
@@ -211,6 +219,8 @@ __all__ = [
     "BACKWARD_LENGTH_SCALE",
     "DATA_DIR",
     "DEVICE_ORIENTATION_MODES",
+    "DecodedMotionSegment",
+    "DynamicBodyHeadingEstimate",
     "FLOORMAP_ORIGIN_PX",
     "FLOORMAP_PATH",
     "FLOORMAP_SCALE",
@@ -237,6 +247,7 @@ __all__ = [
     "INITIAL_FORWARD_MOTION_BODY_CONSTRAINT_RAD",
     "K_FORWARD",
     "MOTION_HEADING_CORRECTION_METHODS",
+    "MotionDecodeResult",
     "PEAK_DISTANCE",
     "PEAK_HEIGHT",
     "PreparedPdrSteps",
@@ -360,14 +371,18 @@ __all__ = [
     "detect_step_result",
     "detect_steps",
     "estimate_gyro_bias",
+    "estimate_dynamic_body_headings",
     "estimate_step_length",
     "estimate_step_length_forward",
     "estimate_step_motion",
     "estimate_trajectory",
     "estimate_trajectory_with_headings",
+    "decode_step_motion_modes",
+    "decode_step_motion_segments",
     "load_sensor_data",
     "plot_trajectory",
     "prepare_pdr_steps",
+    "refine_step_headings_with_motion_model",
     "process_sensor_data",
     "resolve_step_heading",
     "run",

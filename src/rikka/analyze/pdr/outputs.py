@@ -236,6 +236,11 @@ def _build_step_headings_dataframe(step_headings: list[StepHeading]) -> pd.DataF
         "yaw_delta_deg",
         "motion_heading_correction_deg",
         "device_orientation_mode",
+        "decoded_motion_mode",
+        "decoded_motion_confidence",
+        "device_body_offset_deg",
+        "dynamic_body_heading_confidence",
+        "body_heading_update_reason",
         "body_motion_angle_diff_deg",
         "lateral_forward_ratio",
         "sidestep_lateral_ratio",
@@ -275,6 +280,13 @@ def _build_step_headings_dataframe(step_headings: list[StepHeading]) -> pd.DataF
                 heading.motion_heading_correction
             ),
             "device_orientation_mode": heading.device_orientation_mode,
+            "decoded_motion_mode": heading.decoded_motion_mode,
+            "decoded_motion_confidence": heading.decoded_motion_confidence,
+            "device_body_offset_deg": _angle_to_deg(heading.device_body_offset),
+            "dynamic_body_heading_confidence": (
+                heading.dynamic_body_heading_confidence
+            ),
+            "body_heading_update_reason": heading.body_heading_update_reason,
             "body_motion_angle_diff_deg": _angle_to_deg(heading.body_motion_angle_diff),
             "lateral_forward_ratio": _lateral_forward_ratio_for_output(heading),
             "sidestep_lateral_ratio": heading.sidestep_lateral_ratio,
