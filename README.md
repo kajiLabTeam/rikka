@@ -356,9 +356,25 @@ PDR 本体は `src/rikka/analyze/pdr/` パッケージに分割されていま�
 | `pdr/pipeline.py` | `run()` の実行 orchestration |
 | `pdr/particle_api.py` | particle filter が利用する PDR API の bridge |
 
-`src/rikka/analyze/particle_filter.py` は、`prepare_pdr_steps()` で作った
-決定論的なステップ方位・歩幅・時刻を受け取り、フロアマップ制約で軌跡を補正します。
-PDR の内部 helper を直接参照せず、`pdr/particle_api.py` 経由で必要な API だけを使います。
+Particle filter の内部実装は `src/rikka/analyze/particle/` に責務別で分割されています。
+`particle_filter.py` は既存 import を維持する互換 facade です。
+
+| ファイル | 役割 |
+|---|---|
+| `particle_filter.py` | 互換 facade。既存の公開 API と内部 helper の import を維持 |
+| `particle/models.py` | 1歩ごとの粒子診断データ型 |
+| `particle/diagnostics.py` | 粒子状態・重み・復旧結果から診断値を構築 |
+| `particle/resampling.py` | ESS 計算と粒子のリサンプリング |
+| `particle/motion.py` | 運動状態遷移、方位、観測尤度の計算 |
+| `particle/map_constraints.py` | フロアマップ正規化、座標変換、壁との交差判定 |
+| `particle/paths.py` | 粒子祖先の復元と代表軌跡の選択 |
+| `particle/recovery.py` | recovery 候補生成と checkpoint replay |
+| `particle/runner.py` | `run_particle_filter()` の実行 orchestration |
+| `particle/plotting.py` | 粒子軌跡の描画とアニメーション保存 |
+
+`particle/runner.py` は `prepare_pdr_steps()` で作った決定論的なステップ方位・歩幅・
+時刻を受け取り、フロアマップ制約で軌跡を補正します。PDR の内部 helper は直接参照せず、
+引き続き `pdr/particle_api.py` 経由で必要な API だけを使います。
 
 ## Python から使う
 

@@ -7,8 +7,8 @@
     ``common``、``heading``、``models``、``plotting``、``sidestep``、
     ``step_length``、``time_utils`` から共有する検証・推定・描画 API を取得する。
 利用先:
-    ``analyze.particle_filter`` だけがこの bridge を import し、PDR の private helper や
-    互換 facade への直接依存を避ける。
+    ``analyze.particle`` 配下の内部実装だけがこの bridge を import し、PDR の
+    private helper や互換 facade への直接依存を避ける。
 処理フロー:
     独自計算は行わず、必要な関数・型を意味の明確な公開名として再 export する。
 """

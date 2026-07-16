@@ -424,6 +424,148 @@ def test_run_particle_filter_seed_makes_particles_deterministic(tmp_path) -> Non
     np.testing.assert_allclose(first[3], second[3])
 
 
+def test_particle_filter_compatibility_facade_exports_existing_symbols() -> None:
+    from rikka.analyze import particle_filter
+
+    expected_symbols = (
+        "ParticleFilterStepDiagnostics",
+        "_effective_sample_size",
+        "_evaluate_particle_transitions",
+        "_generate_recovery_candidates",
+        "_motion_state_headings",
+        "_normalize_floormap_gray",
+        "_reconstruct_particle_paths",
+        "_reconstruct_resampled_paths",
+        "_replay_from_checkpoint",
+        "_sample_motion_states",
+        "_select_reachable_mean_path",
+        "_snap_trajectory_to_walkable_pixels",
+        "_systematic_resample",
+        "plot_particle_filter_trajectory",
+        "run_particle_filter",
+        "save_particle_animation",
+    )
+
+    assert all(hasattr(particle_filter, name) for name in expected_symbols)
+
+
+def test_particle_filter_diagnostics_field_order_is_stable() -> None:
+    assert tuple(ParticleFilterStepDiagnostics.__dataclass_fields__) == (
+        "step",
+        "timestamp_s",
+        "valid_count",
+        "valid_ratio",
+        "valid_weight_count",
+        "valid_weight_mass_before_normalization",
+        "ess_before_observation",
+        "ess_after_observation",
+        "ess_after_resampling",
+        "max_weight",
+        "unique_parent_count",
+        "unique_position_count",
+        "position_spread_rms_m",
+        "heading_drift_std_deg",
+        "heading_total_std_deg",
+        "stride_scale_mean",
+        "stride_scale_std",
+        "effective_step_length_mean_m",
+        "effective_step_length_std_m",
+        "forward_state_probability",
+        "sidestep_left_state_probability",
+        "sidestep_right_state_probability",
+        "turning_state_probability",
+        "representative_motion_state",
+        "motion_state_entropy",
+        "motion_state_transition_count",
+        "motion_reliability",
+        "calibration_reliability",
+        "resampled",
+        "recovery_attempted",
+        "recovery_mode",
+        "recovery_valid_count",
+        "recovery_attempts",
+        "recovery_heading_delta_deg",
+        "recovery_step_scale",
+        "recovery_cost",
+        "recovery_checkpoint_step",
+        "recovery_replay_steps",
+        "trajectory_mode",
+        "trajectory_source_index",
+        "recovery_candidate_branch_count",
+        "recovery_selected_branch_count",
+    )
+
+
+def test_particle_filter_fixed_seed_characterization_snapshot(tmp_path) -> None:
+    floormap_path = tmp_path / "open_map.png"
+    plt.imsave(
+        floormap_path,
+        np.ones((20, 20), dtype=float),
+        cmap="gray",
+        vmin=0.0,
+        vmax=1.0,
+    )
+    diagnostics: list[ParticleFilterStepDiagnostics] = []
+
+    result = run_particle_filter(
+        np.array([0]),
+        pd.DataFrame({"low_angle": [0.0]}),
+        pd.DataFrame({"h_y": [0.0], "h_z": [0.0]}),
+        gx_mean=0.0,
+        gz_mean=9.8,
+        floormap_path=floormap_path,
+        origin_px=(5, 5),
+        scale=1.0,
+        n_particles=12,
+        prepared_step_headings=[_forward_step_heading()],
+        prepared_step_lengths=[1.0],
+        prepared_step_times=[0.0],
+        seed=123,
+        diagnostics_collector=diagnostics,
+    )
+
+    assert len(result) == 5
+    np.testing.assert_allclose(
+        np.asarray(result[0]),
+        np.array([[0.0, 0.0], [1.0175842, 0.00248184]]),
+        rtol=1e-7,
+        atol=1e-8,
+    )
+    np.testing.assert_allclose(
+        result[3][1, :3],
+        np.array(
+            [
+                [1.02581267, -0.0136450707],
+                [0.986660999, -0.0158762091],
+                [1.02215898, 0.0438210022],
+            ]
+        ),
+        rtol=1e-7,
+        atol=1e-8,
+    )
+    assert result[1] == [1.0]
+    assert result[2] == [0.0]
+    assert len(diagnostics) == 1
+    diagnostic = diagnostics[0]
+    np.testing.assert_allclose(
+        [
+            diagnostic.ess_after_observation,
+            diagnostic.position_spread_rms_m,
+            diagnostic.heading_drift_std_deg,
+            diagnostic.stride_scale_mean,
+        ],
+        [
+            11.999999999999998,
+            0.04693755747666554,
+            1.3329123268479632,
+            1.0172439681875478,
+        ],
+    )
+    assert diagnostic.resampled is False
+    assert diagnostic.recovery_mode == "none"
+    assert diagnostic.trajectory_mode == "weighted_mean"
+
+
 def test_effective_sample_size_handles_uniform_and_concentrated_weights() -> None:
     assert _effective_sample_size(np.full(4, 0.25)) == 4.0
     assert _effective_sample_size(np.array([1.0, 0.0, 0.0, 0.0])) == 1.0
