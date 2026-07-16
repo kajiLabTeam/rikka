@@ -44,9 +44,9 @@ def _decoder_confidences(result: MotionDecodeResult) -> tuple[float, ...]:
     """区間診断を歩ごとの信頼度列へ展開する。"""
     confidences = [0.0] * len(result.motion_modes)
     for segment in result.segments:
-        confidences[segment.start_index : segment.end_index] = [
-            segment.confidence
-        ] * (segment.end_index - segment.start_index)
+        confidences[segment.start_index : segment.end_index] = [segment.confidence] * (
+            segment.end_index - segment.start_index
+        )
     return tuple(confidences)
 
 
@@ -140,9 +140,7 @@ def _apply_decoded_segments(
         cluster_id = heading.sidestep_cluster_id
         evidence_reason = heading.sidestep_evidence_reason
         if _is_side_mode(decoded_mode):
-            trajectory_type = (
-                f"turning_{decoded_mode}" if raw_turning else decoded_mode
-            )
+            trajectory_type = f"turning_{decoded_mode}" if raw_turning else decoded_mode
             cluster_id = segment_cluster_ids[segment_index]
             evidence_reason = "motion_segment_decoder"
         elif (
@@ -150,8 +148,7 @@ def _apply_decoded_segments(
             and _trajectory_side_mode(legacy_heading) is not None
         ):
             trajectory_type = (
-                legacy_heading.trajectory_movement_type
-                or legacy_heading.movement_type
+                legacy_heading.trajectory_movement_type or legacy_heading.movement_type
             )
             cluster_id = legacy_heading.sidestep_cluster_id
             evidence_reason = legacy_heading.sidestep_evidence_reason

@@ -47,7 +47,9 @@ from .common import (
 from .models import GyroBiasResult
 from .outputs import (
     _build_gyro_bias_dataframe,
+    _build_motion_posteriors_dataframe,
     _build_step_headings_dataframe,
+    _build_step_length_observations_dataframe,
     _build_step_segments_dataframe,
     _build_step_vectors_dataframe,
     _build_trajectory_dataframe,
@@ -82,6 +84,8 @@ def run(
     sidestep_heading_source: str = "motion",
     sidestep_suspect_mode: str = SIDESTEP_SUSPECT_MODE,
     particle_seed: int | None = None,
+    motion_estimation: str = "legacy",
+    smoothing_mode: str = "causal",
 ) -> pd.DataFrame:
     """PDRのメインパイプラインを実行する。
 
@@ -197,6 +201,8 @@ def run(
         forward_heading_source=selected_forward_heading_source,
         sidestep_heading_source=selected_sidestep_heading_source,
         sidestep_suspect_mode=selected_sidestep_suspect_mode,
+        motion_estimation=motion_estimation,
+        smoothing_mode=smoothing_mode,
     )
     df_acc = prepared_steps.df_acc
     df_gyro = prepared_steps.df_gyro
@@ -261,6 +267,20 @@ def run(
     df_gyro_bias.to_csv(gyro_bias_path, index=False)
     print(f"Gyro bias saved to {gyro_bias_path}")
 
+    df_length_observations = _build_step_length_observations_dataframe(
+        prepared_steps.length_observations
+    )
+    length_observations_path = output_dir / "step_length_observations.csv"
+    df_length_observations.to_csv(length_observations_path, index=False)
+    print(f"Step length observations saved to {length_observations_path}")
+    if prepared_steps.motion_posteriors:
+        df_motion_posteriors = _build_motion_posteriors_dataframe(
+            prepared_steps.motion_posteriors
+        )
+        motion_posteriors_path = output_dir / "motion_posteriors.csv"
+        df_motion_posteriors.to_csv(motion_posteriors_path, index=False)
+        print(f"Motion posteriors saved to {motion_posteriors_path}")
+
     # particle filter は prepared_steps を受け取り、同じステップ列を地図制約で補正する。
     if use_particle_filter:
         from ..particle_filter import (  # noqa: PLC0415
@@ -294,6 +314,7 @@ def run(
             prepared_step_lengths=prepared_steps.step_lengths,
             prepared_step_times=prepared_steps.t_at_steps,
             prepared_motion_evidences=prepared_steps.motion_evidences,
+            prepared_motion_posteriors=prepared_steps.motion_posteriors,
             sidestep_lateral_ratio=sidestep_lateral_ratio,
             sidestep_min_lateral_displacement=sidestep_min_lateral_displacement,
             motion_heading_correction=selected_motion_heading_correction,

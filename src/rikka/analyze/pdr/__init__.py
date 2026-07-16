@@ -57,6 +57,7 @@ from ...config import (
     WINDOW_GYRO,
 )
 from . import pipeline as _pipeline
+from .adaptive_estimator import AdaptivePdrEstimator, estimate_adaptive_pdr
 from .body_heading import DynamicBodyHeadingEstimate, estimate_dynamic_body_headings
 from .common import (
     DEVICE_ORIENTATION_MODES,
@@ -120,12 +121,17 @@ from .heading import (
     resolve_step_heading,
 )
 from .models import (
+    AdaptivePdrResult,
+    AdaptivePdrState,
     GyroBiasResult,
     PreparedPdrSteps,
     StepDetectionResult,
     StepHeading,
+    StepLengthObservation,
     StepMotion,
+    StepMotionEvidence,
     StepMotionObservation,
+    StepMotionPosterior,
     StepSegment,
 )
 from .motion_decoder import (
@@ -215,6 +221,9 @@ from .trajectory import (
 )
 
 __all__ = [
+    "AdaptivePdrEstimator",
+    "AdaptivePdrResult",
+    "AdaptivePdrState",
     "ACC_COLUMNS",
     "BACKWARD_LENGTH_SCALE",
     "DATA_DIR",
@@ -269,8 +278,11 @@ __all__ = [
     "STEP_VERTICAL_THRESHOLD_PERCENTILE",
     "StepDetectionResult",
     "StepHeading",
+    "StepLengthObservation",
     "StepMotion",
+    "StepMotionEvidence",
     "StepMotionObservation",
+    "StepMotionPosterior",
     "StepSegment",
     "TRAJECTORY_HEADING_MAX_STEP_DELTA_RAD",
     "TURNING_LENGTH_SCALE",
@@ -372,6 +384,7 @@ __all__ = [
     "detect_steps",
     "estimate_gyro_bias",
     "estimate_dynamic_body_headings",
+    "estimate_adaptive_pdr",
     "estimate_step_length",
     "estimate_step_length_forward",
     "estimate_step_motion",
@@ -412,6 +425,8 @@ def run(
     sidestep_heading_source: str = "motion",
     sidestep_suspect_mode: str = SIDESTEP_SUSPECT_MODE,
     particle_seed: int | None = None,
+    motion_estimation: str = "legacy",
+    smoothing_mode: str = "causal",
 ) -> pd.DataFrame:
     """互換 facade 経由で PDR パイプラインを実行する。"""
     vars(_pipeline)["_create_output_dir"] = _create_output_dir
@@ -438,4 +453,6 @@ def run(
         sidestep_heading_source=sidestep_heading_source,
         sidestep_suspect_mode=sidestep_suspect_mode,
         particle_seed=particle_seed,
+        motion_estimation=motion_estimation,
+        smoothing_mode=smoothing_mode,
     )

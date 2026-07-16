@@ -63,6 +63,7 @@ PDR と particle filter の改善で、過去に試した仮説、条件、結�
 | EXP-015 | PF recoveryの経路枝quota | 実験機能のみ・既定無効 | 安全性は維持したが誤枝保護でspreadと一部seedが悪化した |
 | EXP-016 | 横歩き歩幅補正 | 暫定採用・再検討 | 固定倍率0.8を採用したが、5〜8も共通正解ルートと確定したためPF精度を再検討する |
 | EXP-017 | データ7・8の共通正解ルート再評価 | 調査完了・修正候補あり | 横歩き開始の方位跳びと区間別歩幅誤差を分離し、固定倍率だけでは直せないと確認した |
+| EXP-018 | 確率的な適応PDRと局所歩幅状態 | 一部採用・既定無効 | 通常PDRは全5記録で改善したがPFの最悪seedが悪化する記録が残るため明示指定で評価を継続する |
 
 ## 過去の試行詳細
 
@@ -361,6 +362,33 @@ PDR と particle filter の改善で、過去に試した仮説、条件、結�
 - 結論: データ7は横歩き開始時の方位連続性、データ8は区間別歩幅変動と32〜33歩の補完条件が主要課題である。固定 `SIDESTEP_LENGTH_SCALE` の再調整だけでは解決しない。PFでは区間内歩幅倍率の下限・学習と、旋回列に整合するrecovery枝評価を一緒に検証する必要がある。
 - 採用内容: 評価前提と診断結果のみ記録。製品コードへの方位ガード・PF歩幅状態変更は未採用。
 - 再検証する条件: 横歩き開始ガードを本実装するとき、PF stride scale範囲やprocess noiseを変更するとき、データ8の32〜33歩を確定横歩きへ補完する条件を変更するとき。
+
+### EXP-018: 確率的な適応PDRと局所歩幅状態
+
+- 日付: 2026-07-16
+- 状態: 一部採用・既定無効
+- 関連箇所・commit: 未コミット差分、`pdr/adaptive_estimator.py`、`pdr/step_length.py`、`pdr/trajectory.py`、`particle_filter.py`、`agent/agent_evaluate_adaptive_pdr.py`
+- 仮説: 運動状態、移動方位、歩幅、端末−身体方位差を確率状態として保持し、旋回観測の弱い横歩き開始だけ方位跳びを抑え、歩境界内の加速度振幅から局所歩幅と不確かさを更新すれば、データ番号固有の条件なしに5〜8を改善できる。
+- 入力: 無印データと`1turn_rightsidestep_3turn_leftsidestep5`〜`8`、全記録に共通する`walk_trace (3).csv`、フロアマップ。
+- 比較条件:
+  - legacy: 既存の区間decoder、動的body heading、固定横歩き倍率0.8、既存PF歩幅倍率。
+  - adaptive PDR: 4状態事後確率、歩境界内Weinberg観測、状態別歩幅倍率、45度超・yaw 20度未満・非旋回の横歩き開始ガード。
+  - PF案1（見送り）: recoveryで選んだ0.7〜1.3の倍率を直前倍率へ乗算して永続化。
+  - PF案2（見送り）: 0.6〜1.5の広い歩幅事前を全adaptive記録へ常時適用。
+  - PF最終案: 通常は既存0.9〜1.15を維持し、相対歩幅不確かさ18%以上の記録だけ広域探索を有効化。歩幅事前尤度を壁通過尤度と併用する。
+- seed: 通常PDRはseedなし。PFは`[0, 1, 2, 10, 42, 100]`。
+- 実行コマンド:
+  - `MPLBACKEND=Agg UV_CACHE_DIR=.uv-cache uv run python agent/agent_evaluate_adaptive_pdr.py --data-dir input/sensor_data/1turn_rightsidestep_3turn_leftsidestep input/sensor_data/1turn_rightsidestep_3turn_leftsidestep5 input/sensor_data/1turn_rightsidestep_3turn_leftsidestep6 input/sensor_data/1turn_rightsidestep_3turn_leftsidestep7 input/sensor_data/1turn_rightsidestep_3turn_leftsidestep8`
+  - `MPLCONFIGDIR=/tmp/rikka-mpl MPLBACKEND=Agg UV_CACHE_DIR=.uv-cache uv run python agent/agent_evaluate_pf_ground_truth.py --data-dir input/sensor_data/1turn_rightsidestep_3turn_leftsidestep7 --seeds 0 1 2 10 42 100 --motion-estimation adaptive --smoothing causal`（無印、5、6、8も同形式）
+- 指標・観察結果:
+  - 通常PDRのlegacy→adaptive RMSEは、無印`2.656→2.166` m、5`6.865→6.728` m、6`7.963→7.838` m、7`4.346→3.364` m、8`3.818→3.622` mで全5記録が改善した。
+  - 方位候補の循環平均を代表方位にした初期案は、存在しない中間方向を作り、無印`3.324` m、7`4.708` m、8`4.748` mへ悪化したため見送った。
+  - recovery倍率の乗算永続化はデータ7の推定距離を約55〜59 mまで縮め、RMSEを約10.51〜11.41 mへ悪化させた。倍率を局所区間の絶対仮説へ変更しても約5.75〜6.66 mで、短い粒子ほど壁に当たりにくい選択偏りが残った。
+  - 最終PFのRMSE中央値/最大値は、無印`0.94/8.33` m、5`5.37/10.25` m、6`3.29/11.23` m、7`4.81/5.88` m、8`5.44/6.50` m。legacyは無印`1.10/1.78` m、5`5.63/7.83` m、6`3.33/11.59` m、7`4.70/6.28` m、8`7.83/9.44` mだった。
+  - 最終PFの全30実行で壁交差0、recovery failure 0だった。8の中央値・最大値と6・7の最大値は改善したが、無印と5の最悪seedは大幅に悪化した。
+- 結論: 確率状態と歩境界内歩幅観測、横歩き開始ガードは通常PDRでは全記録を改善した。一方、地図制約だけで広い歩幅状態や経路枝を選ぶPFは短い誤枝を優遇し、全記録の最悪seed改善を満たさない。adaptiveは実装・診断・CLIを残すが既定へ昇格しない。
+- 採用内容: `StepLengthObservation`、`StepMotionPosterior`、`AdaptivePdrState/Result`、因果`update_step()`、offline状態平滑化、`--motion-estimation`/`--smoothing`、診断CSV、適応評価スクリプト。既定値は`legacy`を維持する。
+- 再検証する条件: 地図上の有効/無効だけでなく旋回列尤度と歩幅事前を経路全体で比較できるfixed-lag smootherを導入したとき、または歩ごとの実測距離・状態ラベルを追加したとき。既定変更前に無印と5〜8の全seedで最大RMSE非悪化を確認する。
 
 ## 進行中の試行
 

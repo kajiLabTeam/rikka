@@ -119,9 +119,7 @@ def branch_preserving_resample(
     active_masses = masses[active_indices]
     active_probabilities = active_masses / active_masses.sum()
     positive_probabilities = active_probabilities[active_probabilities > 0.0]
-    entropy = float(
-        -np.sum(positive_probabilities * np.log(positive_probabilities))
-    )
+    entropy = float(-np.sum(positive_probabilities * np.log(positive_probabilities)))
 
     ranked_active_indices = sorted(
         active_indices.tolist(),

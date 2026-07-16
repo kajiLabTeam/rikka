@@ -49,6 +49,15 @@ def test_run_help_includes_forward_heading_source_option() -> None:
     assert "--forward-heading-source" in result.output
 
 
+def test_run_help_includes_adaptive_motion_options() -> None:
+    result = CliRunner().invoke(cli, ["run", "--help"])
+
+    assert result.exit_code == 0
+    assert "--motion-estimation" in result.output
+    assert "--smoothing" in result.output
+    assert "legacy" in result.output
+
+
 def test_particle_help_includes_pf_seed_option() -> None:
     result = CliRunner().invoke(cli, ["particle", "--help"])
 

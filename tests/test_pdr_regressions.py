@@ -23,6 +23,7 @@ from rikka.analyze.particle_filter import (
     _systematic_resample,
     run_particle_filter,
 )
+from rikka.analyze.pdr.adaptive_estimator import estimate_adaptive_pdr
 from rikka.analyze.pdr.body_heading import estimate_dynamic_body_headings
 from rikka.analyze.pdr.motion_decoder import decode_step_motion_segments
 from rikka.analyze.pdr.motion_refinement import (
@@ -955,6 +956,80 @@ def test_reachable_mean_path_falls_back_without_using_zero_weight_path() -> None
         origin_px=(0, 0),
         scale=1.0,
     ).all()
+
+
+def test_adaptive_pdr_exposes_normalized_state_and_length_uncertainty() -> None:
+    headings = [
+        _forward_step_heading(step_index=1),
+        _forward_step_heading(step_index=2)._replace(
+            movement_type="sidestep_left",
+            trajectory_movement_type="sidestep_left",
+            motion_heading=np.pi / 2.0,
+        ),
+    ]
+    observations = (
+        pdr.StepLengthObservation(1, 1.0, 1.0, 0.65, 2.0, 1.0, 1.0, 0.1, None),
+        pdr.StepLengthObservation(2, 1.0, 0.7, 0.65, 1.0, 1.0, 0.9, 0.12, None),
+    )
+    evidences = (
+        pdr.StepMotionEvidence(0.95, 0.02, 0.02, 0.01, 1.0, 1.0),
+        pdr.StepMotionEvidence(0.05, 0.9, 0.02, 0.03, 1.0, 1.0),
+    )
+
+    result = estimate_adaptive_pdr(
+        headings,
+        observations,
+        evidences,
+        smoothing_mode="offline",
+    )
+
+    assert len(result.posteriors) == 2
+    for posterior in result.posteriors:
+        probability_sum = (
+            posterior.forward_probability
+            + posterior.sidestep_left_probability
+            + posterior.sidestep_right_probability
+            + posterior.turning_probability
+        )
+        np.testing.assert_allclose(probability_sum, 1.0)
+        assert posterior.heading_std >= 0.0
+        assert posterior.length_std_m > 0.0
+        assert posterior.source == "adaptive_offline"
+    assert (
+        result.posteriors[1].sidestep_left_probability
+        > result.posteriors[1].sidestep_right_probability
+    )
+    assert result.step_lengths[1] < observations[1].nominal_length_m
+
+
+def test_adaptive_recovery_uses_absolute_stride_scale_without_compounding() -> None:
+    n_particles = 60
+    result = _generate_recovery_candidates(
+        previous_particles=np.zeros((n_particles, 2)),
+        previous_heading_correction=np.zeros(n_particles),
+        previous_heading_drift=np.zeros(n_particles),
+        previous_stride_scale=np.full(n_particles, 0.7),
+        proposed_motion_state=np.zeros(n_particles, dtype=np.int8),
+        previous_weights=np.full(n_particles, 1.0 / n_particles),
+        angle_det=0.0,
+        step_length=1.0,
+        sigma_step_length_ratio=0.0,
+        n_particles=n_particles,
+        map_gray=np.full((41, 41), 255.0),
+        gx_mean=0.0,
+        gz_mean=9.8,
+        origin_px=(20, 20),
+        scale=1.0,
+        heading_sigma=np.deg2rad(10.0),
+        max_attempts=1,
+        rng=np.random.default_rng(42),
+        preserve_route_branches=False,
+        allow_stride_adaptation=True,
+    )
+
+    assert result is not None
+    assert float(np.mean(result.stride_scale)) > 0.6
+    assert float(np.mean(result.stride_scale)) < 0.9
 
 
 def test_particle_filter_recovers_with_map_aware_direction_candidates(tmp_path) -> None:

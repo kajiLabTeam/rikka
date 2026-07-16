@@ -248,6 +248,28 @@ MPLBACKEND=Agg uv run python \
   --plot-path output/diagnostics/pf_ground_truth_comparison.png
 ```
 
+運動状態・方位・歩幅を確率状態として逐次推定する実験モードは次のように実行する。
+`causal` は各歩までの観測だけを使い、`offline` は記録全体を使って運動状態列を
+後向き平滑化する。PFの全データ・全seed受け入れ条件はまだ満たしていないため、
+既定値は互換性のある `legacy` のままとしている。
+
+```sh
+uv run rikka run --motion-estimation adaptive --smoothing causal
+uv run rikka particle --motion-estimation adaptive --smoothing offline --pf-seed 42
+```
+
+通常PDRの方式比較は、同じ正解ルートに対応するデータをまとめて指定できる。
+
+```sh
+MPLBACKEND=Agg uv run python agent/agent_evaluate_adaptive_pdr.py \
+  --data-dir \
+  input/sensor_data/1turn_rightsidestep_3turn_leftsidestep \
+  input/sensor_data/1turn_rightsidestep_3turn_leftsidestep5 \
+  input/sensor_data/1turn_rightsidestep_3turn_leftsidestep6 \
+  input/sensor_data/1turn_rightsidestep_3turn_leftsidestep7 \
+  input/sensor_data/1turn_rightsidestep_3turn_leftsidestep8
+```
+
 横歩き判定を軌跡へそのまま反映して比較したい場合:
 
 ```sh
@@ -291,6 +313,8 @@ uv run rikka run \
 | `trajectory.csv` | 移動後座標。列は `timestamp_s,x,y` |
 | `trajectory.png` | フロアマップ上の軌跡 |
 | `step_lengths.csv` | ステップごとの歩幅 |
+| `step_length_observations.csv` | 1歩区間の歩幅候補、周期、振幅、品質、不確かさ |
+| `motion_posteriors.csv` | adaptive時の運動状態確率、方位・歩幅・端末姿勢ずれの事後分布 |
 | `step_lengths.png` | 歩幅グラフ |
 | `step_vectors.csv` | ステップごとの変位ベクトル |
 | `step_vectors/step_*.png` | 各ステップの変位と加速度分布 |
@@ -316,6 +340,7 @@ PDR 本体は `src/rikka/analyze/pdr/` パッケージに分割されていま�
 | `pdr/__init__.py` | 互換 facade。既存の `from rikka.analyze.pdr import run` などを維持 |
 | `pdr/common.py` | 共通定数、角度処理、モード検証、パラメータ検証 |
 | `pdr/models.py` | `StepHeading`、`StepMotion`、`PreparedPdrSteps` などの共有データ型 |
+| `pdr/adaptive_estimator.py` | 運動状態・方位・歩幅・端末姿勢ずれの因果推定とオフライン平滑化 |
 | `pdr/sensors.py` | CSV 読み込み、列名正規化、加速度・ジャイロの前処理 |
 | `pdr/gyro_bias.py` | ジャイロバイアス推定 |
 | `pdr/step_detection.py` | ステップピーク・接地区間の検出 |
