@@ -5,9 +5,13 @@ from rikka import cli
 from rikka.config import (
     FORWARD_HEADING_SOURCE,
     HEADING_METHOD,
+    MOTION_ESTIMATION,
+    PF_MOTION_PREDICTIVE_WEIGHT_POWER,
+    PF_PATH_SELECTION,
     SIDESTEP_LATERAL_RATIO,
     SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
     SIDESTEP_SMOOTHING_METHOD,
+    SMOOTHING_MODE,
     WEINBERG_REFERENCE_K,
     compute_weinberg_k,
 )
@@ -40,6 +44,10 @@ def test_default_sidestep_detection_settings_match_selected_standard() -> None:
     assert SIDESTEP_LATERAL_RATIO == pytest.approx(1.2)
     assert SIDESTEP_MIN_LATERAL_DISPLACEMENT_M == pytest.approx(0.03)
     assert SIDESTEP_SMOOTHING_METHOD == "clustered"
+    assert MOTION_ESTIMATION == "adaptive"
+    assert SMOOTHING_MODE == "causal"
+    assert PF_MOTION_PREDICTIVE_WEIGHT_POWER == pytest.approx(0.1)
+    assert PF_PATH_SELECTION == "sequence"
 
 
 def test_run_help_includes_forward_heading_source_option() -> None:
@@ -54,8 +62,10 @@ def test_run_help_includes_adaptive_motion_options() -> None:
 
     assert result.exit_code == 0
     assert "--motion-estimation" in result.output
+    assert "robust" in result.output
     assert "--smoothing" in result.output
     assert "legacy" in result.output
+    assert "default: adaptive" in result.output
 
 
 def test_particle_help_includes_pf_seed_option() -> None:
@@ -63,6 +73,10 @@ def test_particle_help_includes_pf_seed_option() -> None:
 
     assert result.exit_code == 0
     assert "--pf-seed" in result.output
+    assert "--motion-predictive-weight-power" in result.output
+    assert "--pf-path-selection" in result.output
+    assert "default: 0.1" in result.output
+    assert "default: sequence" in result.output
 
 
 @pytest.mark.parametrize("command", ["run", "pdr", "particle", "sensor"])

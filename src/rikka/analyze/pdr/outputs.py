@@ -21,6 +21,7 @@ import pandas as pd
 from .models import (
     GyroBiasResult,
     StepDetectionResult,
+    StepDirectionPosterior,
     StepHeading,
     StepLengthObservation,
     StepMotionPosterior,
@@ -347,6 +348,26 @@ def _build_motion_posteriors_dataframe(
         del values["heading_std"]
         del values["device_body_offset_mean"]
         del values["device_body_offset_std"]
+        rows.append(values)
+    return pd.DataFrame(rows)
+
+
+def _build_direction_posteriors_dataframe(
+    posteriors: tuple[StepDirectionPosterior, ...],
+) -> pd.DataFrame:
+    """方向2仮説の事後分布を診断CSV用に変換する。"""
+    rows = []
+    for posterior in posteriors:
+        values = {
+            "step": posterior.step_index,
+            "positive_axis_probability": posterior.positive_axis_probability,
+            "negative_axis_probability": posterior.negative_axis_probability,
+            "selected_heading_deg": _angle_to_deg(posterior.selected_heading),
+            "selected_motion_mode": posterior.selected_motion_mode,
+            "confidence": posterior.confidence,
+            "source": posterior.source,
+            "flip_supported": posterior.flip_supported,
+        }
         rows.append(values)
     return pd.DataFrame(rows)
 

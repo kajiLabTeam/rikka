@@ -39,6 +39,18 @@ _JAPANESE_FONT_CANDIDATES = (
 _JAPANESE_FONT_CONFIGURED = False
 
 
+def _next_sensor_plot_path(data_path: Path) -> Path:
+    """既存画像を上書きしない sensor plot の保存先を返す。"""
+    first = data_path / "sensor_plot.png"
+    if not first.exists():
+        return first
+    for counter in range(1, 1000):
+        candidate = data_path / f"sensor_plot_{counter:03d}.png"
+        if not candidate.exists():
+            return candidate
+    raise FileExistsError(f"sensor plot の保存名が衝突しました: {data_path}")
+
+
 def _configure_japanese_font() -> None:
     """Matplotlib で利用可能な日本語フォントを設定する。"""
     global _JAPANESE_FONT_CONFIGURED  # noqa: PLW0603
@@ -200,7 +212,7 @@ def plot_sensor_data(
     ax.grid(True, linewidth=0.4)
 
     plt.tight_layout()
-    output_path = data_path / "sensor_plot.png"
+    output_path = _next_sensor_plot_path(data_path)
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
     print(f"Saved: {output_path}")
     plt.show()

@@ -36,7 +36,7 @@ def _build_step_diagnostics(
     heading_drift: np.ndarray,
     heading_correction: np.ndarray,
     stride_scale: np.ndarray,
-    particle_step_lengths: np.ndarray,
+    effective_step_lengths: np.ndarray,
     parent_indices: np.ndarray,
     resampled: bool,
     motion_state: np.ndarray,
@@ -78,11 +78,6 @@ def _build_step_diagnostics(
     stride_scale_mean = float(np.sum(weights * stride_scale))
     stride_scale_std = float(
         np.sqrt(np.sum(weights * np.square(stride_scale - stride_scale_mean)))
-    )
-    effective_step_lengths = (
-        particle_step_lengths[parent_indices] * stride_scale
-        if resampled
-        else particle_step_lengths * stride_scale
     )
     effective_step_length_mean_m = float(np.sum(weights * effective_step_lengths))
     effective_step_length_std_m = float(

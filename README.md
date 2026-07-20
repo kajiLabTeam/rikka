@@ -56,7 +56,7 @@ input/
 現在の既定入力は次です。
 
 ```python
-DATA_DIR = "input/sensor_data/1turn_rightsidestep_3turn_leftsidestep5"
+DATA_DIR = "input/sensor_data/1turn_rightsidestep_3turn_leftsidestep8"
 ```
 
 別データを使う場合は、CLI の `-d` で指定できます。
@@ -134,7 +134,7 @@ flowchart TD
     pdr_branch -->|rikka particle| pf["run_particle_filter()\n全画素壁判定 / ESS適応リサンプリング / recovery"]
 
     pf_map["フロアマップ輝度\n通路/壁判定"] --> pf
-    pf --> pf_path["重み付き平均を優先\n壁付近だけ同一祖先経路へ退避"]
+    pf --> pf_path["既定: 重み付き平均を優先\nsequence: 反転減少時だけ単一祖先経路"]
 
     det_traj --> csv_common["CSV 出力\ntrajectory.csv / step_lengths.csv / step_headings.csv / gyro_bias.csv"]
     det_traj --> plot_pdr["plot_trajectory()\ntrajectory.png"]
@@ -171,7 +171,7 @@ flowchart LR
 
 | 項目 | 既定値 | 説明 |
 |---|---:|---|
-| `DATA_DIR` | `input/sensor_data/1turn_rightsidestep_3turn_leftsidestep5` | 入力データ |
+| `DATA_DIR` | `input/sensor_data/1turn_rightsidestep_3turn_leftsidestep8` | 入力データ |
 | `FLOORMAP_PATH` | `input/Floormap_building14_5floor.png` | 背景マップ |
 | `FLOORMAP_ORIGIN_PX` | `(2050, 400)` | 軌跡の開始ピクセル |
 | `FLOORMAP_SCALE` | `0.01` | 1px あたりのメートル数 |
@@ -186,6 +186,8 @@ flowchart LR
 | `SIDESTEP_SMOOTHING_METHOD` | `clustered` | 同方向 evidence の連続クラスタを評価し、確定横歩きまたは横歩き疑いとして軌跡へ反映 |
 | `SIDESTEP_LENGTH_SCALE` | `0.8` | 横歩き歩幅の倍率 |
 | `TURNING_LENGTH_SCALE` | `0.3` | 旋回中歩幅の倍率 |
+| `MOTION_ESTIMATION` | `adaptive` | 運動状態・方位・歩幅を確率状態として逐次推定 |
+| `SMOOTHING_MODE` | `causal` | 各歩までの観測だけを使う因果推定 |
 | `PF_HEADING_DRIFT_RETENTION` | `0.85` | PFの通常方位ドリフトを次歩へ保持する割合 |
 | `PF_SIGMA_INIT_HEADING` | `0.03` | PFの初期方位ばらつき [rad] |
 | `PF_SIGMA_HEADING` | `0.01` | PFの1歩ごとの方位ノイズ [rad] |
@@ -195,6 +197,8 @@ flowchart LR
 | `PF_STRIDE_SCALE_MIN / MAX` | `0.90 / 1.15` | PFが保持する歩幅倍率の範囲 |
 | `PF_RESAMPLE_ESS_RATIO` | `0.5` | PFで再標本化を開始するESS比率 |
 | `PF_RECOVERY_VALID_RATIO` | `0.05` | PFでmap-aware recoveryを開始する有効粒子率 |
+| `PF_MOTION_PREDICTIVE_WEIGHT_POWER` | `0.1` | 運動状態予測尤度を弱くPF重みへ反映する指数 |
+| `PF_PATH_SELECTION` | `sequence` | 持続反転が減る場合だけ単一祖先経路を採用 |
 
 `gyro_accel_motion` では次を分けて扱います。
 
@@ -248,15 +252,45 @@ MPLBACKEND=Agg uv run python \
   --plot-path output/diagnostics/pf_ground_truth_comparison.png
 ```
 
-運動状態・方位・歩幅を確率状態として逐次推定する実験モードは次のように実行する。
+運動状態・方位・歩幅を確率状態として逐次推定する標準モードは次のように実行する。
 `causal` は各歩までの観測だけを使い、`offline` は記録全体を使って運動状態列を
-後向き平滑化する。PFの全データ・全seed受け入れ条件はまだ満たしていないため、
-既定値は互換性のある `legacy` のままとしている。
+後向き平滑化する。標準設定は `adaptive + causal` である。
 
 ```sh
-uv run rikka run --motion-estimation adaptive --smoothing causal
+uv run rikka run
+uv run rikka particle --pf-seed 42
 uv run rikka particle --motion-estimation adaptive --smoothing offline --pf-seed 42
+uv run rikka run --motion-estimation robust --smoothing causal
 ```
+
+運動状態の予測尤度は、5記録・6 seed評価で最も安定した指数 `0.1` を標準値として
+弱くPF重みへ反映する。
+中央値を優先する場合は `offline`、最悪seedのRMSEを優先する場合は `causal` が
+今回の評価では良かった。
+
+```sh
+uv run rikka particle --motion-estimation adaptive \
+  --motion-predictive-weight-power 0.1 \
+  --pf-path-selection sequence --pf-seed 42
+```
+
+`robust` は移動軸の180度方向曖昧性を区間で解決する実験方式である。5反復計測では
+一部データを改善した一方で中央値を悪化させたため、既定や推奨へは昇格していない。
+`sequence` は反転が実際に減る場合だけ単一粒子の完全な祖先経路を使い、それ以外は
+到達可能な平均経路へ戻る標準設定である。
+
+単一計測では、方位ドリフト後に地図上の対称な分岐へ到達すると、壁交差がなくても
+逆側の廊下へ収束し、単一PFだけでは一意に直せない場合がある。
+複数計測の代表軌跡を作るときは、終端15%の方向を
+計測・PDR/PF方式ごとに等重みで比較し、多数方向から90度を超えて外れる候補を除外
+してからmedoidを選ぶ。正解軌跡はこの選択には使用せず、選択後の評価だけに使う。
+
+評価CSV/JSONでは次も確認する。
+
+- `terminal_direction_error_deg`: 正解終端区間との方位差
+- `terminal_progress_cosine`: 正解終端方向への投影。負なら逆向き
+- `terminal_opposed_fraction`: 終端15%で対応接線が90度以上逆向きの割合
+- `terminal_direction_failure`: projectionが負、または逆向き割合が0.5以上
 
 通常PDRの方式比較は、同じ正解ルートに対応するデータをまとめて指定できる。
 
@@ -315,6 +349,7 @@ uv run rikka run \
 | `step_lengths.csv` | ステップごとの歩幅 |
 | `step_length_observations.csv` | 1歩区間の歩幅候補、周期、振幅、品質、不確かさ |
 | `motion_posteriors.csv` | adaptive時の運動状態確率、方位・歩幅・端末姿勢ずれの事後分布 |
+| `direction_posteriors.csv` | robust時の移動軸2方向の確率、採用方位、反転根拠 |
 | `step_lengths.png` | 歩幅グラフ |
 | `step_vectors.csv` | ステップごとの変位ベクトル |
 | `step_vectors/step_*.png` | 各ステップの変位と加速度分布 |
@@ -326,7 +361,7 @@ uv run rikka run \
 
 | ファイル | 内容 |
 |---|---|
-| `pf_trajectory.png` | PF の平均優先・壁際祖先フォールバック軌跡 |
+| `pf_trajectory.png` | PF の平均優先、または反転抑制された単一祖先軌跡 |
 | `particle_diagnostics.csv` | 各歩のESS、有効粒子数、位置・方位分散、歩幅倍率、recovery、軌跡選択モード |
 | `particle_filter.mp4` / `.gif` | パーティクル分布アニメーション |
 
@@ -341,6 +376,7 @@ PDR 本体は `src/rikka/analyze/pdr/` パッケージに分割されていま�
 | `pdr/common.py` | 共通定数、角度処理、モード検証、パラメータ検証 |
 | `pdr/models.py` | `StepHeading`、`StepMotion`、`PreparedPdrSteps` などの共有データ型 |
 | `pdr/adaptive_estimator.py` | 運動状態・方位・歩幅・端末姿勢ずれの因果推定とオフライン平滑化 |
+| `pdr/direction_resolver.py` | 移動軸の正方向・逆方向を区間で保持して復号する実験方式 |
 | `pdr/sensors.py` | CSV 読み込み、列名正規化、加速度・ジャイロの前処理 |
 | `pdr/gyro_bias.py` | ジャイロバイアス推定 |
 | `pdr/step_detection.py` | ステップピーク・接地区間の検出 |

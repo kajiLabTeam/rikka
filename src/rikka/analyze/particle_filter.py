@@ -24,6 +24,7 @@ from .particle.paths import (
     _reconstruct_particle_paths,
     _reconstruct_resampled_paths,
     _select_reachable_mean_path,
+    _select_sequence_map_path,
 )
 from .particle.plotting import plot_particle_filter_trajectory, save_particle_animation
 from .particle.recovery import (
@@ -45,6 +46,7 @@ __all__ = [
     "_replay_from_checkpoint",
     "_sample_motion_states",
     "_select_reachable_mean_path",
+    "_select_sequence_map_path",
     "_snap_trajectory_to_walkable_pixels",
     "_systematic_resample",
     "plot_particle_filter_trajectory",

@@ -18,7 +18,7 @@ from math import isfinite
 # Data directory path
 # Change this path to use different input data
 
-DATA_DIR = "input/sensor_data/1turn_rightsidestep_3turn_leftsidestep7"
+DATA_DIR = "input/sensor_data/1turn_rightsidestep_3turn_leftsidestep8"
 
 # フロアマップ設定
 # 背景として表示するフロアマップ画像のパス
@@ -181,3 +181,7 @@ PF_RECOVERY_MAX_ATTEMPTS = 5  # recovery候補を追加生成する最大回数
 PF_MOTION_DISPLACEMENT_FULL_CONFIDENCE_M = 0.08
 PF_MOTION_CALIBRATION_MIN_STEPS = 4
 PF_MOTION_STATE_TRANSITION_STAY = 0.82
+MOTION_ESTIMATION = "adaptive"  # 標準の運動状態・方位・歩幅推定方式
+SMOOTHING_MODE = "causal"  # 標準の時系列平滑化方式
+PF_MOTION_PREDICTIVE_WEIGHT_POWER = 0.1  # 運動状態予測尤度の重み指数
+PF_PATH_SELECTION = "sequence"  # 反転減少時だけ単一祖先経路を採用

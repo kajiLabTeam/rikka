@@ -30,13 +30,18 @@ from rikka.analyze.particle_filter import (
 )
 from rikka.analyze.pdr.sensors import load_sensor_data
 from rikka.analyze.pdr.trajectory import prepare_pdr_steps
+from rikka.analyze.trajectory_direction import evaluate_terminal_direction
 from rikka.config import (
     FLOORMAP_ORIGIN_PX,
     FLOORMAP_PATH,
     FLOORMAP_SCALE,
+    MOTION_ESTIMATION,
+    PF_MOTION_PREDICTIVE_WEIGHT_POWER,
+    PF_PATH_SELECTION,
     PF_SIGMA_HEADING,
     PF_SIGMA_INIT_HEADING,
     PF_SIGMA_STEP_LENGTH_RATIO,
+    SMOOTHING_MODE,
 )
 
 
@@ -89,14 +94,24 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--plot-path", type=Path)
     parser.add_argument("--enable-recovery-branches", action="store_true")
     parser.add_argument(
+        "--motion-predictive-weight-power",
+        type=float,
+        default=PF_MOTION_PREDICTIVE_WEIGHT_POWER,
+    )
+    parser.add_argument(
+        "--pf-path-selection",
+        choices=("current", "sequence"),
+        default=PF_PATH_SELECTION,
+    )
+    parser.add_argument(
         "--motion-estimation",
-        choices=("legacy", "adaptive"),
-        default="legacy",
+        choices=("legacy", "adaptive", "robust"),
+        default=MOTION_ESTIMATION,
     )
     parser.add_argument(
         "--smoothing",
         choices=("causal", "offline"),
-        default="causal",
+        default=SMOOTHING_MODE,
     )
     return parser.parse_args()
 
@@ -137,6 +152,8 @@ def main() -> None:
             prepared_motion_evidences=prepared.motion_evidences,
             prepared_motion_posteriors=prepared.motion_posteriors,
             preserve_recovery_branches=args.enable_recovery_branches,
+            motion_predictive_weight_power=args.motion_predictive_weight_power,
+            path_selection=args.pf_path_selection,
             sigma_init_heading=args.sigma_init_heading,
             sigma_heading=args.sigma_heading,
             sigma_sl_ratio=args.sigma_step_length_ratio,
@@ -147,6 +164,7 @@ def main() -> None:
         trajectories.append(trajectory)
         sampled_trajectory = _sample_by_arclength(trajectory)
         errors = np.linalg.norm(sampled_trajectory - sampled_truth, axis=1)
+        terminal = evaluate_terminal_direction(sampled_trajectory, sampled_truth)
         valid = _evaluate_particle_transitions(
             trajectory[:-1],
             trajectory[1:],
@@ -161,8 +179,14 @@ def main() -> None:
                 "seed": seed,
                 "motion_estimation": args.motion_estimation,
                 "smoothing": args.smoothing,
+                "motion_predictive_weight_power": args.motion_predictive_weight_power,
+                "pf_path_selection": args.pf_path_selection,
                 "arc_rmse_m": float(np.sqrt(np.mean(np.square(errors)))),
                 "endpoint_error_m": float(np.linalg.norm(trajectory[-1] - truth[-1])),
+                "terminal_direction_error_deg": terminal.direction_error_deg,
+                "terminal_progress_cosine": terminal.progress_cosine,
+                "terminal_opposed_fraction": terminal.opposed_fraction,
+                "terminal_direction_failure": terminal.failure,
                 "estimated_length_m": float(
                     np.linalg.norm(np.diff(trajectory, axis=0), axis=1).sum()
                 ),
