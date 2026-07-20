@@ -66,6 +66,25 @@ def _circular_std(angles: np.ndarray, weights: np.ndarray) -> float:
     return float(np.sqrt(max(-2.0 * np.log(max(resultant, 1e-6)), 0.0)))
 
 
+def _length_moments(
+    probabilities: np.ndarray,
+    length_means: np.ndarray,
+    log_variances: np.ndarray,
+) -> tuple[float, float]:
+    """状態確率から歩幅の平均と標準偏差を計算する。"""
+    length_mean = float(np.sum(probabilities * length_means))
+    within_variance = np.square(length_means) * np.maximum(
+        np.exp(log_variances) - 1.0,
+        0.0,
+    )
+    length_variance = float(
+        np.sum(
+            probabilities * (within_variance + np.square(length_means - length_mean))
+        )
+    )
+    return length_mean, float(np.sqrt(max(length_variance, 0.0)))
+
+
 def _initial_state() -> AdaptivePdrState:
     """弱い事前分布を持つ初期状態を作る。"""
     return AdaptivePdrState(
@@ -237,22 +256,16 @@ class AdaptivePdrEstimator:
             np.asarray([forward_mean, side_mean, side_mean, forward_mean])
         )
         length_means = nominal * mode_scales
-        length_mean = float(np.sum(probabilities * length_means))
         log_variances = (
             np.asarray(
                 [forward_variance, side_variance, side_variance, forward_variance]
             )
             + measurement_variance
         )
-        within_variance = np.square(length_means) * np.maximum(
-            np.exp(log_variances) - 1.0,
-            0.0,
-        )
-        length_variance = float(
-            np.sum(
-                probabilities
-                * (within_variance + np.square(length_means - length_mean))
-            )
+        length_mean, length_std = _length_moments(
+            probabilities,
+            length_means,
+            log_variances,
         )
 
         offset_measurement = float(step_heading.device_body_offset)
@@ -297,7 +310,7 @@ class AdaptivePdrEstimator:
             heading_mean=heading_mean,
             heading_std=heading_std,
             length_mean_m=length_mean,
-            length_std_m=float(np.sqrt(max(length_variance, 0.0))),
+            length_std_m=length_std,
             device_body_offset_mean=offset_mean,
             device_body_offset_std=float(np.sqrt(offset_state_variance)),
             selected_mode=selected_mode,
@@ -343,28 +356,71 @@ def estimate_adaptive_pdr(
         raise ValueError("適応PDRへ渡すステップ列の長さが一致しません")
 
     estimator = AdaptivePdrEstimator()
-    posteriors = [
-        estimator.update_step(heading, length, evidence)
-        for heading, length, evidence in zip(
-            step_headings,
-            length_observations,
-            motion_evidences,
-            strict=True,
+    posteriors: list[StepMotionPosterior] = []
+    mode_length_means: list[np.ndarray] = []
+    mode_log_variances: list[np.ndarray] = []
+    for heading, length, evidence in zip(
+        step_headings,
+        length_observations,
+        motion_evidences,
+        strict=True,
+    ):
+        posterior = estimator.update_step(heading, length, evidence)
+        posteriors.append(posterior)
+        nominal = max(length.nominal_length_m, 1e-4)
+        state = estimator.state
+        mode_length_means.append(
+            nominal
+            * np.exp(
+                np.asarray(
+                    [
+                        state.forward_log_scale_mean,
+                        state.sidestep_log_scale_mean,
+                        state.sidestep_log_scale_mean,
+                        state.forward_log_scale_mean,
+                    ]
+                )
+            )
         )
-    ]
+        mode_log_variances.append(
+            np.asarray(
+                [
+                    state.forward_log_scale_variance,
+                    state.sidestep_log_scale_variance,
+                    state.sidestep_log_scale_variance,
+                    state.forward_log_scale_variance,
+                ]
+            )
+            + length.log_length_sigma**2
+        )
     if smoothing_mode == "offline":
         probabilities = _smooth_mode_probabilities(posteriors)
-        posteriors = [
-            posterior._replace(
-                forward_probability=float(values[0]),
-                sidestep_left_probability=float(values[1]),
-                sidestep_right_probability=float(values[2]),
-                turning_probability=float(values[3]),
-                selected_mode=_MODE_NAMES[int(np.argmax(values))],
-                source="adaptive_offline",
+        offline_posteriors: list[StepMotionPosterior] = []
+        for posterior, values, length_means, log_variances in zip(
+            posteriors,
+            probabilities,
+            mode_length_means,
+            mode_log_variances,
+            strict=True,
+        ):
+            length_mean, length_std = _length_moments(
+                values,
+                length_means,
+                log_variances,
             )
-            for posterior, values in zip(posteriors, probabilities, strict=True)
-        ]
+            offline_posteriors.append(
+                posterior._replace(
+                    forward_probability=float(values[0]),
+                    sidestep_left_probability=float(values[1]),
+                    sidestep_right_probability=float(values[2]),
+                    turning_probability=float(values[3]),
+                    length_mean_m=length_mean,
+                    length_std_m=length_std,
+                    selected_mode=_MODE_NAMES[int(np.argmax(values))],
+                    source="adaptive_offline",
+                )
+            )
+        posteriors = offline_posteriors
 
     adjusted_headings = [
         heading._replace(

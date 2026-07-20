@@ -28,7 +28,9 @@ from ...config import (
     FORWARD_HEADING_SOURCE,
     INITIAL_DIRECTION,
     PF_HEADING_DRIFT_RETENTION,
+    PF_MOTION_PREDICTIVE_WEIGHT_POWER,
     PF_NUM_PARTICLES,
+    PF_PATH_SELECTION,
     PF_RECOVERY_HEADING_SIGMA,
     PF_RECOVERY_MAX_ATTEMPTS,
     PF_RECOVERY_VALID_RATIO,
@@ -91,7 +93,12 @@ from .motion import (
     _normalize_angle,
     _sample_motion_states,
 )
-from .paths import _reconstruct_particle_paths, _select_reachable_mean_path
+from .paths import (
+    _reconstruct_particle_paths,
+    _select_reachable_mean_path,
+    _select_sequence_map_path,
+    _unsupported_reversal_count,
+)
 from .recovery import _generate_recovery_candidates, _replay_from_checkpoint
 from .resampling import _effective_sample_size, _systematic_resample
 
@@ -141,6 +148,8 @@ def run_particle_filter(
     recovery_max_attempts: int = PF_RECOVERY_MAX_ATTEMPTS,
     diagnostics_collector: list[ParticleFilterStepDiagnostics] | None = None,
     preserve_recovery_branches: bool = False,
+    motion_predictive_weight_power: float = PF_MOTION_PREDICTIVE_WEIGHT_POWER,
+    path_selection: str = PF_PATH_SELECTION,
 ) -> tuple[list[list[float]], list[float], list[float], np.ndarray, list[StepHeading]]:
     """パーティクルフィルタでマップマッチング付き歩行軌跡を推定する。
 
@@ -182,6 +191,8 @@ def run_particle_filter(
         recovery_max_attempts: recovery候補を追加生成する最大回数
         diagnostics_collector: 指定時に1歩ごとの診断値を追記するリスト
         preserve_recovery_branches: recoveryで複数の経路方位族を保護するか
+        motion_predictive_weight_power: 運動状態の予測尤度を重みに掛ける指数
+        path_selection: 代表軌跡を従来方式または単一祖先系列から選ぶ方式
 
     Returns:
         tuple: (平均優先・壁際祖先フォールバック軌跡の座標リスト,
@@ -262,10 +273,15 @@ def run_particle_filter(
     recovery_heading_sigma = validate_positive_parameter(
         "recovery_heading_sigma", recovery_heading_sigma
     )
+    motion_predictive_weight_power = validate_non_negative_parameter(
+        "motion_predictive_weight_power", motion_predictive_weight_power
+    )
+    if path_selection not in {"current", "sequence"}:
+        raise ValueError("path_selection は current または sequence を指定してください")
     if recovery_max_attempts <= 0:
         raise ValueError("recovery_max_attempts は正の整数を指定してください")
     adaptive_stride_state = bool(
-        prepared_motion_posteriors
+        prepared_motion_posteriors is not None
         and any(
             posterior.length_std_m / max(posterior.length_mean_m, 1e-6) >= 0.18
             for posterior in prepared_motion_posteriors
@@ -328,6 +344,7 @@ def run_particle_filter(
     motion_state_history: list[np.ndarray] = [motion_state.copy()]
     stride_scale_history: list[np.ndarray] = [stride_scale.copy()]
     weight_history: list[np.ndarray] = [weights.copy()]
+    path_log_score_history: list[np.ndarray] = [np.zeros(n_particles, dtype=float)]
     parent_history: list[np.ndarray] = []
     all_particles_list: list[np.ndarray] = [particles.copy()]  # ステップ0（原点）
     step_headings: list[StepHeading] = []
@@ -452,7 +469,7 @@ def run_particle_filter(
                 "prepared_motion_evidences と prepared_step_headings の"
                 "長さが一致しません"
             )
-        if prepared_motion_posteriors:
+        if prepared_motion_posteriors is not None:
             if len(prepared_motion_posteriors) != len(stabilized_step_headings):
                 raise ValueError(
                     "prepared_motion_posteriors と prepared_step_headings の"
@@ -481,7 +498,7 @@ def run_particle_filter(
     ):
         motion_posterior = (
             prepared_motion_posteriors[step_number - 1]
-            if prepared_motion_posteriors
+            if prepared_motion_posteriors is not None
             else None
         )
         if particle_heading is None:
@@ -521,7 +538,9 @@ def run_particle_filter(
         heading_drift_before = heading_drift.copy()
         stride_scale_before = stride_scale.copy()
         motion_state_before = motion_state.copy()
+        diagnostic_motion_state_before = motion_state_before
         weights_before = weights.copy()
+        path_log_scores_before = path_log_score_history[-1].copy()
         ess_before_observation = _effective_sample_size(weights_before)
 
         # 通常ドリフトだけを平均回帰させ、recovery補正は独立に保持する。
@@ -536,7 +555,7 @@ def run_particle_filter(
             + rng.normal(0, heading_process_sigma, n_particles)
         )
         observation_likelihoods = _motion_state_likelihoods(motion_evidence)
-        proposed_motion_state, _state_predictive_likelihoods = _sample_motion_states(
+        proposed_motion_state, state_predictive_likelihoods = _sample_motion_states(
             motion_state_before,
             observation_likelihoods,
             motion_rng,
@@ -599,6 +618,7 @@ def run_particle_filter(
         proposed_particles = particles_before.copy()
         proposed_particles[:, 0] += sl * np.cos(theta)
         proposed_particles[:, 1] += sl * np.sin(theta)
+        effective_step_lengths_for_diagnostics = sl.copy()
 
         valid_transition = _evaluate_particle_transitions(
             particles_before,
@@ -629,6 +649,18 @@ def run_particle_filter(
             weights_before
             * valid_transition.astype(float)
             * stride_observation_likelihood
+            * np.power(state_predictive_likelihoods, motion_predictive_weight_power)
+        )
+        with np.errstate(divide="ignore"):
+            observation_log_likelihood = np.log(stride_observation_likelihood)
+            if motion_predictive_weight_power > 0.0:
+                observation_log_likelihood += motion_predictive_weight_power * np.log(
+                    state_predictive_likelihoods
+                )
+        candidate_path_log_scores = np.where(
+            valid_transition,
+            path_log_scores_before + observation_log_likelihood,
+            -np.inf,
         )
         valid_weight_mass = float(posterior_weights.sum())
         ess_after_observation = (
@@ -651,8 +683,26 @@ def run_particle_filter(
         recovery_candidate_branch_count = 0
         recovery_selected_branch_count = 0
         resampled = False
+        next_path_log_scores: np.ndarray
 
         if recovery_attempted:
+            allow_turn_candidates = bool(
+                (
+                    motion_posterior is not None
+                    and motion_posterior.turning_probability >= 0.25
+                )
+                or step_heading.trajectory_movement_type == "turning"
+                or step_heading.movement_type == "turning"
+                or "sidestep"
+                in (step_heading.trajectory_movement_type or step_heading.movement_type)
+                or (
+                    bool(step_headings)
+                    and (
+                        step_headings[-1].trajectory_movement_type == "turning"
+                        or step_headings[-1].movement_type == "turning"
+                    )
+                )
+            )
             recovery = _generate_recovery_candidates(
                 particles_before,
                 heading_correction_before,
@@ -672,30 +722,16 @@ def run_particle_filter(
                 recovery_heading_sigma,
                 recovery_max_attempts,
                 rng,
-                allow_turn_candidates=(
-                    (
-                        motion_posterior is not None
-                        and motion_posterior.turning_probability >= 0.25
-                    )
-                    or step_heading.trajectory_movement_type == "turning"
-                    or step_heading.movement_type == "turning"
-                    or "sidestep"
-                    in (
-                        step_heading.trajectory_movement_type
-                        or step_heading.movement_type
-                    )
-                    or (
-                        bool(step_headings)
-                        and (
-                            step_headings[-1].trajectory_movement_type == "turning"
-                            or step_headings[-1].movement_type == "turning"
-                        )
-                    )
-                ),
+                allow_turn_candidates=allow_turn_candidates,
                 preserve_route_branches=preserve_recovery_branches,
                 allow_stride_adaptation=adaptive_recovery_scale,
                 stride_scale_min=effective_stride_scale_min,
                 stride_scale_max=effective_stride_scale_max,
+            )
+            recovery_attempts = (
+                recovery.attempts
+                if recovery is not None
+                else min(recovery_max_attempts, 2 if allow_turn_candidates else 1)
             )
             if recovery is None:
                 completed_steps = len(step_lengths)
@@ -739,6 +775,7 @@ def run_particle_filter(
                         stride_scale_min=effective_stride_scale_min,
                         stride_scale_max=effective_stride_scale_max,
                     )
+                    recovery_attempts += 1
                 if replay_result is None:
                     fallback_recovery = _generate_recovery_candidates(
                         particles_before,
@@ -774,8 +811,12 @@ def run_particle_filter(
                         motion_state = proposed_motion_state
                         weights = weights_before
                         parent_indices = np.arange(n_particles, dtype=int)
+                        effective_step_lengths_for_diagnostics = np.zeros(
+                            n_particles, dtype=float
+                        )
+                        next_path_log_scores = path_log_scores_before.copy()
                         recovery_mode = "failed_hold"
-                        recovery_attempts = recovery_max_attempts
+                        recovery_attempts += min(recovery_max_attempts, 2)
                     else:
                         particles = fallback_recovery.particles
                         heading_correction = fallback_recovery.heading_correction
@@ -784,9 +825,16 @@ def run_particle_filter(
                         motion_state = fallback_recovery.motion_state
                         weights = np.full(n_particles, 1.0 / n_particles)
                         parent_indices = fallback_recovery.parent_indices
+                        effective_step_lengths_for_diagnostics = np.linalg.norm(
+                            particles - particles_before[parent_indices], axis=1
+                        )
+                        next_path_log_scores = (
+                            path_log_scores_before[parent_indices]
+                            + fallback_recovery.path_log_score_delta
+                        )
                         recovery_mode = f"fallback_{fallback_recovery.mode}"
                         recovery_valid_count = fallback_recovery.valid_count
-                        recovery_attempts = fallback_recovery.attempts
+                        recovery_attempts += fallback_recovery.attempts
                         recovery_heading_delta_deg = fallback_recovery.heading_delta_deg
                         recovery_step_scale = fallback_recovery.step_scale
                         recovery_cost = fallback_recovery.mean_cost
@@ -797,10 +845,6 @@ def run_particle_filter(
                         resampled = True
                 else:
                     recovery = replay_result.recovery
-                    recovery = replace(
-                        recovery,
-                        motion_state=proposed_motion_state.copy(),
-                    )
                     assert checkpoint_step is not None
                     replay_depth = replay_result.replay_positions.shape[0]
                     position_history = position_history[: checkpoint_step + 1]
@@ -823,6 +867,9 @@ def run_particle_filter(
                     motion_state_history = motion_state_history[: checkpoint_step + 1]
                     stride_scale_history = stride_scale_history[: checkpoint_step + 1]
                     weight_history = weight_history[: checkpoint_step + 1]
+                    path_log_score_history = path_log_score_history[
+                        : checkpoint_step + 1
+                    ]
                     healthy_checkpoint_steps = [
                         step
                         for step in healthy_checkpoint_steps
@@ -836,6 +883,81 @@ def run_particle_filter(
                         motion_state_history.append(recovery.motion_state.copy())
                         stride_scale_history.append(recovery.stride_scale.copy())
                         weight_history.append(np.full(n_particles, 1.0 / n_particles))
+                        path_log_score_history.append(
+                            path_log_score_history[checkpoint_step][
+                                recovery.parent_indices
+                            ].copy()
+                        )
+                    if diagnostics_collector is not None:
+                        replay_weights = np.full(n_particles, 1.0 / n_particles)
+                        for replay_offset in range(replay_depth - 1):
+                            history_step = checkpoint_step + replay_offset + 1
+                            replay_parent_indices = (
+                                recovery.parent_indices
+                                if replay_offset == 0
+                                else np.arange(n_particles, dtype=int)
+                            )
+                            replay_motion_state_before = (
+                                motion_state_history[checkpoint_step]
+                                if replay_offset == 0
+                                else recovery.motion_state
+                            )
+                            replay_previous_positions = (
+                                position_history[checkpoint_step][
+                                    recovery.parent_indices
+                                ]
+                                if replay_offset == 0
+                                else replay_result.replay_positions[replay_offset - 1]
+                            )
+                            replay_effective_lengths = np.linalg.norm(
+                                replay_result.replay_positions[replay_offset]
+                                - replay_previous_positions,
+                                axis=1,
+                            )
+                            collector_index = diagnostics_start_index + history_step - 1
+                            diagnostics_collector[collector_index] = (
+                                _build_step_diagnostics(
+                                    step_number=history_step,
+                                    step_time=t_at_steps[history_step - 1],
+                                    valid_count=n_particles,
+                                    n_particles=n_particles,
+                                    valid_weight_count=n_particles,
+                                    valid_weight_mass=1.0,
+                                    ess_before_observation=float(n_particles),
+                                    ess_after_observation=float(n_particles),
+                                    ess_after_resampling=float(n_particles),
+                                    weights=replay_weights,
+                                    particles=replay_result.replay_positions[
+                                        replay_offset
+                                    ],
+                                    heading_drift=recovery.heading_drift,
+                                    heading_correction=recovery.heading_correction,
+                                    stride_scale=recovery.stride_scale,
+                                    effective_step_lengths=replay_effective_lengths,
+                                    parent_indices=replay_parent_indices,
+                                    resampled=replay_offset == 0,
+                                    motion_state=recovery.motion_state,
+                                    motion_state_before=replay_motion_state_before,
+                                    motion_evidence=motion_evidences[history_step - 1],
+                                    recovery_attempted=True,
+                                    recovery_mode="checkpoint_replayed",
+                                    recovery_valid_count=recovery.valid_count,
+                                    recovery_attempts=recovery_attempts,
+                                    recovery_heading_delta_deg=(
+                                        recovery.heading_delta_deg
+                                    ),
+                                    recovery_step_scale=recovery.step_scale,
+                                    recovery_cost=recovery.mean_cost,
+                                    recovery_checkpoint_step=checkpoint_step,
+                                    recovery_replay_steps=replay_depth,
+                                    recovery_candidate_branch_count=int(
+                                        np.unique(recovery.route_branch_ids).size
+                                    ),
+                                    recovery_selected_branch_count=int(
+                                        np.unique(recovery.route_branch_ids).size
+                                    ),
+                                )
+                            )
                     particles = recovery.particles
                     heading_correction = recovery.heading_correction
                     heading_drift = recovery.heading_drift
@@ -847,9 +969,30 @@ def run_particle_filter(
                         if replay_depth > 1
                         else recovery.parent_indices
                     )
+                    diagnostic_motion_state_before = (
+                        recovery.motion_state
+                        if replay_depth > 1
+                        else motion_state_history[checkpoint_step]
+                    )
+                    effective_step_lengths_for_diagnostics = np.linalg.norm(
+                        particles
+                        - (
+                            replay_result.replay_positions[-2]
+                            if replay_depth > 1
+                            else position_history[checkpoint_step][
+                                recovery.parent_indices
+                            ]
+                        ),
+                        axis=1,
+                    )
+                    next_path_log_scores = (
+                        path_log_score_history[checkpoint_step][
+                            recovery.parent_indices
+                        ].copy()
+                        + recovery.path_log_score_delta
+                    )
                     recovery_mode = recovery.mode
                     recovery_valid_count = recovery.valid_count
-                    recovery_attempts = recovery.attempts
                     recovery_heading_delta_deg = recovery.heading_delta_deg
                     recovery_step_scale = recovery.step_scale
                     recovery_cost = recovery.mean_cost
@@ -868,9 +1011,15 @@ def run_particle_filter(
                 motion_state = recovery.motion_state
                 weights = np.full(n_particles, 1.0 / n_particles)
                 parent_indices = recovery.parent_indices
+                effective_step_lengths_for_diagnostics = np.linalg.norm(
+                    particles - particles_before[parent_indices], axis=1
+                )
+                next_path_log_scores = (
+                    path_log_scores_before[parent_indices]
+                    + recovery.path_log_score_delta
+                )
                 recovery_mode = recovery.mode
                 recovery_valid_count = recovery.valid_count
-                recovery_attempts = recovery.attempts
                 recovery_heading_delta_deg = recovery.heading_delta_deg
                 recovery_step_scale = recovery.step_scale
                 recovery_cost = recovery.mean_cost
@@ -913,6 +1062,8 @@ def run_particle_filter(
                     )
                 weights = np.full(n_particles, 1.0 / n_particles)
                 parent_indices = indices
+                effective_step_lengths_for_diagnostics = sl[indices]
+                next_path_log_scores = candidate_path_log_scores[indices]
                 resampled = True
             else:
                 particles = proposed_particles
@@ -922,6 +1073,7 @@ def run_particle_filter(
                 motion_state = proposed_motion_state
                 weights = posterior_weights
                 parent_indices = np.arange(n_particles, dtype=int)
+                next_path_log_scores = candidate_path_log_scores
 
         ess_after_resampling = _effective_sample_size(weights)
 
@@ -931,6 +1083,7 @@ def run_particle_filter(
         motion_state_history.append(motion_state.copy())
         stride_scale_history.append(stride_scale.copy())
         weight_history.append(weights.copy())
+        path_log_score_history.append(next_path_log_scores.copy())
         step_lengths.append(sl_det)
         t_at_steps.append(step_time)
         step_headings.append(step_heading)
@@ -959,11 +1112,11 @@ def run_particle_filter(
                     heading_drift=heading_drift,
                     heading_correction=heading_correction,
                     stride_scale=stride_scale,
-                    particle_step_lengths=particle_step_lengths,
+                    effective_step_lengths=effective_step_lengths_for_diagnostics,
                     parent_indices=parent_indices,
                     resampled=resampled,
                     motion_state=motion_state,
-                    motion_state_before=motion_state_before,
+                    motion_state_before=diagnostic_motion_state_before,
                     motion_evidence=motion_evidence,
                     recovery_attempted=recovery_attempted,
                     recovery_mode=recovery_mode,
@@ -981,15 +1134,77 @@ def run_particle_filter(
 
     all_particles = np.stack(all_particles_list)  # shape: (T+1, N, 2)
     particle_paths = _reconstruct_particle_paths(position_history, parent_history)
-    selected_path, trajectory_modes, trajectory_sources = _select_reachable_mean_path(
-        particle_paths,
-        weights,
-        map_gray,
-        gx_mean,
-        gz_mean,
-        origin_px,
-        scale,
-    )
+    if path_selection == "sequence":
+        sensor_headings = np.asarray(
+            [heading.selected_heading for heading in step_headings],
+            dtype=float,
+        )
+        turning_evidence = np.asarray(
+            [
+                (
+                    heading.trajectory_movement_type == "turning"
+                    or heading.movement_type == "turning"
+                    or (
+                        prepared_motion_posteriors is not None
+                        and index < len(prepared_motion_posteriors)
+                        and prepared_motion_posteriors[index].turning_probability
+                        >= 0.25
+                    )
+                )
+                for index, heading in enumerate(step_headings)
+            ],
+            dtype=bool,
+        )
+        sequence_path, sequence_modes, sequence_sources = _select_sequence_map_path(
+            particle_paths,
+            path_log_score_history[-1],
+            map_gray,
+            gx_mean,
+            gz_mean,
+            origin_px,
+            scale,
+            sensor_headings,
+            turning_evidence,
+        )
+        current_path, current_modes, current_sources = _select_reachable_mean_path(
+            particle_paths,
+            weights,
+            map_gray,
+            gx_mean,
+            gz_mean,
+            origin_px,
+            scale,
+        )
+        sequence_reversals = _unsupported_reversal_count(
+            sequence_path,
+            sensor_headings,
+            turning_evidence,
+        )
+        current_reversals = _unsupported_reversal_count(
+            current_path,
+            sensor_headings,
+            turning_evidence,
+        )
+        if sequence_reversals < current_reversals:
+            selected_path = sequence_path
+            trajectory_modes = sequence_modes
+            trajectory_sources = sequence_sources
+        else:
+            selected_path = current_path
+            trajectory_modes = current_modes
+            trajectory_sources = current_sources
+    else:
+        selected_path, trajectory_modes, trajectory_sources = (
+            _select_reachable_mean_path(
+                particle_paths,
+                weights,
+                map_gray,
+                gx_mean,
+                gz_mean,
+                origin_px,
+                scale,
+            )
+        )
     if diagnostics_collector is not None:
         for diagnostic_offset, (mode, source) in enumerate(
             zip(trajectory_modes[1:], trajectory_sources[1:], strict=True)

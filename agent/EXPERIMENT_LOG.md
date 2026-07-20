@@ -63,8 +63,13 @@ PDR と particle filter の改善で、過去に試した仮説、条件、結�
 | EXP-015 | PF recoveryの経路枝quota | 実験機能のみ・既定無効 | 安全性は維持したが誤枝保護でspreadと一部seedが悪化した |
 | EXP-016 | 横歩き歩幅補正 | 暫定採用・再検討 | 固定倍率0.8を採用したが、5〜8も共通正解ルートと確定したためPF精度を再検討する |
 | EXP-017 | データ7・8の共通正解ルート再評価 | 調査完了・修正候補あり | 横歩き開始の方位跳びと区間別歩幅誤差を分離し、固定倍率だけでは直せないと確認した |
-| EXP-018 | 確率的な適応PDRと局所歩幅状態 | 一部採用・既定無効 | 通常PDRは全5記録で改善したがPFの最悪seedが悪化する記録が残るため明示指定で評価を継続する |
+| EXP-018 | 確率的な適応PDRと局所歩幅状態 | 一部採用・後続で既定化 | 当時のPF悪化をEXP-020/021で抑え、EXP-022でadaptive-causalを標準にする |
 | EXP-019 | particle filter責務分割（挙動非変更） | 採用（挙動非変更の基盤） | facade・乱数順・診断列を維持し、内部実装を責務別モジュールへ分割する |
+| EXP-020 | 運動状態予測尤度のtempered重み付け | 採用・既定有効 | 指数0.1で全体精度とseed安定性を改善する |
+| EXP-021 | 方向2仮説・単一祖先経路・medoid | 一部採用 | guard付きsequenceを既定化し、robust方向復号は実験機能に留める |
+| EXP-022 | 推奨構成の標準設定昇格 | 採用・既定有効 | adaptive-causal、指数0.1、guard付きsequenceを全入口の標準にする |
+| EXP-023 | 終端誤分岐の検出と複数計測方向コンセンサス | 採用 | 終端逆走を合否条件にし、複数計測の多数方向から外れる候補を代表選択から除外する |
+| EXP-024 | レビュー修正とrecovery方位状態の再検証 | 一部採用 | map回避角は一時ドリフトに保ち、checkpoint状態・時刻積分・入力検証・診断整合性だけを採用する |
 
 ## 過去の試行詳細
 
@@ -367,7 +372,7 @@ PDR と particle filter の改善で、過去に試した仮説、条件、結�
 ### EXP-018: 確率的な適応PDRと局所歩幅状態
 
 - 日付: 2026-07-16
-- 状態: 一部採用・既定無効
+- 状態: 一部採用・既定無効（当時。EXP-022で後日既定化）
 - 関連箇所・commit: 未コミット差分、`pdr/adaptive_estimator.py`、`pdr/step_length.py`、`pdr/trajectory.py`、`particle_filter.py`、`agent/agent_evaluate_adaptive_pdr.py`
 - 仮説: 運動状態、移動方位、歩幅、端末−身体方位差を確率状態として保持し、旋回観測の弱い横歩き開始だけ方位跳びを抑え、歩境界内の加速度振幅から局所歩幅と不確かさを更新すれば、データ番号固有の条件なしに5〜8を改善できる。
 - 入力: 無印データと`1turn_rightsidestep_3turn_leftsidestep5`〜`8`、全記録に共通する`walk_trace (3).csv`、フロアマップ。
@@ -418,6 +423,120 @@ PDR と particle filter の改善で、過去に試した仮説、条件、結�
 - 結論: 乱数順、診断列、APIを維持した責務分割後も、EXP-016の無印基準RMSE中央値/最大値 `1.10/1.78` mと整合し、地図制約とrecoveryの合格条件を満たした。
 - 採用内容: `particle_filter.py`を互換facadeとして残し、内部実装を`particle/`配下10モジュールへ分割する。characterization testsでfacade公開名、診断フィールド順、固定seed出力を固定する。
 - 再検証する条件: facade公開名、RNGの生成・消費順、recovery処理、runnerの状態管理を変更するとき。
+
+### EXP-020: 運動状態予測尤度のtempered重み付け
+
+- 日付: 2026-07-20
+- 状態: 採用・既定有効
+- 関連箇所・commit: 未コミット差分、`src/rikka/analyze/particle/runner.py`、`agent/agent_evaluate_pf_ground_truth.py`、`agent/agent_benchmark_pdr_pf_methods.py`
+- 仮説: 運動状態の最適提案分布が返す予測尤度を弱く粒子重みへ反映すれば、観測に整合しない合法経路を抑えつつ、強い尤度による早期退化を避けられる。
+- 入力: 無印データと `1turn_rightsidestep_3turn_leftsidestep5`〜`8`、全記録に共通する `walk_trace (3).csv`、フロアマップ。
+- 比較条件: adaptive-causal PFで予測尤度の重み指数 `0`、`0.05`、`0.1`、`0.15`、`0.25`、`0.5`、`1.0` を比較した。記録全体のadaptive歩幅状態を狭める案、横歩きdecoderの初回・再射影後合意ゲートも別に比較した。
+- seed: `[0, 1, 2, 10, 42, 100]`。
+- 実行コマンド:
+  - `MPLCONFIGDIR=/tmp/rikka-mpl UV_CACHE_DIR=.uv-cache uv run python agent/agent_benchmark_pdr_pf_methods.py --pf-methods adaptive-causal --motion-predictive-weight-powers 0 0.1 --output /tmp/rikka_method_benchmark.json`
+  - screeningでは `agent/agent_evaluate_pf_ground_truth.py --motion-estimation adaptive --motion-predictive-weight-power <指数>` を各データ・seedへ実行した。
+- 指標・観察結果:
+  - 指数1.0はデータ6の一部seedを `11.23→2.48 m` に改善したが、データ8の別seedを `3.11→14.63 m` に悪化させたため見送った。
+  - 指数0.05は無印・5・6・8を改善したが、データ7の最大RMSEが `5.88→6.94 m` に悪化した。指数0.15以上はデータ6・7で外れが再発した。
+  - 指数0.1の30実行全体ではRMSE中央値 `4.9329→4.0522 m`、最大値 `11.2314→9.7270 m`、データ内seed RMSE標準偏差の中央値 `1.7956→0.7621 m`、終点誤差中央値 `13.4928→6.0323 m` へ改善した。
+  - adaptive-offlineでも指数0.1は中央値 `5.1605→3.2773 m`、最大値 `11.1500→10.3823 m`、seed RMSE標準偏差の中央値 `1.2548→0.4931 m` へ改善した。ただしcausal+0.1の最大値 `9.7270 m` より悪いため、最悪条件を重視する推奨はcausal+0.1とする。
+  - 指数0.1でもデータ7の最大RMSEは約 `5.88→5.98 m`、終点誤差の全体最大は `23.3128→23.3686 m` と小幅に悪化した。全30実行で壁交差0、recovery failure 0を維持した。
+  - 記録全体のadaptive歩幅状態を狭める案は効果がないデータが多く、運動予測重みとの組み合わせで悪化する条件があったため見送った。
+  - 横歩きdecoder合意ゲートは狙ったデータ8を変えず、無印PDRのRMSEを `2.6562→2.7396 m` に悪化させたため変更を戻した。
+- 結論: 予測尤度はそのまま重みに掛けず、指数0.1でtemperingした場合に全体精度とseed安定性が最も改善した。ユーザー確認後、最悪条件を重視する標準設定へ昇格した。
+- 採用内容: `motion_predictive_weight_power` をPF API・CLI・評価スクリプトへ追加し、既定値を0.1とする。
+- 再検証する条件: motion state遷移確率、観測尤度、resampling、recovery、adaptive歩幅状態を変更したとき。異なる正解ルートを追加したときは指数0と0.1を同じseedで再比較する。
+
+### EXP-021: 方向2仮説復号・単一祖先経路・複数計測medoid
+
+- 日付: 2026-07-20
+- 状態: 採用・guard付きsequenceを既定有効
+- 関連箇所・commit: 未コミット差分、`pdr/direction_resolver.py`、`particle/paths.py`、`agent/agent_diagnose_heading_reversal.py`、`agent/agent_build_consensus_trajectory.py`
+- 仮説: 移動軸の `theta/theta+pi` を区間で保持し、PFでは平均軌跡ではなく合法な単一祖先経路を選べば、根拠のない進行方向反転を抑制できる。複数計測では各計測を等重みにしたmedoidが安定した代表軌跡になる。
+- 入力: 無印データと `1turn_rightsidestep_3turn_leftsidestep5`〜`8`、共通正解軌跡、フロアマップ。
+- 比較条件: adaptive-causal PDR、方向2仮説のrobust-causal/offline、adaptive-causal PFの既定経路とsequence経路。PFは予測尤度指数0.1、seed `[0, 1, 2, 10, 42, 100]`。
+- 実行コマンド:
+  - `MPLCONFIGDIR=/tmp/rikka-mpl MPLBACKEND=Agg UV_CACHE_DIR=.uv-cache uv run python agent/agent_benchmark_pdr_pf_methods.py --pdr-methods adaptive-causal robust-causal --pf-methods adaptive-causal --seeds 0 1 2 10 42 100 --motion-predictive-weight-powers 0.1 --pf-path-selections current sequence`
+  - `uv run python agent/agent_diagnose_heading_reversal.py --manifest <candidates.csv> --truth-csv <walk_trace.csv> --output-dir <diagnostics> --require-standard-coverage`
+  - `uv run python agent/agent_build_consensus_trajectory.py --manifest <candidates.csv> --diagnostics-json <diagnostics.json> --truth-csv <walk_trace.csv> --output-dir output/diagnostics/20260720_robust_consensus`
+- 指標・観察結果:
+  - robust PDRはfixed lag `3`、`5`、`8` が同じ軌跡になった。RMSE最大値を `7.8383→7.3896 m` に下げたが、中央値を `3.6224→5.3519 m`、終点誤差中央値を `5.7459→8.2543 m` に悪化させたため推奨へ昇格しない。
+  - 無条件の単一祖先sequenceはPF RMSE中央値を `4.0522→3.9768 m` に改善したが、最大値を `9.7270→9.7290 m`、終点誤差最大を `23.3686→23.6399 m` に悪化させた。
+  - sequenceを持続反転が既定経路より少ない場合だけ採用するguard付き方式では、30実行すべて既定経路へ戻り、RMSE中央値/最大値 `4.0522/9.7270 m`、壁交差0、recovery failure 0を維持した。
+  - 300点弧長診断では30 PF候補中2候補に持続反転を検出してmedoid候補から除外した。残る33候補から選んだ代表はデータ7・seed2のPFで、正解は選択に使わず、選択後RMSE `2.6919 m`、終点誤差 `5.9210 m` だった。
+- 結論: 方向2仮説は診断・明示実験機能として残す。guard付きsequenceは既存精度を維持しつつ反転減少時だけ切り替わるため、ユーザー確認後に標準設定へ昇格した。標準はadaptive-causal、予測尤度指数0.1、guard付きsequenceとする。
+- 採用内容: `motion_estimation=robust`、方向事後CSV、反転診断、候補manifest、等計測重みmedoid生成を追加する。標準値は `motion_estimation=adaptive`、`smoothing=causal`、`pf_path_selection=sequence` とする。
+- 再検証する条件: 異なる正解ルート、実Uターンを含む計測、歩ごとの旋回・左右ラベルが追加されたとき。各データ最大RMSEの非悪化も再確認する。
+
+### EXP-022: 推奨構成の標準設定昇格
+
+- 日付: 2026-07-20
+- 状態: 採用・既定有効
+- 関連箇所・commit: 未コミット差分、`src/rikka/config.py`、CLI、PDR/PF公開API、評価スクリプト、README
+- 仮説: EXP-020/021で選んだ `adaptive + causal + predictive weight 0.1 + guard付きsequence` を全入口の既定値に統一しても、固定seed回帰と地図制約を維持できる。
+- 入力: `input/sensor_data/1turn_rightsidestep_3turn_leftsidestep`、対応する `walk_trace (3).csv`、フロアマップ。
+- 比較条件: CLI・公開API・低水準PF runner・評価スクリプトでオプションを省略し、同じ標準値へ解決されることを確認した。
+- seed: `[0, 1, 2, 10, 42, 100]`。
+- 実行コマンド:
+  - `uv run pytest tests/test_smoke.py tests/test_pdr_regressions.py tests/test_particle_sequence_path.py tests/test_direction_resolution.py`
+  - `MPLBACKEND=Agg uv run rikka run -d input/sensor_data/1turn_rightsidestep_3turn_leftsidestep --no-plot`
+  - `MPLBACKEND=Agg uv run rikka particle -d input/sensor_data/1turn_rightsidestep_3turn_leftsidestep --pf-seed 42 --no-plot`
+  - `MPLBACKEND=Agg uv run python agent/agent_evaluate_pf_ground_truth.py --seeds 0 1 2 10 42 100`
+- 指標・観察結果:
+  - 6 seedの正規化弧長RMSEは中央値 `0.8584 m`、最大値 `2.5363 m`、終点誤差は中央値 `1.2327 m`、最大値 `5.0003 m` だった。
+  - 全6 seedで壁交差0、recovery failure 0だった。
+  - CLIヘルプは `adaptive`、`causal`、予測尤度指数`0.1`、`sequence`を既定値として表示した。
+  - オプション省略の通常PDR/PFはともに85歩を処理し、有限値の軌跡・運動状態診断を生成した。
+- 結論: 推奨構成を標準設定へ昇格しても、対象データの固定seed精度と地図制約を維持できた。
+- 採用内容: `MOTION_ESTIMATION=adaptive`、`SMOOTHING_MODE=causal`、`PF_MOTION_PREDICTIVE_WEIGHT_POWER=0.1`、`PF_PATH_SELECTION=sequence` を設定の唯一の既定値としてCLI・公開API・評価スクリプトへ伝播する。
+- 再検証する条件: 新しい正解ルートを追加したとき、運動状態遷移・歩幅・resampling・recovery・経路選択を変更したとき。
+
+### EXP-023: 終端誤分岐の検出と複数計測方向コンセンサス
+
+- 日付: 2026-07-20
+- 状態: 採用
+- 関連箇所・commit: 未コミット差分、`trajectory_direction.py`、反転診断、PF評価、benchmark、consensus生成、専用Skill
+- 仮説: 最後の誤旋回は局所的な180度ジャンプではなく滑らかな誤分岐なので、終端区間の方向を評価し、複数計測間の多数方向と逆向きの候補を除外すれば、正解を選択に使わずに逆走しない代表軌跡を選べる。
+- 入力: 無印データと `1turn_rightsidestep_3turn_leftsidestep5`〜`8`、PF seed `[0, 1, 2, 10, 42, 100]`、共通正解軌跡、フロアマップ。
+- 比較条件: adaptive-causal、予測尤度指数0.1、guard付きsequenceの35候補。終端15%の方向差、projection cosine、逆向き接線割合を追加し、計測・PDR/PF方式を等重みにした円medoid方向から90度超の候補を除外してmedoidを再選択した。
+- 実行コマンド:
+  - `uv run python agent/agent_diagnose_heading_reversal.py --manifest <candidates.csv> --truth-csv <walk_trace.csv> --output-dir <diagnostics> --require-standard-coverage`
+  - `uv run python agent/agent_build_consensus_trajectory.py --manifest <candidates.csv> --diagnostics-json <diagnostics.json> --truth-csv <walk_trace.csv> --output-dir output/diagnostics/20260720_terminal_consensus_fix`
+  - `uv run python agent/agent_evaluate_pf_ground_truth.py --data-dir input/sensor_data/1turn_rightsidestep_3turn_leftsidestep5 --seeds 0 1 2 10 42 100`
+- 指標・観察結果:
+  - data5 PFは6 seedすべてで `terminal_direction_failure=true`、終端方向差は `140.0〜178.0°` だった。壁交差0・recovery failure 0だけではこの失敗を検出できなかった。
+  - 無印PFは6 seedすべてで終端方向failure 0、終端方向差 `7.9〜38.6°` だった。
+  - 現行の135度局所反転判定は35候補中2件しか検出しなかったが、正解を使う評価専用終端指標はdata5のPDR/PF、data8のPFなど14候補を検出した。
+  - 無条件に全turn recovery枝を残す試験はdata5 seed42のRMSEを `5.0128→9.8252 m`、終点誤差を `21.1052→15.6246 m` とし、終点だけ縮めても全体形状を悪化させたため戻した。
+  - PF終端変位を反対向きへ置換する後処理は、一部seedのRMSEと終端方向を改善したが、別の位置に人工的なUターンを作った。終端15%から開始点を探索する拡張も途中形状の短縮でRMSEだけを改善したため、どちらも最終コードから削除した。
+  - 正解を使わない終端方向コンセンサスは方位 `-76.38°` を選び、終端方向外れ12候補と持続反転2候補を除外した。
+  - 新しい代表は無印PF seed100で、選択後評価はRMSE `0.8949 m`、終点誤差 `1.1520 m`。従来代表の `2.6919 m`、`5.9210 m` から改善し、終端方向差は約12度で逆走しなかった。
+- 結論: 原因はPDRの直進中方位ドリフトと、PFが最後の旋回根拠を得る前に合法な誤枝へ収束すること、さらに局所135度判定が滑らかな誤旋回を見逃したことだった。単一計測で根拠なく枝を増やすのではなく、複数計測の方向整合性を代表軌跡選択へ使う。
+- 採用内容: 終端方向共通指標、評価時のterminal failure、計測・方式等重みの終端方向コンセンサス、90度超候補の除外、回帰テストを追加する。
+- 再検証する条件: 開始・終了方向が異なる別ルート、実Uターンを含む記録、3計測未満の入力、終端15%が極端に短い記録を追加したとき。
+
+### EXP-024: レビュー修正とrecovery方位状態の再検証
+
+- 日付: 2026-07-20
+- 状態: 一部採用・精度悪化案は見送り
+- 関連箇所・commit: 未コミット差分、`pdr/time_utils.py`、`pdr/step_length.py`、`pdr/heading.py`、`pdr/direction_resolver.py`、`particle/recovery.py`、`particle/runner.py`、入力・CLI検証
+- 仮説: レビューで見つかった状態不整合、固定サンプル周期、診断値と実変位のずれ、非有限入力の通過を直せる。ただしmap recoveryで選んだ回避角を恒久補正にすると、局所的な壁回避が後続全歩へ残って誤分岐を増やす可能性がある。
+- 入力: 無印データと `1turn_rightsidestep_3turn_leftsidestep5`〜`8`、共通正解軌跡、フロアマップ。
+- 比較条件: adaptive-causal、予測尤度指数0.1、guard付きsequence、PF seed `[0, 1, 2, 10, 42, 100]`。モード別方位への強制追従、recovery角の恒久補正、一時ドリフト維持を段階的に比較した。
+- 実行コマンド:
+  - `uv run pytest`
+  - `MPLBACKEND=Agg uv run python agent/agent_evaluate_pf_ground_truth.py`
+  - `MPLBACKEND=Agg uv run python agent/agent_benchmark_pdr_pf_methods.py --pdr-methods adaptive-causal --skip-pf --output /tmp/rikka_review_pdr_final.json`
+  - `MPLBACKEND=Agg uv run python agent/agent_benchmark_pdr_pf_methods.py --pf-methods adaptive-causal --skip-pdr --seeds 0 1 2 10 42 100 --motion-predictive-weight-powers 0.1 --pf-path-selections sequence --output /tmp/rikka_review_pf_final.json`
+- 指標・観察結果:
+  - 最尤モード別方位へPDR軌跡を強制追従すると、5計測PDRのRMSE中央値が既存の約3.62 mから約5.88 mへ悪化した。標準PFも6 seedのRMSE中央値約9.43 m、最大約11.36 m、終端failure 3件となったため戻した。
+  - PDRを戻してもrecovery角を恒久的な `heading_correction` に保存すると、標準PFのRMSE中央値は約6.98 m、最大約9.05 m、終端failure 3件だった。回避角を減衰する `heading_drift` に保持すると中央値0.8584 m、最大2.5363 mへ戻り、全6 seedで終端failure・壁交差・recovery failureが0になった。
+  - 最終PDRは5計測のRMSE中央値3.6224 m、最大7.8383 m。最終PFは30実行のRMSE中央値2.7957 m、最大9.7266 m、壁交差0、recovery failure 0だった。既知どおりdata5全seed、data8全seed、data6 seed0の滑らかな終端誤分岐は残る。
+  - 明示時刻での歩幅積分、初期端末向き推定の高信頼前進ゲート、低情報方向tieの入力方位優先、checkpoint親の運動状態復元、recoveryコストの系列スコア反映、再生後診断と実変位歩幅の整合、非有限値・時刻・mapの早期検証は回帰と実データ精度を維持した。
+- 結論: recovery角はセンサー校正ではなくmap上の局所回避仮説なので恒久補正にしてはいけない。適応状態の最尤ラベルだけから90度方位を生成せず、既存のセンサー方位を軌跡中心に保つ。レビュー修正は精度比較を通った状態・時刻・診断・入力境界の修正だけを採用する。
+- 採用内容: 時刻ベース積分、端末向き推定ゲート、方向tie prior、checkpoint運動状態、系列スコア、replay診断、実変位診断、入力・map事前検証。recovery角は従来どおり一時ドリフトへ保持する。
+- 再検証する条件: recovery方位状態、状態別heading候補、時刻積分、checkpoint replay、経路系列スコアを変更したとき。data5・8の終端誤分岐は単一計測で正解方向を識別できる新しい観測を得たときに別実験とする。
 
 ## 進行中の試行
 

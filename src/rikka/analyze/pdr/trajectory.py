@@ -22,10 +22,12 @@ from ...config import (
     GYRO_BIAS_METHOD,
     HEADING_METHOD,
     INITIAL_DIRECTION,
+    MOTION_ESTIMATION,
     SIDESTEP_LATERAL_RATIO,
     SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
     SIDESTEP_SMOOTHING_METHOD,
     SIDESTEP_SUSPECT_MODE,
+    SMOOTHING_MODE,
     STEP_LENGTH_METHOD,
     USER_HEIGHT_M,
     WEINBERG_K,
@@ -42,13 +44,20 @@ from .common import (
     _validate_sidestep_smoothing,
     _validate_sidestep_suspect_mode,
 )
+from .direction_resolver import resolve_step_directions
 from .gyro_bias import _validate_gyro_bias_method
 from .heading import (
     _estimate_device_orientation_mode,
     _resolve_motion_heading_correction,
     resolve_step_heading,
 )
-from .models import PreparedPdrSteps, StepHeading, StepMotionPosterior, StepSegment
+from .models import (
+    PreparedPdrSteps,
+    StepDirectionPosterior,
+    StepHeading,
+    StepMotionPosterior,
+    StepSegment,
+)
 from .motion_refinement import refine_step_headings_with_motion_model
 from .sensors import process_sensor_data
 from .sidestep import (
@@ -282,8 +291,9 @@ def prepare_pdr_steps(
     sidestep_heading_source: str = "motion",
     sidestep_suspect_mode: str = SIDESTEP_SUSPECT_MODE,
     motion_refinement: bool = True,
-    motion_estimation: str = "legacy",
-    smoothing_mode: str = "causal",
+    motion_estimation: str = MOTION_ESTIMATION,
+    smoothing_mode: str = SMOOTHING_MODE,
+    direction_fixed_lag: int = 5,
 ) -> PreparedPdrSteps:
     """通常PDRとPFが共用するステップ単位の推定結果を作る。"""
     selected_gyro_bias_method = _validate_gyro_bias_method(
@@ -313,9 +323,9 @@ def prepare_pdr_steps(
         "sidestep_min_lateral_displacement",
         sidestep_min_lateral_displacement,
     )
-    if motion_estimation not in {"legacy", "adaptive"}:
+    if motion_estimation not in {"legacy", "adaptive", "robust"}:
         raise ValueError(
-            "motion_estimation は legacy または adaptive を指定してください"
+            "motion_estimation は legacy、adaptive、robust のいずれかを指定してください"
         )
     if smoothing_mode not in {"causal", "offline"}:
         raise ValueError("smoothing_mode は causal または offline を指定してください")
@@ -363,6 +373,7 @@ def prepare_pdr_steps(
         )
     )
     motion_posteriors: tuple[StepMotionPosterior, ...] = ()
+    direction_posteriors: tuple[StepDirectionPosterior, ...] = ()
     if motion_estimation == "adaptive":
         adaptive_result = estimate_adaptive_pdr(
             step_headings,
@@ -384,6 +395,27 @@ def prepare_pdr_steps(
                     + length * float(np.sin(heading.selected_heading)),
                 ]
             )
+
+    if motion_estimation == "robust":
+        initial_observations = build_step_motion_observations(step_headings)
+        step_headings, direction_posteriors = resolve_step_directions(
+            step_headings,
+            initial_observations,
+            smoothing_mode=smoothing_mode,
+            fixed_lag=direction_fixed_lag,
+        )
+        trajectory = [[0.0, 0.0]]
+        for heading, length in zip(step_headings, step_lengths, strict=True):
+            assert heading.selected_heading is not None
+            trajectory.append(
+                [
+                    trajectory[-1][0]
+                    + length * float(np.cos(heading.selected_heading)),
+                    trajectory[-1][1]
+                    + length * float(np.sin(heading.selected_heading)),
+                ]
+            )
+        motion_evidences = build_step_motion_evidences(step_headings)
 
     return PreparedPdrSteps(
         df_acc=processed_acc,
@@ -408,4 +440,5 @@ def prepare_pdr_steps(
         motion_posteriors=motion_posteriors,
         motion_estimation=motion_estimation,
         smoothing_mode=smoothing_mode,
+        direction_posteriors=direction_posteriors,
     )

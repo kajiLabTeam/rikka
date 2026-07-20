@@ -25,7 +25,32 @@ from ...config import (
     WEINBERG_K,
 )
 from .models import StepHeading, StepLengthObservation
-from .time_utils import _sample_gyro_angle, _time_at_index
+from .time_utils import _sample_gyro_angle, _time_at_index, _time_values
+
+
+def _integrate_forward_acceleration(
+    acceleration: np.ndarray,
+    times: np.ndarray,
+) -> float:
+    """実時刻で加速度を二重積分し、両端速度を0へ補正する。"""
+    if len(acceleration) < 3 or len(times) != len(acceleration):
+        return 0.0
+    dt = np.diff(times, prepend=times[0])
+    dt[0] = 0.0
+    if not np.isfinite(dt).all() or np.any(dt < 0.0):
+        dt = np.full(len(times), 1.0 / SAMPLING_RATE)
+        dt[0] = 0.0
+    velocity = np.cumsum(acceleration * dt)
+    velocity -= np.linspace(velocity[0], velocity[-1], len(velocity))
+    return float(np.sum(velocity * dt))
+
+
+def _segment_times(df_acc: pd.DataFrame, start: int, end: int) -> np.ndarray:
+    """積分区間の実時刻、または固定周期の合成時刻を返す。"""
+    times = _time_values(df_acc)
+    if times is None:
+        times = np.arange(len(df_acc), dtype=float) / SAMPLING_RATE
+    return times[start:end]
 
 
 def estimate_step_length(
@@ -87,7 +112,7 @@ def build_step_length_observation(
         period_value = _time_at_index(df_acc, end) - _time_at_index(df_acc, start)
         if np.isfinite(period_value) and period_value > 0.0:
             period = float(period_value)
-    except (IndexError, KeyError, ValueError):
+    except IndexError, KeyError, ValueError:
         fallback_reason = fallback_reason or "step_period_unavailable"
 
     if "h_norm" in df_acc.columns:
@@ -129,7 +154,6 @@ def _estimate_initial_forward_angle(
     peaks: np.ndarray,
 ) -> float:
     """全ステップの変位方向の循環平均から前進方向の初期角度 φ₀ を推定する。"""
-    dt = 1.0 / SAMPLING_RATE
     sin_sum = 0.0
     cos_sum = 0.0
     count = 0
@@ -140,13 +164,9 @@ def _estimate_initial_forward_angle(
             continue
         h_y = df_acc["h_y"].iloc[start:end].to_numpy()
         h_z = df_acc["h_z"].iloc[start:end].to_numpy()
-        n = len(h_y)
-        v_y = np.cumsum(h_y) * dt
-        v_z = np.cumsum(h_z) * dt
-        v_y -= np.linspace(v_y[0], v_y[-1], n)
-        v_z -= np.linspace(v_z[0], v_z[-1], n)
-        dy = float(np.sum(v_y) * dt)
-        dz = float(np.sum(v_z) * dt)
+        times = _segment_times(df_acc, start, end)
+        dy = _integrate_forward_acceleration(h_y, times)
+        dz = _integrate_forward_acceleration(h_z, times)
         if np.hypot(dy, dz) < 1e-4:
             continue
         # センサー座標系の角度 = 変位方向 − その時点での yaw 角
@@ -176,7 +196,6 @@ def estimate_step_length_forward(
     phi_0: float,
 ) -> float:
     """方位方向射影による単一ステップの歩幅推定。"""
-    dt = 1.0 / SAMPLING_RATE
     start = int(peaks[i])
     end = int(peaks[i + 1]) if i + 1 < len(peaks) else start + 1
 
@@ -206,8 +225,7 @@ def estimate_step_length_forward(
         return 0.0
 
     # 直接2重積分 + 線形ドリフト補正（両端速度を 0 に）
-    v = np.cumsum(a_fwd) * dt
-    v -= np.linspace(v[0], v[-1], n)
-    osc_disp = abs(float(np.sum(v) * dt))
+    times = _segment_times(df_acc, start, end)
+    osc_disp = abs(_integrate_forward_acceleration(a_fwd, times))
 
     return K_FORWARD * osc_disp

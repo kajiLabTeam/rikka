@@ -18,6 +18,7 @@
 from dataclasses import asdict, fields
 from pathlib import Path
 
+import matplotlib.image as mpimg
 import numpy as np
 import pandas as pd
 
@@ -27,11 +28,15 @@ from ...config import (
     FLOORMAP_SCALE,
     FORWARD_HEADING_SOURCE,
     INITIAL_DIRECTION,
+    MOTION_ESTIMATION,
+    PF_MOTION_PREDICTIVE_WEIGHT_POWER,
+    PF_PATH_SELECTION,
     SAMPLING_RATE,
     SIDESTEP_LATERAL_RATIO,
     SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
     SIDESTEP_SMOOTHING_METHOD,
     SIDESTEP_SUSPECT_MODE,
+    SMOOTHING_MODE,
     USER_HEIGHT_M,
 )
 from .common import (
@@ -46,6 +51,7 @@ from .common import (
 )
 from .models import GyroBiasResult
 from .outputs import (
+    _build_direction_posteriors_dataframe,
     _build_gyro_bias_dataframe,
     _build_motion_posteriors_dataframe,
     _build_step_headings_dataframe,
@@ -58,7 +64,41 @@ from .outputs import (
 )
 from .plotting import plot_trajectory
 from .sensors import load_sensor_data
+from .time_utils import _time_values
 from .trajectory import prepare_pdr_steps
+
+
+def _validate_particle_floormap(
+    floormap_path: str | Path,
+    origin_px: tuple[int, int],
+) -> None:
+    """PF実行前にフロアマップと歩行可能な起点を検証する。"""
+    path = Path(floormap_path)
+    if not path.exists():
+        raise ValueError(f"フロアマップが存在しません: {path}")
+    if not path.is_file():
+        raise ValueError(f"フロアマップはファイルを指定してください: {path}")
+
+    try:
+        map_raw = mpimg.imread(path)
+    except (OSError, SyntaxError, ValueError) as exc:
+        raise ValueError(f"フロアマップを画像として読み込めません: {path}") from exc
+
+    # runner と同じ正規化・歩行可能閾値で事前確認し、出力作成後の失敗を防ぐ。
+    from ..particle_filter import _normalize_floormap_gray  # noqa: PLC0415
+
+    map_gray = _normalize_floormap_gray(map_raw)
+    if map_gray.ndim != 2 or map_gray.size == 0:
+        raise ValueError(f"フロアマップ画像の形状が不正です: {path}")
+    origin_x, origin_y = origin_px
+    map_height, map_width = map_gray.shape
+    if not (
+        0 <= origin_x < map_width
+        and 0 <= origin_y < map_height
+        and np.isfinite(map_gray[origin_y, origin_x])
+        and map_gray[origin_y, origin_x] > 128
+    ):
+        raise ValueError("origin_px は歩行可能なマップ内画素を指定してください")
 
 
 def run(
@@ -84,8 +124,10 @@ def run(
     sidestep_heading_source: str = "motion",
     sidestep_suspect_mode: str = SIDESTEP_SUSPECT_MODE,
     particle_seed: int | None = None,
-    motion_estimation: str = "legacy",
-    smoothing_mode: str = "causal",
+    motion_estimation: str = MOTION_ESTIMATION,
+    smoothing_mode: str = SMOOTHING_MODE,
+    motion_predictive_weight_power: float = PF_MOTION_PREDICTIVE_WEIGHT_POWER,
+    pf_path_selection: str = PF_PATH_SELECTION,
 ) -> pd.DataFrame:
     """PDRのメインパイプラインを実行する。
 
@@ -145,6 +187,10 @@ def run(
             横歩き疑いステップの軌跡反映モード。
         particle_seed:
             パーティクルフィルタの乱数 seed。``None`` のときは非決定的に実行する。
+        motion_predictive_weight_power:
+            運動状態の予測尤度をPF重みに掛ける指数。0のときは無効。
+        pf_path_selection:
+            PFの代表軌跡選択方式。``current`` または ``sequence``。
     Returns:
         pd.DataFrame: 軌跡データ（列: timestamp_s, x, y）
 
@@ -152,6 +198,21 @@ def run(
         ValueError: ``df_acc`` と ``df_gyro`` の片方だけが渡された場合
     """
     _validate_scale(scale)
+    if not np.isfinite(initial_direction):
+        raise ValueError("initial_direction は有限な値を指定してください。")
+    if gyro_bias is not None and not np.isfinite(gyro_bias):
+        raise ValueError("gyro_bias は有限な値を指定してください。")
+    if (
+        not np.isfinite(motion_predictive_weight_power)
+        or motion_predictive_weight_power < 0.0
+    ):
+        raise ValueError(
+            "motion_predictive_weight_power は有限な0以上の値を指定してください。"
+        )
+    if pf_path_selection not in {"current", "sequence"}:
+        raise ValueError(
+            "pf_path_selection は current または sequence を指定してください。"
+        )
     sidestep_lateral_ratio = _validate_positive_parameter(
         "sidestep_lateral_ratio",
         sidestep_lateral_ratio,
@@ -183,6 +244,12 @@ def run(
 
     if df_acc is None or df_gyro is None:
         raise RuntimeError("内部エラー: df_acc または df_gyro が None（到達不能）")
+
+    # ``t`` 列を明示した入力の欠損・重複・逆順は、固定周期へ切り替えず拒否する。
+    _time_values(df_acc)
+    _time_values(df_gyro)
+    if use_particle_filter:
+        _validate_particle_floormap(floormap_path, origin_px)
 
     # 通常 PDR と particle filter で共有する決定論的ステップ情報を先に作る。
     prepared_steps = prepare_pdr_steps(
@@ -280,6 +347,13 @@ def run(
         motion_posteriors_path = output_dir / "motion_posteriors.csv"
         df_motion_posteriors.to_csv(motion_posteriors_path, index=False)
         print(f"Motion posteriors saved to {motion_posteriors_path}")
+    if prepared_steps.direction_posteriors:
+        df_direction_posteriors = _build_direction_posteriors_dataframe(
+            prepared_steps.direction_posteriors
+        )
+        direction_posteriors_path = output_dir / "direction_posteriors.csv"
+        df_direction_posteriors.to_csv(direction_posteriors_path, index=False)
+        print(f"Direction posteriors saved to {direction_posteriors_path}")
 
     # particle filter は prepared_steps を受け取り、同じステップ列を地図制約で補正する。
     if use_particle_filter:
@@ -323,6 +397,8 @@ def run(
             sidestep_heading_source=selected_sidestep_heading_source,
             sidestep_suspect_mode=selected_sidestep_suspect_mode,
             seed=particle_seed,
+            motion_predictive_weight_power=motion_predictive_weight_power,
+            path_selection=pf_path_selection,
             diagnostics_collector=particle_diagnostics,
         )
 

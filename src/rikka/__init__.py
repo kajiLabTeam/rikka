@@ -28,10 +28,14 @@ from .config import (
     GYRO_BIAS_METHOD,
     HEADING_METHOD,
     INITIAL_DIRECTION,
+    MOTION_ESTIMATION,
+    PF_MOTION_PREDICTIVE_WEIGHT_POWER,
+    PF_PATH_SELECTION,
     SIDESTEP_LATERAL_RATIO,
     SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
     SIDESTEP_SMOOTHING_METHOD,
     SIDESTEP_SUSPECT_MODE,
+    SMOOTHING_MODE,
     STEP_DETECTION_METHOD,
     USER_HEIGHT_M,
 )
@@ -69,10 +73,13 @@ _SIDESTEP_HEADING_SOURCE_DEFAULT = "motion"
 _SIDESTEP_HEADING_SOURCE_CHOICES = ("motion", "body_lateral", "blend")
 _SIDESTEP_SUSPECT_MODE_DEFAULT = SIDESTEP_SUSPECT_MODE
 _SIDESTEP_SUSPECT_MODE_CHOICES = ("motion", "body_lateral", "blend", "forward")
-_MOTION_ESTIMATION_DEFAULT = "legacy"
-_MOTION_ESTIMATION_CHOICES = ("legacy", "adaptive")
-_SMOOTHING_MODE_DEFAULT = "causal"
+_MOTION_ESTIMATION_DEFAULT = MOTION_ESTIMATION
+_MOTION_ESTIMATION_CHOICES = ("legacy", "adaptive", "robust")
+_SMOOTHING_MODE_DEFAULT = SMOOTHING_MODE
 _SMOOTHING_MODE_CHOICES = ("causal", "offline")
+_PF_MOTION_PREDICTIVE_WEIGHT_POWER_DEFAULT = PF_MOTION_PREDICTIVE_WEIGHT_POWER
+_PF_PATH_SELECTION_DEFAULT = PF_PATH_SELECTION
+_PF_PATH_SELECTION_CHOICES = ("current", "sequence")
 
 
 def _validate_cli_scale(
@@ -108,6 +115,19 @@ def _validate_cli_non_negative_float(
     return value
 
 
+def _validate_cli_finite_float(
+    _ctx: click.Context,
+    param: click.Parameter,
+    value: float | None,
+) -> float | None:
+    """任意符号の float オプションが有限であることを確認する。"""
+    if value is None:
+        return None
+    if not isfinite(value):
+        raise click.BadParameter(f"{param.name} は有限な値を指定してください。")
+    return value
+
+
 def _validate_gyro_bias_options(
     gyro_bias_method: str,
     gyro_bias: float | None,
@@ -117,6 +137,8 @@ def _validate_gyro_bias_options(
         raise click.UsageError(
             "--gyro-bias-method manual を使う場合は --gyro-bias を指定してください。"
         )
+    if gyro_bias is not None and not isfinite(gyro_bias):
+        raise click.BadParameter("gyro_bias は有限な値を指定してください。")
 
 
 def _common_options(f: click.decorators.FC) -> click.decorators.FC:
@@ -214,12 +236,14 @@ def _common_options(f: click.decorators.FC) -> click.decorators.FC:
     f = click.option(
         "--gyro-bias",
         type=float,
+        callback=_validate_cli_finite_float,
         default=None,
         help="manual 指定時のジャイロバイアス [rad/s]",
     )(f)
     f = click.option(
         "--direction",
         type=float,
+        callback=_validate_cli_finite_float,
         default=_DIRECTION_DEFAULT,
         show_default=True,
         help="歩行開始方向のオフセット [度]",
@@ -227,6 +251,7 @@ def _common_options(f: click.decorators.FC) -> click.decorators.FC:
     f = click.option(
         "--height-m",
         type=float,
+        callback=_validate_cli_positive_float,
         default=_HEIGHT_DEFAULT,
         show_default=True,
         help="歩幅推定に使うユーザー身長 [m]",
@@ -424,6 +449,21 @@ def pdr(
 
 @cli.command()
 @click.option(
+    "--pf-path-selection",
+    type=click.Choice(_PF_PATH_SELECTION_CHOICES),
+    default=_PF_PATH_SELECTION_DEFAULT,
+    show_default=True,
+    help="PFの代表軌跡選択方式",
+)
+@click.option(
+    "--motion-predictive-weight-power",
+    type=float,
+    callback=_validate_cli_non_negative_float,
+    default=_PF_MOTION_PREDICTIVE_WEIGHT_POWER_DEFAULT,
+    show_default=True,
+    help="運動状態の予測尤度をPF重みに掛ける指数（0で無効）",
+)
+@click.option(
     "--pf-seed",
     type=int,
     default=None,
@@ -459,6 +499,8 @@ def particle(
     no_plot: bool,
     save_animation: bool,
     pf_seed: int | None,
+    motion_predictive_weight_power: float,
+    pf_path_selection: str,
 ) -> None:
     """パーティクルフィルタ + マップマッチングで歩行軌跡を推定する。"""
     from .analyze.pdr import load_sensor_data  # noqa: PLC0415
@@ -491,6 +533,8 @@ def particle(
         motion_estimation=motion_estimation,
         smoothing_mode=smoothing_mode,
         particle_seed=pf_seed,
+        motion_predictive_weight_power=motion_predictive_weight_power,
+        pf_path_selection=pf_path_selection,
     )
 
 
@@ -520,6 +564,7 @@ def particle(
 @click.option(
     "--gyro-bias",
     type=float,
+    callback=_validate_cli_finite_float,
     default=None,
     help="manual 指定時のジャイロバイアス [rad/s]",
 )

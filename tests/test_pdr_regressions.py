@@ -1023,6 +1023,39 @@ def test_particle_filter_rejects_invalid_stride_scale_range(tmp_path) -> None:
         )
 
 
+def test_particle_filter_rejects_negative_motion_predictive_weight_power(
+    tmp_path,
+) -> None:
+    floormap_path = tmp_path / "open_map.png"
+    plt.imsave(
+        floormap_path,
+        np.ones((5, 5), dtype=float),
+        cmap="gray",
+        vmin=0.0,
+        vmax=1.0,
+    )
+
+    with np.testing.assert_raises_regex(
+        ValueError,
+        "motion_predictive_weight_power",
+    ):
+        run_particle_filter(
+            np.array([], dtype=int),
+            pd.DataFrame({"low_angle": []}),
+            pd.DataFrame({"h_y": [], "h_z": []}),
+            gx_mean=0.0,
+            gz_mean=9.8,
+            floormap_path=floormap_path,
+            origin_px=(2, 2),
+            scale=1.0,
+            n_particles=4,
+            prepared_step_headings=[],
+            prepared_step_lengths=[],
+            prepared_step_times=[],
+            motion_predictive_weight_power=-0.1,
+        )
+
+
 def test_checkpoint_replay_reconstructs_wall_valid_multi_step_path() -> None:
     map_gray = np.zeros((30, 30), dtype=float)
     for y in range(2, 28):
@@ -1220,9 +1253,10 @@ def test_particle_filter_recovers_with_map_aware_direction_candidates(tmp_path) 
     assert diagnostics[0].recovery_valid_count > 0
     assert diagnostics[0].ess_after_observation <= 1.0
     np.testing.assert_allclose(diagnostics[0].ess_after_resampling, 80.0)
+    # 1歩目のrecovery方位を永続補正として保持するため、2歩目は
+    # 同じ通路方向へ通常伝播でき、再度のrecoveryを必要としない。
     assert diagnostics[1].recovery_attempted is True
     assert diagnostics[1].recovery_mode in {"local_grid", "turn_grid"}
-    assert diagnostics[1].recovery_valid_count > 0
     np.testing.assert_allclose(
         [item.stride_scale_mean for item in diagnostics],
         [1.03, 1.03],

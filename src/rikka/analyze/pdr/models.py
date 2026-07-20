@@ -21,8 +21,10 @@ import pandas as pd
 
 from ...config import (
     FORWARD_HEADING_SOURCE,
+    MOTION_ESTIMATION,
     SIDESTEP_LATERAL_RATIO,
     SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
+    SMOOTHING_MODE,
 )
 
 
@@ -211,6 +213,20 @@ class AdaptivePdrResult:
 
 
 @dataclass(frozen=True)
+class StepDirectionPosterior:
+    """移動軸の2方向候補に対する1歩ごとの事後分布。"""
+
+    step_index: int
+    positive_axis_probability: float
+    negative_axis_probability: float
+    selected_heading: float
+    selected_motion_mode: str
+    confidence: float
+    source: str
+    flip_supported: bool
+
+
+@dataclass(frozen=True)
 class PreparedPdrSteps:
     """通常PDRとPFで共用するステップ単位の推定結果。"""
 
@@ -234,5 +250,6 @@ class PreparedPdrSteps:
     motion_observations: tuple[StepMotionObservation, ...] = ()
     length_observations: tuple[StepLengthObservation, ...] = ()
     motion_posteriors: tuple[StepMotionPosterior, ...] = ()
-    motion_estimation: str = "legacy"
-    smoothing_mode: str = "causal"
+    motion_estimation: str = MOTION_ESTIMATION
+    smoothing_mode: str = SMOOTHING_MODE
+    direction_posteriors: tuple[StepDirectionPosterior, ...] = ()

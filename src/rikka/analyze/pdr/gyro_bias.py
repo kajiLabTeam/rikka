@@ -381,10 +381,16 @@ def estimate_gyro_bias(
     manual_bias: float | None = None,
 ) -> GyroBiasResult:
     """指定手法で gyro bias を推定する。"""
+    # ``t`` 列があるのに壊れている入力は固定周期へ暗黙に切り替えず、
+    # 加速度・ジャイロの両方を補正計算より先に検証する。
+    _time_values(df_acc)
+    _time_values(df_gyro)
     selected_method = _validate_gyro_bias_method(method)
     if selected_method == "manual":
         if manual_bias is None:
             raise ValueError("gyro_bias_method='manual' では gyro_bias が必要です。")
+        if not np.isfinite(manual_bias):
+            raise ValueError("gyro_bias は有限な値を指定してください。")
         return GyroBiasResult(
             method="manual",
             bias_rad_s=float(manual_bias),

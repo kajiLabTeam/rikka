@@ -39,6 +39,7 @@ class _RecoveryResult:
     step_scale: float
     mean_cost: float
     route_branch_ids: np.ndarray
+    path_log_score_delta: np.ndarray
 
 
 @dataclass(frozen=True)
@@ -217,6 +218,7 @@ def _generate_recovery_candidates(
                 step_scale=float(np.mean(selected_factors)),
                 mean_cost=float(np.mean(costs[selected_local])),
                 route_branch_ids=np.zeros(n_particles, dtype=np.int8),
+                path_log_score_delta=-0.5 * costs[selected_local],
             )
         candidate_particles.append(candidates[valid])
         candidate_parent_indices.append(parent_indices[valid])
@@ -280,6 +282,7 @@ def _generate_recovery_candidates(
         step_scale=float(np.mean(selected_factors)),
         mean_cost=float(np.mean(selected_costs)),
         route_branch_ids=selected_route_branch_ids,
+        path_log_score_delta=-0.5 * selected_costs,
     )
 
 
@@ -406,6 +409,7 @@ def _replay_from_checkpoint(
         step_scale=float(np.mean(selected_factors)),
         mean_cost=float(np.mean(selected_costs)),
         route_branch_ids=np.zeros(n_particles, dtype=np.int8),
+        path_log_score_delta=-0.5 * selected_costs,
     )
     selected_positions = np.stack(
         [positions[select] for positions in replay_positions],
