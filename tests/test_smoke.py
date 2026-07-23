@@ -4,10 +4,12 @@ from click.testing import CliRunner
 from rikka import cli
 from rikka.config import (
     FORWARD_HEADING_SOURCE,
+    GYRO_BIAS_METHOD,
     HEADING_METHOD,
     MOTION_ESTIMATION,
     PF_MOTION_PREDICTIVE_WEIGHT_POWER,
     PF_PATH_SELECTION,
+    PF_REJUVENATION_SIGMA_HEADING,
     SIDESTEP_LATERAL_RATIO,
     SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
     SIDESTEP_SMOOTHING_METHOD,
@@ -48,6 +50,8 @@ def test_default_sidestep_detection_settings_match_selected_standard() -> None:
     assert SMOOTHING_MODE == "causal"
     assert PF_MOTION_PREDICTIVE_WEIGHT_POWER == pytest.approx(0.1)
     assert PF_PATH_SELECTION == "sequence"
+    assert GYRO_BIAS_METHOD == "prewalk_guarded"
+    assert PF_REJUVENATION_SIGMA_HEADING == pytest.approx(0.009)
 
 
 def test_run_help_includes_forward_heading_source_option() -> None:
@@ -55,6 +59,7 @@ def test_run_help_includes_forward_heading_source_option() -> None:
 
     assert result.exit_code == 0
     assert "--forward-heading-source" in result.output
+    assert "default: prewalk_guarded" in result.output
 
 
 def test_run_help_includes_adaptive_motion_options() -> None:

@@ -30,16 +30,17 @@ brew install ffmpeg
 
 ## 入力データ
 
-`input/sensor_data/<データフォルダ>/` に phyphox 形式の CSV を置きます。
+`input/sensor_data/<人名>/<データフォルダ>/` に phyphox 形式の CSV を置きます。
 正解経路の動画・CSV・画像は `input/correct_path/<経路フォルダ>/` に分けて
 配置します。フロアマップ画像は `input/` 直下に置きます。
 
 ```text
 input/
 ├── sensor_data/
-│   └── my_walk/
-│       ├── Accelerometer.csv
-│       └── Gyroscope.csv
+│   └── natsuki/
+│       └── my_walk/
+│           ├── Accelerometer.csv
+│           └── Gyroscope.csv
 ├── correct_path/
 │   └── my_walk/
 │       └── walk_trace.csv
@@ -56,13 +57,13 @@ input/
 現在の既定入力は次です。
 
 ```python
-DATA_DIR = "input/sensor_data/1turn_rightsidestep_3turn_leftsidestep8"
+DATA_DIR = "input/sensor_data/natsuki/1turn_rightsidestep_3turn_leftsidestep8"
 ```
 
 別データを使う場合は、CLI の `-d` で指定できます。
 
 ```sh
-uv run rikka run -d input/sensor_data/my_walk
+uv run rikka run -d input/sensor_data/natsuki/my_walk
 ```
 
 ## 基本コマンド
@@ -171,7 +172,7 @@ flowchart LR
 
 | 項目 | 既定値 | 説明 |
 |---|---:|---|
-| `DATA_DIR` | `input/sensor_data/1turn_rightsidestep_3turn_leftsidestep8` | 入力データ |
+| `DATA_DIR` | `input/sensor_data/natsuki/1turn_rightsidestep_3turn_leftsidestep8` | 入力データ |
 | `FLOORMAP_PATH` | `input/Floormap_building14_5floor.png` | 背景マップ |
 | `FLOORMAP_ORIGIN_PX` | `(2050, 400)` | 軌跡の開始ピクセル |
 | `FLOORMAP_SCALE` | `0.01` | 1px あたりのメートル数 |
@@ -179,7 +180,7 @@ flowchart LR
 | `STEP_DETECTION_METHOD` | `peak` | ステップ検出 |
 | `HEADING_METHOD` | `gyro_accel_motion` | 方位・移動方向推定 |
 | `FORWARD_HEADING_SOURCE` | `body` | 通常歩行はジャイロ由来の体・端末方向を使用 |
-| `GYRO_BIAS_METHOD` | `prewalk_robust` | ジャイロバイアス推定 |
+| `GYRO_BIAS_METHOD` | `prewalk_guarded` | 小さい歩行前biasだけを採用し、端末回転の誤認を抑制 |
 | `USER_HEIGHT_M` | `1.68` | Weinberg 歩幅補正用の身長 |
 | `SIDESTEP_LATERAL_RATIO` | `1.2` | 横方向/前方向の比率がこの値以上で横歩き候補 |
 | `SIDESTEP_MIN_LATERAL_DISPLACEMENT_M` | `0.03` | 横歩き判定に必要な横方向変位 [m] |
@@ -196,6 +197,7 @@ flowchart LR
 | `PF_STRIDE_SCALE_RETENTION` | `0.995` | 学習した歩幅倍率偏差を次歩へ保持する割合 |
 | `PF_STRIDE_SCALE_MIN / MAX` | `0.90 / 1.15` | PFが保持する歩幅倍率の範囲 |
 | `PF_RESAMPLE_ESS_RATIO` | `0.5` | PFで再標本化を開始するESS比率 |
+| `PF_REJUVENATION_SIGMA_HEADING` | `0.009` | 再標本化後に加える適応方位ノイズの上限 [rad] |
 | `PF_RECOVERY_VALID_RATIO` | `0.05` | PFでmap-aware recoveryを開始する有効粒子率 |
 | `PF_MOTION_PREDICTIVE_WEIGHT_POWER` | `0.1` | 運動状態予測尤度を弱くPF重みへ反映する指数 |
 | `PF_PATH_SELECTION` | `sequence` | 持続反転が減る場合だけ単一祖先経路を採用 |
@@ -297,11 +299,11 @@ uv run rikka particle --motion-estimation adaptive \
 ```sh
 MPLBACKEND=Agg uv run python agent/agent_evaluate_adaptive_pdr.py \
   --data-dir \
-  input/sensor_data/1turn_rightsidestep_3turn_leftsidestep \
-  input/sensor_data/1turn_rightsidestep_3turn_leftsidestep5 \
-  input/sensor_data/1turn_rightsidestep_3turn_leftsidestep6 \
-  input/sensor_data/1turn_rightsidestep_3turn_leftsidestep7 \
-  input/sensor_data/1turn_rightsidestep_3turn_leftsidestep8
+  input/sensor_data/natsuki/1turn_rightsidestep_3turn_leftsidestep \
+  input/sensor_data/natsuki/1turn_rightsidestep_3turn_leftsidestep5 \
+  input/sensor_data/natsuki/1turn_rightsidestep_3turn_leftsidestep6 \
+  input/sensor_data/natsuki/1turn_rightsidestep_3turn_leftsidestep7 \
+  input/sensor_data/natsuki/1turn_rightsidestep_3turn_leftsidestep8
 ```
 
 横歩き判定を軌跡へそのまま反映して比較したい場合:
@@ -328,12 +330,15 @@ uv run rikka run --sidestep-lateral-ratio 1.5
 
 ## ジャイロバイアス比較
 
-2つ目のサンプルデータは `prewalk_robust` のバイアス推定で軌跡が曲がりやすいです。
-比較用には手動バイアスも使えます。
+定速の端末回転を静止中のbiasと誤認すると、全区間へ誤った補正が入り軌跡が
+曲がり続けます。そのため標準の `prewalk_guarded` は、推定値が±0.003 rad/s以内の
+場合だけ採用し、それを超える場合は0へ戻します。記録前後に確実な静止区間を
+用意できる場合は `prewalk_robust`、補正しない比較には `zero`、既知の校正値が
+ある場合は `manual` も使用できます。
 
 ```sh
 uv run rikka run \
-  -d input/sensor_data/1turn_rightsidestep_3turn_leftsidestep2 \
+  -d input/sensor_data/natsuki/1turn_rightsidestep_3turn_leftsidestep2 \
   --gyro-bias-method manual \
   --gyro-bias 0.002
 ```

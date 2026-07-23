@@ -70,6 +70,8 @@ PDR と particle filter の改善で、過去に試した仮説、条件、結�
 | EXP-022 | 推奨構成の標準設定昇格 | 採用・既定有効 | adaptive-causal、指数0.1、guard付きsequenceを全入口の標準にする |
 | EXP-023 | 終端誤分岐の検出と複数計測方向コンセンサス | 採用 | 終端逆走を合否条件にし、複数計測の多数方向から外れる候補を代表選択から除外する |
 | EXP-024 | レビュー修正とrecovery方位状態の再検証 | 一部採用 | map回避角は一時ドリフトに保ち、checkpoint状態・時刻積分・入力検証・診断整合性だけを採用する |
+| EXP-025 | data9の軌跡歪みと汎化不足の診断 | 調査完了・未修正 | 定速の事前端末回転をgyro biasと誤認し、区間別歩幅誤差を独立観測で補正できないことが主因 |
+| EXP-026 | guard付きgyro biasと記録品質適応PFノイズ | 採用・既定有効 | 6計測すべてでPF最大RMSEを改善し、壁・復旧・終端failureを0にした |
 
 ## 過去の試行詳細
 
@@ -537,6 +539,49 @@ PDR と particle filter の改善で、過去に試した仮説、条件、結�
 - 結論: recovery角はセンサー校正ではなくmap上の局所回避仮説なので恒久補正にしてはいけない。適応状態の最尤ラベルだけから90度方位を生成せず、既存のセンサー方位を軌跡中心に保つ。レビュー修正は精度比較を通った状態・時刻・診断・入力境界の修正だけを採用する。
 - 採用内容: 時刻ベース積分、端末向き推定ゲート、方向tie prior、checkpoint運動状態、系列スコア、replay診断、実変位診断、入力・map事前検証。recovery角は従来どおり一時ドリフトへ保持する。
 - 再検証する条件: recovery方位状態、状態別heading候補、時刻積分、checkpoint replay、経路系列スコアを変更したとき。data5・8の終端誤分岐は単一計測で正解方向を識別できる新しい観測を得たときに別実験とする。
+
+### EXP-025: data9の軌跡歪みと汎化不足の診断
+
+- 日付: 2026-07-21
+- 状態: 調査完了・製品コード未修正
+- 関連箇所・commit: `input/sensor_data/1turn_rightsidestep_3turn_leftsidestep9`、`pdr/gyro_bias.py`、`pdr/step_length.py`、`pdr/adaptive_estimator.py`、`particle/runner.py`
+- 仮説: data9だけ軌跡が歪む主因は、方式固有の運動状態復号ではなく、全方式が共有するgyro biasと区間別歩幅推定にある。
+- 入力: `1turn_rightsidestep_3turn_leftsidestep9`。従来の正解軌跡と同じ進行方向・同じルートとして比較した。`back`は逆向き条件なので今回の数値比較から除外した。
+- 比較条件: PDRのlegacy、adaptive-causal/offline、robust-causal/offline、gyro biasのprewalk/initial/quietest/manual、forward headingのbody/motion、PF seed `[0, 1, 2, 10, 42, 100]`。
+- 実行コマンド:
+  - `MPLBACKEND=Agg uv run python agent/agent_benchmark_pdr_pf_methods.py --data-dir input/sensor_data/1turn_rightsidestep_3turn_leftsidestep9 input/sensor_data/1turn_rightsidestep_3turn_leftsidestep --pdr-methods legacy adaptive-causal adaptive-offline robust-causal robust-offline --skip-pf --output /tmp/rikka_data9_pdr_diagnosis.json`
+  - `MPLBACKEND=Agg uv run rikka run -d input/sensor_data/1turn_rightsidestep_3turn_leftsidestep9 --motion-estimation adaptive --smoothing causal --no-plot`
+  - `MPLBACKEND=Agg uv run python agent/agent_evaluate_pf_ground_truth.py --data-dir input/sensor_data/1turn_rightsidestep_3turn_leftsidestep9 --seeds 0 1 2 10 42 100`
+  - `prepare_pdr_steps(..., gyro_bias_method="manual", gyro_bias=0.005)` を使う診断実行でbiasだけを分離比較した。
+- 指標・観察結果:
+  - PDRはlegacy、adaptive、robustの全方式でRMSE `8.15〜8.48 m`となり、方式変更では直らなかった。
+  - `prewalk_robust` は3.527〜4.521秒の窓を選び、biasを `-0.01722 rad/s` と推定した。この窓は加速度p95 `0.0851`、gyro標準偏差 `0.0297` と静かだが、端末が重力軸周りへほぼ定速回転しており、その角速度をbiasとして取り込んだ。現行scoreは加速度p95とgyro標準偏差だけなので、定速回転と真のbiasを区別できない。
+  - prewalk biasではPDR終端方向差が約72.4度だった。quietestはbias `0.00380 rad/s`、PDR RMSE `4.83 m`、manual `0.005 rad/s` はRMSE `4.77 m`まで改善した。一定biasとforward headingを同時に探索しても最良RMSEは約4.50 mで、bias以外の誤差が残った。
+  - manual `0.005 rad/s` の5区間平均headingは約 `[93.3, 165.9, -99.6, -12.4, -102.4]` 度まで期待方向へ戻った。一方、推定区間距離は `[19.08, 11.46, 15.46, 10.96, 7.62]` mで、正解形状の概算 `[24.35, 12.04, 13.05, 11.92, 11.13]` mに対して先頭・末尾が短く、3区間目が長かった。
+  - adaptiveのinterval歩幅合計 `64.50 m` はnominal `65.22 m`とほぼ同じで、Weinberg推定から独立した距離観測になっていない。そのため区間別の速度・歩幅変化をposteriorで補正できなかった。
+  - 既定biasのPFは6 seedのRMSE `6.47〜13.29 m`、recovery `19〜31` 回で、seed 2は終端failureだった。seed 42では既定biasのRMSE `9.30 m`・recovery 19回に対し、quietestで `3.45 m`・10回、manual `0.005`で `2.13 m`・11回となり、PFは誤ったPDR headingを地図上のrecoveryで増幅していた。
+- 結論: 第一原因は、加速度が静かな定速端末回転をgyro biasと誤認する事前窓選択である。第二原因は、Weinbergとほぼ同じ情報から作るadaptive歩幅観測に独立性がなく、区間別距離の伸縮を補正できないことである。PFの歪みは独立した原因ではなく、この2つのPDR誤差により壁へ早く到達して合法な誤枝と短縮経路を選ぶ増幅結果である。
+- 採用内容: なし。原因究明のみで、bias方式や既定値は変更していない。
+- 再検証する条件: 複数静止窓のbias一貫性評価、記録後静止区間との照合、定速yaw検出、または歩行直進区間を使うbias補正を実装したとき。歩幅は速度・歩周期などWeinberg振幅と独立した観測を追加し、従来5計測・data9・backを同時評価する。
+
+### EXP-026: guard付きgyro biasと記録品質適応PFノイズ
+
+- 日付: 2026-07-21
+- 状態: 採用・既定有効
+- 仮説: 歩行前の定速端末回転をbiasとして全区間へ差し引く誤りを上限guardで防ぎ、PF再標本化後の方位ノイズを記録全体の移動観測信頼度に合わせれば、単一データへ過適合せず誤分岐を減らせる。
+- 入力: 共通正解軌跡に対応する無印データと`1turn_rightsidestep_3turn_leftsidestep5`〜`9`、フロアマップ。`back`は逆向き正解点列の定義が未確定のため数値比較から除外した。
+- 比較条件: PDRは`adaptive-causal`。PFは予測尤度指数0.1、guard付き`sequence`、seed `[0, 1, 2, 10, 42, 100]`。gyro biasは既存4方式、manual 0、prewalk推定の縮約率0〜1、guard閾値0.003 rad/sを比較した。PFはheading process noise 0.005〜0.03、保持率0.85〜1.0、粒子数500/1000、再標本化後方位ノイズ0〜0.03、歩幅事前中心0.98〜1.12を比較した。
+- 実行コマンド: `MPLBACKEND=Agg MPLCONFIGDIR=/tmp/rikka-mpl UV_CACHE_DIR=.uv-cache uv run python agent/agent_benchmark_pdr_pf_methods.py --data-dir <無印,5,6,7,8,9> --seeds 0 1 2 10 42 100 --pdr-methods adaptive-causal --pf-methods adaptive-causal --motion-predictive-weight-powers 0.1 --pf-path-selections sequence --output /tmp/rikka_final_6data.json`。固定seed回帰は`UV_CACHE_DIR=.uv-cache uv run pytest tests/test_pdr_regressions.py -k "particle or resampling or recovery or transition or reconstruct"`。
+- 指標・観察結果:
+  - prewalk推定をそのまま使う従来構成は、6データのPDR RMSE中央値/最大値が`5.175/8.149` m、PF 36実行が`4.907/13.291` m、終点誤差中央値/最大値がPDR `6.821/14.328` m、PF `9.051/23.580` mだった。
+  - 最終構成はPDR RMSE中央値/最大値`3.313/5.183` m、終点誤差`2.328/3.252` m。PFはRMSE`2.064/6.554` m、終点誤差`3.234/16.201` mで、壁交差0、recovery failure 0、terminal direction failure 0だった。
+  - PFのデータ別RMSE中央値/最大値は、無印`0.890/2.113`、5`2.639/2.683`、6`2.013/3.316`、7`1.968/2.077`、8`1.890/5.413`、9`5.119/6.554` m。従来最大値`2.536, 9.727, 3.912, 5.978, 6.398, 13.291` mを全データで下回った。
+  - prewalk推定値の絶対値は無印0.00187、5 0.01919、6 0.01246、7 0.00147、8 0.00586、9 0.01722 rad/sで、guardは無印と7だけ採用し、ほかを0へ戻した。
+  - 再標本化後ノイズの固定0はデータ6、固定0.01付近は別seedのデータ6/7/8を悪化させた。歩ごとの信頼度適応もデータ6で局所的にノイズ量が揺れて悪化した。記録全体の`motion_reliability`中央値で1回だけ決め、0.90以下は0.009 rad、0.92以上は0.004 rad、間を線形補間する方式だけが全条件を満たした。
+  - 粒子数1000、長期保持率0.95〜1.0、歩幅事前中心1.08以上はいずれも合法な誤通路を保持し、最大RMSEを悪化させたため不採用とした。
+- 結論: gyro biasは大きな推定値ほど補正すべきとは限らず、外部静止保証がない条件では±0.003 rad/sを超える値を棄却する方が6計測へ汎化した。PFの再標本化ノイズは歩ごとに変えず、記録全体の移動観測品質から安定した1値を決めると探索性と終端方向を両立できる。
+- 採用内容: `GYRO_BIAS_METHOD="prewalk_guarded"`、`GYRO_BIAS_GUARD_MAX_ABS_RAD_S=0.003`、`PF_REJUVENATION_SIGMA_HEADING=0.009`、記録単位の高信頼ノイズ縮小、CLI/評価スクリプトの`zero`・`prewalk_guarded`対応、回帰テスト。
+- 再検証する条件: 別端末・別装着者・確実な静止校正を含むデータ、`motion_reliability`中央値0.90〜0.92付近のデータ、または逆向き`back`の正解軌跡条件が確定したとき。
 
 ## 進行中の試行
 

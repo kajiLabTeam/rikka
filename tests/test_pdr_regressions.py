@@ -192,6 +192,40 @@ def test_estimate_gyro_bias_manual_requires_and_uses_value() -> None:
         raise AssertionError("manual bias without value should fail")
 
 
+def test_estimate_gyro_bias_zero_does_not_use_sensor_rotation() -> None:
+    df_acc = pd.DataFrame({"low_lin_norm": [0.0, 0.0]})
+    df_gyro = pd.DataFrame({"x": [0.25, -0.5]})
+
+    result = pdr.estimate_gyro_bias(df_acc, df_gyro, method="zero")
+
+    assert result.method == "zero"
+    assert result.bias_rad_s == 0.0
+    assert result.sample_count == 0
+    assert result.calibration_start_s is None
+
+
+def test_estimate_gyro_bias_prewalk_guarded_rejects_large_rotation() -> None:
+    n_samples = 600
+    times = np.arange(n_samples, dtype=float) * 0.01
+    low_lin_norm = np.zeros(n_samples)
+    low_lin_norm[400::60] = 2.0
+    df_acc = pd.DataFrame({"t": times, "low_lin_norm": low_lin_norm})
+    df_gyro = pd.DataFrame({"t": times, "x": np.full(n_samples, 0.02)})
+
+    result = pdr.estimate_gyro_bias(
+        df_acc,
+        df_gyro,
+        method="prewalk_guarded",
+    )
+
+    assert result.method == "prewalk_guarded"
+    assert result.bias_rad_s == 0.0
+    assert result.robust_mean is not None
+    np.testing.assert_allclose(result.robust_mean, 0.02)
+    assert result.fallback_reason is not None
+    assert "estimated_bias_exceeds_guard" in result.fallback_reason
+
+
 def test_estimate_gyro_bias_prewalk_falls_back_to_initial_robust() -> None:
     n_samples = 120
     df_acc = pd.DataFrame(

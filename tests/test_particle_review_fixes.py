@@ -2,6 +2,7 @@
 
 import numpy as np
 import pandas as pd
+import pytest
 from matplotlib import pyplot as plt
 
 from rikka.analyze.particle.paths import _unsupported_reversal_count
@@ -9,7 +10,10 @@ from rikka.analyze.particle.recovery import (
     _generate_recovery_candidates,
     _replay_from_checkpoint,
 )
-from rikka.analyze.particle.runner import run_particle_filter
+from rikka.analyze.particle.runner import (
+    _adaptive_heading_rejuvenation_sigma,
+    run_particle_filter,
+)
 from rikka.analyze.particle_filter import ParticleFilterStepDiagnostics
 from rikka.analyze.pdr.models import StepHeading
 
@@ -40,6 +44,13 @@ def _forward_heading(step_index: int = 1) -> StepHeading:
         motion_reject_reason=None,
         trajectory_movement_type="forward",
     )
+
+
+def test_heading_rejuvenation_uses_motion_reliability() -> None:
+    assert _adaptive_heading_rejuvenation_sigma(0.009, 0.80) == 0.009
+    assert _adaptive_heading_rejuvenation_sigma(0.009, 0.91) == pytest.approx(0.0065)
+    assert _adaptive_heading_rejuvenation_sigma(0.009, 0.92) == pytest.approx(0.004)
+    assert _adaptive_heading_rejuvenation_sigma(0.009, 1.0) == pytest.approx(0.004)
 
 
 def test_recovery_keeps_map_detour_in_transient_heading_state() -> None:

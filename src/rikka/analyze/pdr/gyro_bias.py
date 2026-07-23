@@ -1,8 +1,8 @@
 """ジャイロバイアス推定手法。
 
 役割:
-    記録開始時、歩行直前、全期間の静穏窓、または手動値からジャイロの定常偏差を
-    推定し、推定値と校正区間を ``GyroBiasResult`` として返す。
+    無補正、記録開始時、歩行直前、全期間の静穏窓、または手動値からジャイロの
+    定常偏差を決定し、推定値と校正区間を ``GyroBiasResult`` として返す。
 依存元:
     ``config`` から検出閾値、``models`` から結果型、``time_utils`` から時刻変換を
     取得し、NumPy、Pandas、SciPy でロバスト統計と歩行開始検出を行う。
@@ -21,6 +21,7 @@ import pandas as pd
 from scipy.signal import find_peaks
 
 from ...config import (
+    GYRO_BIAS_GUARD_MAX_ABS_RAD_S,
     GYRO_BIAS_METHOD,
     GYRO_BIAS_MIN_CALIBRATION_SECONDS,
     GYRO_BIAS_OUTLIER_MAD_SCALE,
@@ -43,7 +44,31 @@ from ...config import (
 from .models import GyroBiasResult
 from .time_utils import _time_at_index, _time_values
 
-GYRO_BIAS_METHODS = ("prewalk_robust", "initial_robust", "quietest", "manual")
+GYRO_BIAS_METHODS = (
+    "prewalk_guarded",
+    "zero",
+    "prewalk_robust",
+    "initial_robust",
+    "quietest",
+    "manual",
+)
+
+
+def _guard_gyro_bias_result(result: GyroBiasResult) -> GyroBiasResult:
+    """大きすぎる歩行前推定値を端末回転由来とみなして無補正へ戻す。"""
+    rejected = abs(result.bias_rad_s) > GYRO_BIAS_GUARD_MAX_ABS_RAD_S
+    reason = result.fallback_reason
+    if rejected:
+        reason = (
+            "estimated_bias_exceeds_guard"
+            if reason is None
+            else f"{reason};estimated_bias_exceeds_guard"
+        )
+    return result._replace(
+        method="prewalk_guarded",
+        bias_rad_s=0.0 if rejected else result.bias_rad_s,
+        fallback_reason=reason,
+    )
 
 
 class _GyroBiasStaticCandidate(NamedTuple):
@@ -386,6 +411,26 @@ def estimate_gyro_bias(
     _time_values(df_acc)
     _time_values(df_gyro)
     selected_method = _validate_gyro_bias_method(method)
+    if selected_method == "zero":
+        return GyroBiasResult(
+            method="zero",
+            bias_rad_s=0.0,
+            calibration_start_s=None,
+            calibration_end_s=None,
+            sample_count=0,
+            kept_sample_count=0,
+            raw_mean=None,
+            robust_mean=0.0,
+            median=None,
+            mad=None,
+            candidate_score=None,
+            gyro_std=None,
+            accel_p95=None,
+            accel_max=None,
+            search_start_s=None,
+            search_end_s=None,
+            fallback_reason=None,
+        )
     if selected_method == "manual":
         if manual_bias is None:
             raise ValueError("gyro_bias_method='manual' では gyro_bias が必要です。")
@@ -425,9 +470,10 @@ def estimate_gyro_bias(
             )
         )
 
+    guarded = selected_method == "prewalk_guarded"
     result = _estimate_gyro_bias_prewalk_robust(df_acc, df_gyro)
     if result is not None:
-        return result
+        return _guard_gyro_bias_result(result) if guarded else result
     search_range = _startup_static_search_range(df_gyro)
     if search_range is not None:
         result = _estimate_gyro_bias_static_window(
@@ -438,14 +484,15 @@ def estimate_gyro_bias(
             fallback_reason="prewalk_static_unavailable",
         )
         if result is not None:
-            return result
+            return _guard_gyro_bias_result(result) if guarded else result
     result = _estimate_gyro_bias_initial_robust(
         df_gyro,
         fallback_reason="startup_static_unavailable",
     )
     if result is not None:
-        return result
-    return _estimate_gyro_bias_quietest(
+        return _guard_gyro_bias_result(result) if guarded else result
+    result = _estimate_gyro_bias_quietest(
         df_gyro,
         fallback_reason="prewalk_and_initial_unavailable",
     )
+    return _guard_gyro_bias_result(result) if guarded else result
