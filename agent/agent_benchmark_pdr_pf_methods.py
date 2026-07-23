@@ -39,13 +39,22 @@ from rikka.config import (
     FLOORMAP_ORIGIN_PX,
     FLOORMAP_PATH,
     FLOORMAP_SCALE,
+    GYRO_BIAS_METHOD,
+    PF_HEADING_DRIFT_RETENTION,
+    PF_NUM_PARTICLES,
+    PF_REJUVENATION_SIGMA_HEADING,
     PF_SIGMA_HEADING,
     PF_SIGMA_INIT_HEADING,
     PF_SIGMA_STEP_LENGTH_RATIO,
+    PF_STRIDE_SCALE_INIT_SIGMA,
+    PF_STRIDE_SCALE_PRIOR_MEAN,
+    PF_STRIDE_SCALE_PROCESS_SIGMA,
+    PF_STRIDE_SCALE_RETENTION,
 )
 
 DEFAULT_DATA_DIRS = tuple(
-    Path("input/sensor_data") / f"1turn_rightsidestep_3turn_leftsidestep{suffix}"
+    Path("input/sensor_data/natsuki")
+    / f"1turn_rightsidestep_3turn_leftsidestep{suffix}"
     for suffix in ("", "5", "6", "7", "8")
 )
 DEFAULT_TRUTH_CSV = Path(
@@ -93,6 +102,19 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--floormap", type=Path, default=Path(FLOORMAP_PATH))
     parser.add_argument("--origin-px", nargs=2, type=int, default=FLOORMAP_ORIGIN_PX)
     parser.add_argument("--scale", type=float, default=FLOORMAP_SCALE)
+    parser.add_argument(
+        "--gyro-bias-method",
+        choices=(
+            "prewalk_guarded",
+            "zero",
+            "prewalk_robust",
+            "initial_robust",
+            "quietest",
+            "manual",
+        ),
+        default=GYRO_BIAS_METHOD,
+    )
+    parser.add_argument("--gyro-bias", type=float)
     parser.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 2, 10, 42, 100])
     parser.add_argument(
         "--pdr-methods", nargs="+", choices=PDR_METHODS, default=PDR_METHODS
@@ -103,11 +125,42 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--sigma-init-heading", type=float, default=PF_SIGMA_INIT_HEADING
     )
+    parser.add_argument("--n-particles", type=int, default=PF_NUM_PARTICLES)
     parser.add_argument("--sigma-heading", type=float, default=PF_SIGMA_HEADING)
     parser.add_argument(
         "--sigma-step-length-ratio",
         type=float,
         default=PF_SIGMA_STEP_LENGTH_RATIO,
+    )
+    parser.add_argument(
+        "--stride-scale-prior-mean",
+        type=float,
+        default=PF_STRIDE_SCALE_PRIOR_MEAN,
+    )
+    parser.add_argument(
+        "--stride-scale-init-sigma",
+        type=float,
+        default=PF_STRIDE_SCALE_INIT_SIGMA,
+    )
+    parser.add_argument(
+        "--stride-scale-retention",
+        type=float,
+        default=PF_STRIDE_SCALE_RETENTION,
+    )
+    parser.add_argument(
+        "--stride-scale-process-sigma",
+        type=float,
+        default=PF_STRIDE_SCALE_PROCESS_SIGMA,
+    )
+    parser.add_argument(
+        "--heading-drift-retention",
+        type=float,
+        default=PF_HEADING_DRIFT_RETENTION,
+    )
+    parser.add_argument(
+        "--rejuvenation-sigma-heading",
+        type=float,
+        default=PF_REJUVENATION_SIGMA_HEADING,
     )
     parser.add_argument(
         "--motion-predictive-weight-powers",
@@ -172,6 +225,8 @@ def _get_prepared(
     df_gyro: pd.DataFrame,
     cache: dict[tuple[str, str], PreparedPdrSteps],
     direction_fixed_lag: int,
+    gyro_bias_method: str,
+    gyro_bias: float | None,
 ) -> PreparedPdrSteps:
     """方式に対応する共有PDRステップを準備し、データ内で再利用する。"""
     motion_estimation, smoothing = _split_method(method)
@@ -183,6 +238,8 @@ def _get_prepared(
             motion_estimation=motion_estimation,
             smoothing_mode=smoothing,
             direction_fixed_lag=direction_fixed_lag,
+            gyro_bias_method=gyro_bias_method,
+            gyro_bias=gyro_bias,
         )
     return cache[key]
 
@@ -223,6 +280,8 @@ def _evaluate_pdr(
         "method": method,
         "motion_estimation": motion_estimation,
         "smoothing": smoothing,
+        "gyro_bias_method": prepared.df_gyro.attrs["gyro_bias_result"].method,
+        "gyro_bias_rad_s": prepared.df_gyro.attrs["gyro_bias_result"].bias_rad_s,
         "seed": None,
         "candidate_id": candidate_id,
         "trajectory_csv": _write_candidate_trajectory(
@@ -269,9 +328,16 @@ def _evaluate_pf(
         prepared_step_times=prepared.t_at_steps,
         prepared_motion_evidences=prepared.motion_evidences,
         prepared_motion_posteriors=prepared.motion_posteriors,
+        n_particles=args.n_particles,
         sigma_init_heading=args.sigma_init_heading,
         sigma_heading=args.sigma_heading,
         sigma_sl_ratio=args.sigma_step_length_ratio,
+        stride_scale_prior_mean=args.stride_scale_prior_mean,
+        stride_scale_init_sigma=args.stride_scale_init_sigma,
+        stride_scale_retention=args.stride_scale_retention,
+        stride_scale_process_sigma=args.stride_scale_process_sigma,
+        heading_drift_retention=args.heading_drift_retention,
+        rejuvenation_sigma_heading=args.rejuvenation_sigma_heading,
         seed=seed,
         diagnostics_collector=diagnostics,
         motion_predictive_weight_power=motion_predictive_weight_power,
@@ -303,6 +369,8 @@ def _evaluate_pf(
         "method": method_label,
         "motion_estimation": motion_estimation,
         "smoothing": smoothing,
+        "gyro_bias_method": prepared.df_gyro.attrs["gyro_bias_result"].method,
+        "gyro_bias_rad_s": prepared.df_gyro.attrs["gyro_bias_result"].bias_rad_s,
         "seed": seed,
         "candidate_id": candidate_id,
         "trajectory_csv": _write_candidate_trajectory(
@@ -436,6 +504,8 @@ def main() -> None:
                             df_gyro,
                             prepared_cache,
                             args.direction_fixed_lag,
+                            args.gyro_bias_method,
+                            args.gyro_bias,
                         ),
                         truth,
                         sampled_truth,
@@ -451,6 +521,8 @@ def main() -> None:
                     df_gyro,
                     prepared_cache,
                     args.direction_fixed_lag,
+                    args.gyro_bias_method,
+                    args.gyro_bias,
                 )
                 for motion_power in args.motion_predictive_weight_powers:
                     for path_selection in args.pf_path_selections:

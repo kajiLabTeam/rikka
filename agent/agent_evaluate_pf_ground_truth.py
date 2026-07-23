@@ -35,6 +35,7 @@ from rikka.config import (
     FLOORMAP_ORIGIN_PX,
     FLOORMAP_PATH,
     FLOORMAP_SCALE,
+    GYRO_BIAS_METHOD,
     MOTION_ESTIMATION,
     PF_MOTION_PREDICTIVE_WEIGHT_POWER,
     PF_PATH_SELECTION,
@@ -68,7 +69,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--data-dir",
         type=Path,
-        default=Path("input/sensor_data/1turn_rightsidestep_3turn_leftsidestep"),
+        default=Path(
+            "input/sensor_data/natsuki/1turn_rightsidestep_3turn_leftsidestep"
+        ),
     )
     parser.add_argument(
         "--truth-csv",
@@ -81,6 +84,19 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--floormap", type=Path, default=Path(FLOORMAP_PATH))
     parser.add_argument("--origin-px", nargs=2, type=int, default=FLOORMAP_ORIGIN_PX)
     parser.add_argument("--scale", type=float, default=FLOORMAP_SCALE)
+    parser.add_argument(
+        "--gyro-bias-method",
+        choices=(
+            "prewalk_guarded",
+            "zero",
+            "prewalk_robust",
+            "initial_robust",
+            "quietest",
+            "manual",
+        ),
+        default=GYRO_BIAS_METHOD,
+    )
+    parser.add_argument("--gyro-bias", type=float)
     parser.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 2, 10, 42, 100])
     parser.add_argument(
         "--sigma-init-heading", type=float, default=PF_SIGMA_INIT_HEADING
@@ -130,6 +146,8 @@ def main() -> None:
     prepared = prepare_pdr_steps(
         df_acc,
         df_gyro,
+        gyro_bias_method=args.gyro_bias_method,
+        gyro_bias=args.gyro_bias,
         motion_estimation=args.motion_estimation,
         smoothing_mode=args.smoothing,
     )

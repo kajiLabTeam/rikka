@@ -60,7 +60,14 @@ _HEADING_METHOD_CHOICES = (
     "gyro_accel_motion",
 )
 _GYRO_BIAS_METHOD_DEFAULT = GYRO_BIAS_METHOD
-_GYRO_BIAS_METHOD_CHOICES = ("prewalk_robust", "initial_robust", "quietest", "manual")
+_GYRO_BIAS_METHOD_CHOICES = (
+    "prewalk_guarded",
+    "zero",
+    "prewalk_robust",
+    "initial_robust",
+    "quietest",
+    "manual",
+)
 _SIDESTEP_LATERAL_RATIO_DEFAULT = SIDESTEP_LATERAL_RATIO
 _SIDESTEP_MIN_LATERAL_DISPLACEMENT_DEFAULT = SIDESTEP_MIN_LATERAL_DISPLACEMENT_M
 _MOTION_HEADING_CORRECTION_DEFAULT = "auto"

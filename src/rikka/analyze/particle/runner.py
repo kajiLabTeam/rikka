@@ -103,6 +103,28 @@ from .recovery import _generate_recovery_candidates, _replay_from_checkpoint
 from .resampling import _effective_sample_size, _systematic_resample
 
 
+def _adaptive_heading_rejuvenation_sigma(
+    base_sigma: float,
+    motion_reliability: float,
+) -> float:
+    """高信頼な移動方位観測がある記録では再標本化ノイズを弱める。"""
+    reliability = (
+        float(np.clip(motion_reliability, 0.0, 1.0))
+        if np.isfinite(motion_reliability)
+        else 0.0
+    )
+    high_reliability_excess = max(0.0, reliability - 0.90)
+    high_reliability_scale = 4.0 / 9.0
+    scale = float(
+        np.clip(
+            1.0 - (1.0 - high_reliability_scale) * high_reliability_excess / 0.02,
+            high_reliability_scale,
+            1.0,
+        )
+    )
+    return base_sigma * scale
+
+
 def run_particle_filter(
     peaks: np.ndarray,
     df_gyro: pd.DataFrame,
@@ -476,6 +498,15 @@ def run_particle_filter(
                     "長さが一致しません"
                 )
     particle_motion_headings = build_particle_motion_headings(stabilized_step_headings)
+    recording_motion_reliability = (
+        float(np.median([evidence.motion_reliability for evidence in motion_evidences]))
+        if motion_evidences
+        else 0.0
+    )
+    effective_heading_rejuvenation_sigma = _adaptive_heading_rejuvenation_sigma(
+        rejuvenation_sigma_heading,
+        recording_motion_reliability,
+    )
 
     previous_heading: float | None = None
 
@@ -1039,10 +1070,14 @@ def run_particle_filter(
                 heading_drift = proposed_drift[indices]
                 stride_scale = proposed_stride_scale[indices]
                 motion_state = proposed_motion_state[indices]
-                if rejuvenation_sigma_heading > 0.0:
+                if effective_heading_rejuvenation_sigma > 0.0:
                     heading_drift = _normalize_angle(
                         heading_drift
-                        + rng.normal(0, rejuvenation_sigma_heading, n_particles)
+                        + rng.normal(
+                            0,
+                            effective_heading_rejuvenation_sigma,
+                            n_particles,
+                        )
                     )
                 effective_rejuvenation_sigma = (
                     max(stride_scale_rejuvenation_sigma, 0.02)

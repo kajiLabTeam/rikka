@@ -18,7 +18,7 @@ from math import isfinite
 # Data directory path
 # Change this path to use different input data
 
-DATA_DIR = "input/sensor_data/1turn_rightsidestep_3turn_leftsidestep8"
+DATA_DIR = "input/sensor_data/hiroto/hiroto_1turn_rightsidestep_3turn_leftsidestep2"
 
 # フロアマップ設定
 # 背景として表示するフロアマップ画像のパス
@@ -44,11 +44,14 @@ WINDOW_ACC = 80
 WINDOW_GYRO = 40
 
 # ジャイロバイアス推定手法
+# "prewalk_guarded": 歩行前推定が小さい場合だけ採用する標準方式
+# "zero"           : 補正しない
 # "prewalk_robust": 歩行開始直前の区間からロバスト推定
 # "initial_robust": 記録先頭の短い区間からロバスト推定
 # "quietest"       : 既存方式（全期間で分散最小の窓を使用）
 # "manual"         : 指定値をそのまま使用
-GYRO_BIAS_METHOD = "prewalk_robust"
+GYRO_BIAS_METHOD = "prewalk_guarded"
+GYRO_BIAS_GUARD_MAX_ABS_RAD_S = 0.003
 GYRO_BIAS_PREWALK_MAX_SECONDS = 5.0
 GYRO_BIAS_MIN_CALIBRATION_SECONDS = 0.5
 GYRO_BIAS_WALK_ONSET_MIN_STEPS = 4
@@ -174,7 +177,7 @@ PF_STRIDE_SCALE_MIN = 0.90  # 歩幅倍率の下限
 PF_STRIDE_SCALE_MAX = 1.15  # 歩幅倍率の上限
 PF_HEADING_DRIFT_RETENTION = 0.85  # 通常方位ドリフトの1歩ごとの保持率
 PF_RESAMPLE_ESS_RATIO = 0.5  # ESSが粒子数に占める割合を下回ると再標本化
-PF_REJUVENATION_SIGMA_HEADING = 0.02  # 再標本化後の方位多様化 [rad]
+PF_REJUVENATION_SIGMA_HEADING = 0.009  # 再標本化後の方位多様化の上限 [rad]
 PF_RECOVERY_VALID_RATIO = 0.05  # 有効な重み付き粒子率が下回ると復旧
 PF_RECOVERY_HEADING_SIGMA = 0.08  # local recoveryの方位分散 [rad]
 PF_RECOVERY_MAX_ATTEMPTS = 5  # recovery候補を追加生成する最大回数
