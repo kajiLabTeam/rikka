@@ -30,11 +30,12 @@ def _normalize_angle(angle: np.ndarray) -> np.ndarray:
 def _motion_state_transition_matrix() -> np.ndarray:
     """前進・左右横歩き・旋回の継続性を表す遷移行列を返す。"""
     side_stay = PF_MOTION_STATE_TRANSITION_STAY
+    side_transition = (1.0 - side_stay) / 3.0
     return np.asarray(
         [
             [0.90, 0.035, 0.035, 0.03],
-            [0.12, side_stay, 0.01, 0.05],
-            [0.12, 0.01, side_stay, 0.05],
+            [side_transition, side_stay, side_transition, side_transition],
+            [side_transition, side_transition, side_stay, side_transition],
             [0.45, 0.08, 0.08, 0.39],
         ],
         dtype=float,

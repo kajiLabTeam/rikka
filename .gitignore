@@ -2,6 +2,9 @@ reference
 .DS_Store
 input/
 output
+agent/
+.agent/
+.agents/
 
 
 # Byte-compiled / optimized / DLL files
