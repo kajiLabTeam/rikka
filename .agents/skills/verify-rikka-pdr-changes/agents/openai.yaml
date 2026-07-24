@@ -1,6 +1,0 @@
-interface:
-  display_name: "Rikka PDR変更検証"
-  short_description: "RikkaのPDR変更を回帰テストと実データで検証"
-  default_prompt: "Use $verify-rikka-pdr-changes to verify this Rikka PDR change with targeted tests and representative sensor data."
-policy:
-  allow_implicit_invocation: true

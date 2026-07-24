@@ -112,7 +112,11 @@ def build_step_length_observation(
         period_value = _time_at_index(df_acc, end) - _time_at_index(df_acc, start)
         if np.isfinite(period_value) and period_value > 0.0:
             period = float(period_value)
-    except IndexError, KeyError, ValueError:
+    except IndexError:
+        fallback_reason = fallback_reason or "step_period_unavailable"
+    except KeyError:
+        fallback_reason = fallback_reason or "step_period_unavailable"
+    except ValueError:
         fallback_reason = fallback_reason or "step_period_unavailable"
 
     if "h_norm" in df_acc.columns:

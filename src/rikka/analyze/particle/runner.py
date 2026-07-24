@@ -17,7 +17,7 @@
 from dataclasses import replace
 from pathlib import Path
 
-import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
 import numpy as np
 import pandas as pd
 
@@ -329,7 +329,7 @@ def run_particle_filter(
     )
 
     # フロアマップをグレースケールで読み込み
-    map_gray = _normalize_floormap_gray(plt.imread(Path(floormap_path)))
+    map_gray = _normalize_floormap_gray(mpimg.imread(Path(floormap_path)))
     if map_gray.ndim != 2 or map_gray.size == 0:
         raise ValueError("フロアマップは空でない2次元画像を指定してください")
 

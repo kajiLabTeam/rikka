@@ -1,8 +1,8 @@
 """PFの単一祖先系列による代表軌跡選択を検証する。"""
 
+import matplotlib.image as mpimg
 import numpy as np
 import pandas as pd
-from matplotlib import pyplot as plt
 
 from rikka.analyze.particle.map_constraints import _evaluate_particle_transitions
 from rikka.analyze.particle.paths import _select_sequence_map_path
@@ -130,7 +130,7 @@ def test_sequence_selection_allows_supported_u_turn() -> None:
 
 def test_particle_filter_sequence_mode_is_reproducible(tmp_path) -> None:
     floormap_path = tmp_path / "open_map.png"
-    plt.imsave(floormap_path, np.ones((20, 20)), cmap="gray", vmin=0.0, vmax=1.0)
+    mpimg.imsave(floormap_path, np.ones((20, 20)), cmap="gray", vmin=0.0, vmax=1.0)
     kwargs = {
         "peaks": np.arange(3),
         "df_gyro": pd.DataFrame({"low_angle": np.zeros(3)}),

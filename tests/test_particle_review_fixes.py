@@ -1,10 +1,11 @@
 """particle filterレビューで確認した状態・診断の回帰を検証する。"""
 
+import matplotlib.image as mpimg
 import numpy as np
 import pandas as pd
 import pytest
-from matplotlib import pyplot as plt
 
+from rikka.analyze.particle.motion import _motion_state_transition_matrix
 from rikka.analyze.particle.paths import _unsupported_reversal_count
 from rikka.analyze.particle.recovery import (
     _generate_recovery_candidates,
@@ -51,6 +52,13 @@ def test_heading_rejuvenation_uses_motion_reliability() -> None:
     assert _adaptive_heading_rejuvenation_sigma(0.009, 0.91) == pytest.approx(0.0065)
     assert _adaptive_heading_rejuvenation_sigma(0.009, 0.92) == pytest.approx(0.004)
     assert _adaptive_heading_rejuvenation_sigma(0.009, 1.0) == pytest.approx(0.004)
+
+
+def test_motion_state_transition_rows_are_probability_distributions() -> None:
+    transition = _motion_state_transition_matrix()
+
+    np.testing.assert_allclose(transition.sum(axis=1), np.ones(4))
+    assert np.all(transition >= 0.0)
 
 
 def test_recovery_keeps_map_detour_in_transient_heading_state() -> None:
@@ -137,7 +145,7 @@ def test_effective_step_length_diagnostic_matches_particle_displacement(
     tmp_path,
 ) -> None:
     floormap_path = tmp_path / "open_map.png"
-    plt.imsave(
+    mpimg.imsave(
         floormap_path,
         np.ones((41, 41)),
         cmap="gray",
@@ -178,7 +186,7 @@ def test_effective_step_length_diagnostic_matches_particle_displacement(
 
 def test_nonempty_prepared_steps_reject_empty_motion_posteriors(tmp_path) -> None:
     floormap_path = tmp_path / "open_map.png"
-    plt.imsave(floormap_path, np.ones((9, 9)), cmap="gray", vmin=0.0, vmax=1.0)
+    mpimg.imsave(floormap_path, np.ones((9, 9)), cmap="gray", vmin=0.0, vmax=1.0)
 
     with np.testing.assert_raises_regex(ValueError, "prepared_motion_posteriors"):
         run_particle_filter(

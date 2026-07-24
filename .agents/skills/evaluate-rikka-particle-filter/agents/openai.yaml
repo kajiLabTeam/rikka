@@ -1,6 +1,0 @@
-interface:
-  display_name: "Rikka Particle評価"
-  short_description: "RikkaのParticle Filterを複数seedと正解軌跡で評価"
-  default_prompt: "Use $evaluate-rikka-particle-filter to evaluate this Rikka particle-filter change across deterministic tests and multiple seeds."
-policy:
-  allow_implicit_invocation: true
