@@ -19,40 +19,26 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib import font_manager
 from matplotlib.axes import Axes
 from numpy.typing import NDArray
 
 from ..config import DATA_DIR, INITIAL_DIRECTION, SAMPLING_RATE
+from ..matplotlib_config import configure_japanese_font
 from .pdr import StepHeading, detect_step_result, load_sensor_data, process_sensor_data
 
 StepAccelerationSamples = tuple[NDArray[np.float64], NDArray[np.float64]]
-_JAPANESE_FONT_CANDIDATES = (
-    "Hiragino Sans",
-    "Hiragino Maru Gothic Pro",
-    "Yu Gothic",
-    "Noto Sans CJK JP",
-    "Noto Sans JP",
-    "IPAexGothic",
-    "TakaoGothic",
-)
-_JAPANESE_FONT_CONFIGURED = False
 
 
-def _configure_japanese_font() -> None:
-    """Matplotlib で利用可能な日本語フォントを設定する。"""
-    global _JAPANESE_FONT_CONFIGURED  # noqa: PLW0603
-    if _JAPANESE_FONT_CONFIGURED:
-        return
-
-    available_fonts = {font.name for font in font_manager.fontManager.ttflist}
-    for font_name in _JAPANESE_FONT_CANDIDATES:
-        if font_name in available_fonts:
-            plt.rcParams["font.family"] = [font_name]
-            plt.rcParams["axes.unicode_minus"] = False
-            break
-
-    _JAPANESE_FONT_CONFIGURED = True
+def _next_sensor_plot_path(data_path: Path) -> Path:
+    """既存画像を上書きしない sensor plot の保存先を返す。"""
+    first = data_path / "sensor_plot.png"
+    if not first.exists():
+        return first
+    for counter in range(1, 1000):
+        candidate = data_path / f"sensor_plot_{counter:03d}.png"
+        if not candidate.exists():
+            return candidate
+    raise FileExistsError(f"sensor plot の保存名が衝突しました: {data_path}")
 
 
 def plot_sensor_data(
@@ -69,7 +55,7 @@ def plot_sensor_data(
         gyro_bias_method: ジャイロバイアス推定手法。省略時は設定値を使用。
         gyro_bias: manual 指定時のジャイロバイアス [rad/s]。
     """
-    _configure_japanese_font()
+    configure_japanese_font()
 
     data_path = Path(data_dir)
     df_acc, df_gyro = load_sensor_data(data_path)
@@ -88,14 +74,14 @@ def plot_sensor_data(
     )
 
     fig, axes = plt.subplots(4, 1, figsize=(12, 14), sharex=False)
-    fig.suptitle(f"Sensor Data — {data_path.name}", fontsize=13)
+    fig.suptitle(f"センサーデータ — {data_path.name}", fontsize=13)
 
     # --- 1. 生加速度 ---
     ax = axes[0]
     ax.plot(t_acc, df_acc["x"], label="x", linewidth=0.8)
     ax.plot(t_acc, df_acc["y"], label="y", linewidth=0.8)
     ax.plot(t_acc, df_acc["z"], label="z", linewidth=0.8)
-    ax.set_title("Raw Accelerometer [m/s²]")
+    ax.set_title("加速度センサー生データ [m/s²]")
     ax.set_ylabel("m/s²")
     ax.legend(loc="upper right", fontsize=8)
     ax.grid(True, linewidth=0.4)
@@ -161,7 +147,7 @@ def plot_sensor_data(
             loc="upper right",
             fontsize=8,
         )
-    ax.set_title("Linear Acceleration Norm [m/s²]")
+    ax.set_title("線形加速度ノルム [m/s²]")
     ax.set_ylabel("m/s²")
     if step_detection.method != "paper_vertical_threshold":
         ax.legend(loc="upper right", fontsize=8)
@@ -172,7 +158,7 @@ def plot_sensor_data(
     ax.plot(t_gyro, df_gyro["x"], label="x", linewidth=0.8)
     ax.plot(t_gyro, df_gyro["y"], label="y", linewidth=0.8)
     ax.plot(t_gyro, df_gyro["z"], label="z", linewidth=0.8)
-    ax.set_title("Raw Gyroscope [rad/s]")
+    ax.set_title("ジャイロスコープ生データ [rad/s]")
     ax.set_ylabel("rad/s")
     ax.legend(loc="upper right", fontsize=8)
     ax.grid(True, linewidth=0.4)
@@ -193,14 +179,14 @@ def plot_sensor_data(
         linewidth=1.5,
         label="low_angle",
     )
-    ax.set_title("Heading Angle [rad]")
+    ax.set_title("方位角 [rad]")
     ax.set_xlabel("Time [s]")
     ax.set_ylabel("rad")
     ax.legend(loc="upper right", fontsize=8)
     ax.grid(True, linewidth=0.4)
 
     plt.tight_layout()
-    output_path = data_path / "sensor_plot.png"
+    output_path = _next_sensor_plot_path(data_path)
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
     print(f"Saved: {output_path}")
     plt.show()
@@ -229,7 +215,7 @@ def plot_step_lengths(
         step_signal_label: ``step_signal`` の凡例・軸ラベル名
         step_signal_threshold: ステップ検出閾値（指定時に水平線を描画）
     """
-    _configure_japanese_font()
+    configure_japanese_font()
 
     arr = np.array(step_lengths)
     n = len(arr)
@@ -286,7 +272,7 @@ def plot_step_lengths(
         )
         ax.set_xlabel("Time [s]")
         ax.set_ylabel(f"{step_signal_label} [m/s²]")
-        ax.set_title("Step Length with Step Detection Signal")
+        ax.set_title("ステップ検出信号と歩幅")
         ax.grid(True, linewidth=0.4)
 
         # 右y軸: 歩幅を各ステップ時刻に点でプロット
@@ -352,7 +338,7 @@ def plot_step_lengths(
         )
         ax.set_xlabel("Step")
         ax.set_ylabel("Step Length [m]")
-        ax.set_title("Step Length per Step")
+        ax.set_title("ステップごとの歩幅")
         ax.set_xticks(steps)
         ax.grid(True, axis="y", linewidth=0.4)
         ax.text(
@@ -522,7 +508,7 @@ def plot_step_vectors(
         step_headings: 各ステップの方位候補と採用結果
         initial_direction: 歩行開始方向のオフセット [度]
     """
-    _configure_japanese_font()
+    configure_japanese_font()
 
     points = np.asarray(trajectory, dtype=float)
     if len(points) < 2:

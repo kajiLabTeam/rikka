@@ -28,9 +28,17 @@ from .config import (
     GYRO_BIAS_METHOD,
     HEADING_METHOD,
     INITIAL_DIRECTION,
+    MOTION_ESTIMATION,
+    PF_MOTION_PREDICTIVE_WEIGHT_POWER,
+    PF_NUM_PARTICLES,
+    PF_PATH_SELECTION,
+    PF_STEP_FRAMES_ARROWS,
+    PF_STEP_FRAMES_DPI,
     SIDESTEP_LATERAL_RATIO,
     SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
     SIDESTEP_SMOOTHING_METHOD,
+    SIDESTEP_SUSPECT_MODE,
+    SMOOTHING_MODE,
     STEP_DETECTION_METHOD,
     USER_HEIGHT_M,
 )
@@ -55,7 +63,14 @@ _HEADING_METHOD_CHOICES = (
     "gyro_accel_motion",
 )
 _GYRO_BIAS_METHOD_DEFAULT = GYRO_BIAS_METHOD
-_GYRO_BIAS_METHOD_CHOICES = ("prewalk_robust", "initial_robust", "quietest", "manual")
+_GYRO_BIAS_METHOD_CHOICES = (
+    "prewalk_guarded",
+    "zero",
+    "prewalk_robust",
+    "initial_robust",
+    "quietest",
+    "manual",
+)
 _SIDESTEP_LATERAL_RATIO_DEFAULT = SIDESTEP_LATERAL_RATIO
 _SIDESTEP_MIN_LATERAL_DISPLACEMENT_DEFAULT = SIDESTEP_MIN_LATERAL_DISPLACEMENT_M
 _MOTION_HEADING_CORRECTION_DEFAULT = "auto"
@@ -66,8 +81,18 @@ _FORWARD_HEADING_SOURCE_DEFAULT = FORWARD_HEADING_SOURCE
 _FORWARD_HEADING_SOURCE_CHOICES = ("body", "motion")
 _SIDESTEP_HEADING_SOURCE_DEFAULT = "motion"
 _SIDESTEP_HEADING_SOURCE_CHOICES = ("motion", "body_lateral", "blend")
-_SIDESTEP_SUSPECT_MODE_DEFAULT = "motion"
+_SIDESTEP_SUSPECT_MODE_DEFAULT = SIDESTEP_SUSPECT_MODE
 _SIDESTEP_SUSPECT_MODE_CHOICES = ("motion", "body_lateral", "blend", "forward")
+_MOTION_ESTIMATION_DEFAULT = MOTION_ESTIMATION
+_MOTION_ESTIMATION_CHOICES = ("legacy", "adaptive", "robust")
+_SMOOTHING_MODE_DEFAULT = SMOOTHING_MODE
+_SMOOTHING_MODE_CHOICES = ("causal", "offline")
+_PF_MOTION_PREDICTIVE_WEIGHT_POWER_DEFAULT = PF_MOTION_PREDICTIVE_WEIGHT_POWER
+_PF_NUM_PARTICLES_DEFAULT = PF_NUM_PARTICLES
+_PF_PATH_SELECTION_DEFAULT = PF_PATH_SELECTION
+_PF_PATH_SELECTION_CHOICES = ("current", "sequence")
+_PF_STEP_FRAMES_ARROWS_DEFAULT = PF_STEP_FRAMES_ARROWS
+_PF_STEP_FRAMES_DPI_DEFAULT = PF_STEP_FRAMES_DPI
 
 
 def _validate_cli_scale(
@@ -103,6 +128,33 @@ def _validate_cli_non_negative_float(
     return value
 
 
+def _validate_cli_step_frames_range(
+    _ctx: click.Context,
+    _param: click.Parameter,
+    value: tuple[int, int] | None,
+) -> tuple[int, int] | None:
+    """歩画像の範囲が1始まりで昇順であることを確認する。"""
+    if value is None:
+        return None
+    first, last = value
+    if first < 1 or first > last:
+        raise click.BadParameter("1 <= A <= B を満たす範囲を指定してください。")
+    return value
+
+
+def _validate_cli_finite_float(
+    _ctx: click.Context,
+    param: click.Parameter,
+    value: float | None,
+) -> float | None:
+    """任意符号の float オプションが有限であることを確認する。"""
+    if value is None:
+        return None
+    if not isfinite(value):
+        raise click.BadParameter(f"{param.name} は有限な値を指定してください。")
+    return value
+
+
 def _validate_gyro_bias_options(
     gyro_bias_method: str,
     gyro_bias: float | None,
@@ -112,10 +164,27 @@ def _validate_gyro_bias_options(
         raise click.UsageError(
             "--gyro-bias-method manual を使う場合は --gyro-bias を指定してください。"
         )
+    if gyro_bias is not None and not isfinite(gyro_bias):
+        raise click.BadParameter("gyro_bias は有限な値を指定してください。")
 
 
 def _common_options(f: click.decorators.FC) -> click.decorators.FC:
     """run / particle コマンド共通オプションをまとめたデコレータ。"""
+    f = click.option(
+        "--smoothing",
+        "smoothing_mode",
+        type=click.Choice(_SMOOTHING_MODE_CHOICES),
+        default=_SMOOTHING_MODE_DEFAULT,
+        show_default=True,
+        help="適応推定の因果処理またはオフライン平滑化",
+    )(f)
+    f = click.option(
+        "--motion-estimation",
+        type=click.Choice(_MOTION_ESTIMATION_CHOICES),
+        default=_MOTION_ESTIMATION_DEFAULT,
+        show_default=True,
+        help="運動状態・方位・歩幅の推定方式",
+    )(f)
     f = click.option(
         "--no-plot", is_flag=True, default=False, help="グラフ表示を無効化"
     )(f)
@@ -194,12 +263,14 @@ def _common_options(f: click.decorators.FC) -> click.decorators.FC:
     f = click.option(
         "--gyro-bias",
         type=float,
+        callback=_validate_cli_finite_float,
         default=None,
         help="manual 指定時のジャイロバイアス [rad/s]",
     )(f)
     f = click.option(
         "--direction",
         type=float,
+        callback=_validate_cli_finite_float,
         default=_DIRECTION_DEFAULT,
         show_default=True,
         help="歩行開始方向のオフセット [度]",
@@ -207,6 +278,7 @@ def _common_options(f: click.decorators.FC) -> click.decorators.FC:
     f = click.option(
         "--height-m",
         type=float,
+        callback=_validate_cli_positive_float,
         default=_HEIGHT_DEFAULT,
         show_default=True,
         help="歩幅推定に使うユーザー身長 [m]",
@@ -269,6 +341,8 @@ def _run_pdr(
     forward_heading_source: str,
     sidestep_heading_source: str,
     sidestep_suspect_mode: str,
+    motion_estimation: str,
+    smoothing_mode: str,
     no_plot: bool,
 ) -> None:
     from .analyze.pdr import load_sensor_data  # noqa: PLC0415
@@ -297,6 +371,8 @@ def _run_pdr(
         forward_heading_source=forward_heading_source,
         sidestep_heading_source=sidestep_heading_source,
         sidestep_suspect_mode=sidestep_suspect_mode,
+        motion_estimation=motion_estimation,
+        smoothing_mode=smoothing_mode,
     )
 
 
@@ -320,6 +396,8 @@ def run(
     forward_heading_source: str,
     sidestep_heading_source: str,
     sidestep_suspect_mode: str,
+    motion_estimation: str,
+    smoothing_mode: str,
     no_plot: bool,
 ) -> None:
     """決定論的 PDR で歩行軌跡を推定する。"""
@@ -341,6 +419,8 @@ def run(
         forward_heading_source,
         sidestep_heading_source,
         sidestep_suspect_mode,
+        motion_estimation,
+        smoothing_mode,
         no_plot,
     )
 
@@ -365,6 +445,8 @@ def pdr(
     forward_heading_source: str,
     sidestep_heading_source: str,
     sidestep_suspect_mode: str,
+    motion_estimation: str,
+    smoothing_mode: str,
     no_plot: bool,
 ) -> None:
     """決定論的 PDR で歩行軌跡を推定する（run の別名）。"""
@@ -386,16 +468,75 @@ def pdr(
         forward_heading_source,
         sidestep_heading_source,
         sidestep_suspect_mode,
+        motion_estimation,
+        smoothing_mode,
         no_plot,
     )
 
 
 @cli.command()
 @click.option(
+    "--pf-path-selection",
+    type=click.Choice(_PF_PATH_SELECTION_CHOICES),
+    default=_PF_PATH_SELECTION_DEFAULT,
+    show_default=True,
+    help="PFの代表軌跡選択方式",
+)
+@click.option(
+    "--motion-predictive-weight-power",
+    type=float,
+    callback=_validate_cli_non_negative_float,
+    default=_PF_MOTION_PREDICTIVE_WEIGHT_POWER_DEFAULT,
+    show_default=True,
+    help="運動状態の予測尤度をPF重みに掛ける指数（0で無効）",
+)
+@click.option(
+    "--pf-particles",
+    type=click.IntRange(min=1),
+    default=_PF_NUM_PARTICLES_DEFAULT,
+    show_default=True,
+    help="パーティクルフィルタで使用する粒子数",
+)
+@click.option(
     "--pf-seed",
     type=int,
     default=None,
     help="パーティクルフィルタ乱数の seed（回帰検証用）",
+)
+@click.option(
+    "--save-path-comparison",
+    is_flag=True,
+    default=False,
+    help="代表軌跡候補の比較図を保存",
+)
+@click.option(
+    "--step-frames-dpi",
+    type=click.IntRange(min=1),
+    default=_PF_STEP_FRAMES_DPI_DEFAULT,
+    show_default=True,
+    help="段階別画像と代表軌跡比較図の解像度",
+)
+@click.option(
+    "--step-frames-arrows",
+    type=click.IntRange(min=0),
+    default=_PF_STEP_FRAMES_ARROWS_DEFAULT,
+    show_default=True,
+    help="段階別画像へ描く重み上位の方位矢印数",
+)
+@click.option(
+    "--step-frames-range",
+    type=int,
+    nargs=2,
+    default=None,
+    callback=_validate_cli_step_frames_range,
+    metavar="A B",
+    help="保存する歩の範囲（1始まり、両端含む）",
+)
+@click.option(
+    "--save-step-frames",
+    is_flag=True,
+    default=False,
+    help="1歩ごとの段階別パーティクル画像を保存",
 )
 @click.option(
     "--save-animation",
@@ -422,9 +563,19 @@ def particle(
     forward_heading_source: str,
     sidestep_heading_source: str,
     sidestep_suspect_mode: str,
+    motion_estimation: str,
+    smoothing_mode: str,
     no_plot: bool,
     save_animation: bool,
+    save_step_frames: bool,
+    step_frames_range: tuple[int, int] | None,
+    step_frames_arrows: int,
+    step_frames_dpi: int,
+    save_path_comparison: bool,
+    pf_particles: int,
     pf_seed: int | None,
+    motion_predictive_weight_power: float,
+    pf_path_selection: str,
 ) -> None:
     """パーティクルフィルタ + マップマッチングで歩行軌跡を推定する。"""
     from .analyze.pdr import load_sensor_data  # noqa: PLC0415
@@ -437,6 +588,11 @@ def particle(
         df_gyro=df_gyro,
         plot=not no_plot,
         save_animation=True if save_animation else None,
+        save_step_frames=save_step_frames,
+        step_frames_range=step_frames_range,
+        step_frames_arrows=step_frames_arrows,
+        step_frames_dpi=step_frames_dpi,
+        save_path_comparison=save_path_comparison,
         use_particle_filter=True,
         floormap_path=floormap,
         origin_px=origin_px,
@@ -454,7 +610,12 @@ def particle(
         forward_heading_source=forward_heading_source,
         sidestep_heading_source=sidestep_heading_source,
         sidestep_suspect_mode=sidestep_suspect_mode,
+        motion_estimation=motion_estimation,
+        smoothing_mode=smoothing_mode,
         particle_seed=pf_seed,
+        particle_count=pf_particles,
+        motion_predictive_weight_power=motion_predictive_weight_power,
+        pf_path_selection=pf_path_selection,
     )
 
 
@@ -484,6 +645,7 @@ def particle(
 @click.option(
     "--gyro-bias",
     type=float,
+    callback=_validate_cli_finite_float,
     default=None,
     help="manual 指定時のジャイロバイアス [rad/s]",
 )

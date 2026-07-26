@@ -2,6 +2,12 @@ reference
 .DS_Store
 input/
 output
+agent/
+.agent/
+.agents/
+# Claude Code のローカル設定。共有ルールは AGENTS.md 側に置く。
+.claude/
+CLAUDE.md
 
 
 # Byte-compiled / optimized / DLL files

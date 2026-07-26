@@ -7,8 +7,8 @@
     ``common``、``heading``、``models``、``plotting``、``sidestep``、
     ``step_length``、``time_utils`` から共有する検証・推定・描画 API を取得する。
 利用先:
-    ``analyze.particle_filter`` だけがこの bridge を import し、PDR の private helper や
-    互換 facade への直接依存を避ける。
+    ``analyze.particle`` 配下の内部実装だけがこの bridge を import し、PDR の
+    private helper や互換 facade への直接依存を避ける。
 処理フロー:
     独自計算は行わず、必要な関数・型を意味の明確な公開名として再 export する。
 """
@@ -43,9 +43,18 @@ from .heading import (
 from .heading import (
     resolve_step_heading,
 )
-from .models import StepHeading, StepSegment
+from .models import (
+    StepHeading,
+    StepMotionEvidence,
+    StepMotionObservation,
+    StepMotionPosterior,
+    StepSegment,
+)
 from .plotting import (
     _compute_pixel_coords as compute_pixel_coords,
+)
+from .plotting import (
+    _pixel_vector_from_heading as pixel_vector_from_heading,
 )
 from .plotting import (
     _plot_heading_overlay as plot_heading_overlay,
@@ -57,6 +66,9 @@ from .sidestep import (
     _stabilize_trajectory_headings as stabilize_trajectory_headings,
 )
 from .sidestep import (
+    build_particle_motion_headings,
+    build_step_motion_evidences,
+    build_step_motion_observations,
     estimate_step_motion,
 )
 from .step_length import (
@@ -70,7 +82,13 @@ from .time_utils import _step_output_time as step_output_time
 
 __all__ = [
     "StepHeading",
+    "StepMotionEvidence",
+    "StepMotionObservation",
+    "StepMotionPosterior",
     "StepSegment",
+    "build_step_motion_evidences",
+    "build_step_motion_observations",
+    "build_particle_motion_headings",
     "compute_pixel_coords",
     "estimate_device_orientation_mode",
     "estimate_initial_forward_angle",
@@ -78,6 +96,7 @@ __all__ = [
     "estimate_step_length_forward",
     "estimate_step_motion",
     "plot_heading_overlay",
+    "pixel_vector_from_heading",
     "resolve_motion_heading_correction",
     "resolve_step_heading",
     "smooth_step_headings",

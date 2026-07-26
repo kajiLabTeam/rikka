@@ -18,7 +18,15 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .models import GyroBiasResult, StepDetectionResult, StepHeading, StepSegment
+from .models import (
+    GyroBiasResult,
+    StepDetectionResult,
+    StepDirectionPosterior,
+    StepHeading,
+    StepLengthObservation,
+    StepMotionPosterior,
+    StepSegment,
+)
 from .time_utils import _time_at_index
 
 
@@ -236,6 +244,11 @@ def _build_step_headings_dataframe(step_headings: list[StepHeading]) -> pd.DataF
         "yaw_delta_deg",
         "motion_heading_correction_deg",
         "device_orientation_mode",
+        "decoded_motion_mode",
+        "decoded_motion_confidence",
+        "device_body_offset_deg",
+        "dynamic_body_heading_confidence",
+        "body_heading_update_reason",
         "body_motion_angle_diff_deg",
         "lateral_forward_ratio",
         "sidestep_lateral_ratio",
@@ -275,6 +288,13 @@ def _build_step_headings_dataframe(step_headings: list[StepHeading]) -> pd.DataF
                 heading.motion_heading_correction
             ),
             "device_orientation_mode": heading.device_orientation_mode,
+            "decoded_motion_mode": heading.decoded_motion_mode,
+            "decoded_motion_confidence": heading.decoded_motion_confidence,
+            "device_body_offset_deg": _angle_to_deg(heading.device_body_offset),
+            "dynamic_body_heading_confidence": (
+                heading.dynamic_body_heading_confidence
+            ),
+            "body_heading_update_reason": heading.body_heading_update_reason,
             "body_motion_angle_diff_deg": _angle_to_deg(heading.body_motion_angle_diff),
             "lateral_forward_ratio": _lateral_forward_ratio_for_output(heading),
             "sidestep_lateral_ratio": heading.sidestep_lateral_ratio,
@@ -297,6 +317,59 @@ def _build_step_headings_dataframe(step_headings: list[StepHeading]) -> pd.DataF
         for heading in step_headings
     ]
     return pd.DataFrame(rows, columns=columns)
+
+
+def _build_step_length_observations_dataframe(
+    observations: tuple[StepLengthObservation, ...],
+) -> pd.DataFrame:
+    """歩幅の物理観測と品質を診断CSV用に変換する。"""
+    return pd.DataFrame(
+        [observation._asdict() for observation in observations],
+        columns=StepLengthObservation._fields,
+    )
+
+
+def _build_motion_posteriors_dataframe(
+    posteriors: tuple[StepMotionPosterior, ...],
+) -> pd.DataFrame:
+    """適応PDRの状態・方位・歩幅事後分布を診断CSV用に変換する。"""
+    rows = []
+    for posterior in posteriors:
+        values = posterior._asdict()
+        values["heading_mean_deg"] = _angle_to_deg(posterior.heading_mean)
+        values["heading_std_deg"] = _angle_to_deg(posterior.heading_std)
+        values["device_body_offset_mean_deg"] = _angle_to_deg(
+            posterior.device_body_offset_mean
+        )
+        values["device_body_offset_std_deg"] = _angle_to_deg(
+            posterior.device_body_offset_std
+        )
+        del values["heading_mean"]
+        del values["heading_std"]
+        del values["device_body_offset_mean"]
+        del values["device_body_offset_std"]
+        rows.append(values)
+    return pd.DataFrame(rows)
+
+
+def _build_direction_posteriors_dataframe(
+    posteriors: tuple[StepDirectionPosterior, ...],
+) -> pd.DataFrame:
+    """方向2仮説の事後分布を診断CSV用に変換する。"""
+    rows = []
+    for posterior in posteriors:
+        values = {
+            "step": posterior.step_index,
+            "positive_axis_probability": posterior.positive_axis_probability,
+            "negative_axis_probability": posterior.negative_axis_probability,
+            "selected_heading_deg": _angle_to_deg(posterior.selected_heading),
+            "selected_motion_mode": posterior.selected_motion_mode,
+            "confidence": posterior.confidence,
+            "source": posterior.source,
+            "flip_supported": posterior.flip_supported,
+        }
+        rows.append(values)
+    return pd.DataFrame(rows)
 
 
 def _step_plot_signal(

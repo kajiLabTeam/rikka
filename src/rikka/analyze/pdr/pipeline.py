@@ -15,8 +15,10 @@
     任意の静止画・ステップ診断図・アニメーション生成の順に処理する。
 """
 
+from dataclasses import asdict, fields
 from pathlib import Path
 
+import matplotlib.image as mpimg
 import numpy as np
 import pandas as pd
 
@@ -26,10 +28,18 @@ from ...config import (
     FLOORMAP_SCALE,
     FORWARD_HEADING_SOURCE,
     INITIAL_DIRECTION,
+    MOTION_ESTIMATION,
+    PF_MOTION_PREDICTIVE_WEIGHT_POWER,
+    PF_NUM_PARTICLES,
+    PF_PATH_SELECTION,
+    PF_STEP_FRAMES_ARROWS,
+    PF_STEP_FRAMES_DPI,
     SAMPLING_RATE,
     SIDESTEP_LATERAL_RATIO,
     SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
     SIDESTEP_SMOOTHING_METHOD,
+    SIDESTEP_SUSPECT_MODE,
+    SMOOTHING_MODE,
     USER_HEIGHT_M,
 )
 from .common import (
@@ -44,8 +54,11 @@ from .common import (
 )
 from .models import GyroBiasResult
 from .outputs import (
+    _build_direction_posteriors_dataframe,
     _build_gyro_bias_dataframe,
+    _build_motion_posteriors_dataframe,
     _build_step_headings_dataframe,
+    _build_step_length_observations_dataframe,
     _build_step_segments_dataframe,
     _build_step_vectors_dataframe,
     _build_trajectory_dataframe,
@@ -54,7 +67,41 @@ from .outputs import (
 )
 from .plotting import plot_trajectory
 from .sensors import load_sensor_data
+from .time_utils import _time_values
 from .trajectory import prepare_pdr_steps
+
+
+def _validate_particle_floormap(
+    floormap_path: str | Path,
+    origin_px: tuple[int, int],
+) -> None:
+    """PF実行前にフロアマップと歩行可能な起点を検証する。"""
+    path = Path(floormap_path)
+    if not path.exists():
+        raise ValueError(f"フロアマップが存在しません: {path}")
+    if not path.is_file():
+        raise ValueError(f"フロアマップはファイルを指定してください: {path}")
+
+    try:
+        map_raw = mpimg.imread(path)
+    except (OSError, SyntaxError, ValueError) as exc:
+        raise ValueError(f"フロアマップを画像として読み込めません: {path}") from exc
+
+    # runner と同じ正規化・歩行可能閾値で事前確認し、出力作成後の失敗を防ぐ。
+    from ..particle_filter import _normalize_floormap_gray  # noqa: PLC0415
+
+    map_gray = _normalize_floormap_gray(map_raw)
+    if map_gray.ndim != 2 or map_gray.size == 0:
+        raise ValueError(f"フロアマップ画像の形状が不正です: {path}")
+    origin_x, origin_y = origin_px
+    map_height, map_width = map_gray.shape
+    if not (
+        0 <= origin_x < map_width
+        and 0 <= origin_y < map_height
+        and np.isfinite(map_gray[origin_y, origin_x])
+        and map_gray[origin_y, origin_x] > 128
+    ):
+        raise ValueError("origin_px は歩行可能なマップ内画素を指定してください")
 
 
 def run(
@@ -63,6 +110,11 @@ def run(
     plot: bool = True,
     use_particle_filter: bool = False,
     save_animation: bool | None = None,
+    save_step_frames: bool = False,
+    step_frames_range: tuple[int, int] | None = None,
+    step_frames_arrows: int = PF_STEP_FRAMES_ARROWS,
+    step_frames_dpi: int = PF_STEP_FRAMES_DPI,
+    save_path_comparison: bool = False,
     floormap_path: str | Path = FLOORMAP_PATH,
     origin_px: tuple[int, int] = FLOORMAP_ORIGIN_PX,
     scale: float = FLOORMAP_SCALE,
@@ -78,8 +130,13 @@ def run(
     sidestep_smoothing: str = SIDESTEP_SMOOTHING_METHOD,
     forward_heading_source: str = FORWARD_HEADING_SOURCE,
     sidestep_heading_source: str = "motion",
-    sidestep_suspect_mode: str = "motion",
+    sidestep_suspect_mode: str = SIDESTEP_SUSPECT_MODE,
     particle_seed: int | None = None,
+    particle_count: int = PF_NUM_PARTICLES,
+    motion_estimation: str = MOTION_ESTIMATION,
+    smoothing_mode: str = SMOOTHING_MODE,
+    motion_predictive_weight_power: float = PF_MOTION_PREDICTIVE_WEIGHT_POWER,
+    pf_path_selection: str = PF_PATH_SELECTION,
 ) -> pd.DataFrame:
     """PDRのメインパイプラインを実行する。
 
@@ -104,6 +161,16 @@ def run(
         save_animation (bool | None):
             パーティクルフィルタのアニメーション保存を制御する。
             ``None`` のときは ``plot`` と同じ値を使う。
+        save_step_frames:
+            ``True`` のとき1歩ごとの段階別粒子画像を保存する。
+        step_frames_range:
+            保存する歩の範囲。1始まりで両端を含む。
+        step_frames_arrows:
+            段階別画像へ描く重み上位の方位矢印数。
+        step_frames_dpi:
+            段階別画像と代表軌跡比較図の解像度。
+        save_path_comparison:
+            ``True`` のとき代表軌跡候補の比較図を保存する。
         floormap_path (str | Path):
             フロアマップ画像のパス。デフォルトは ``FLOORMAP_PATH``。
         origin_px (tuple[int, int]):
@@ -139,6 +206,12 @@ def run(
             横歩き疑いステップの軌跡反映モード。
         particle_seed:
             パーティクルフィルタの乱数 seed。``None`` のときは非決定的に実行する。
+        particle_count:
+            パーティクルフィルタで使用する粒子数。
+        motion_predictive_weight_power:
+            運動状態の予測尤度をPF重みに掛ける指数。0のときは無効。
+        pf_path_selection:
+            PFの代表軌跡選択方式。``current`` または ``sequence``。
     Returns:
         pd.DataFrame: 軌跡データ（列: timestamp_s, x, y）
 
@@ -146,6 +219,35 @@ def run(
         ValueError: ``df_acc`` と ``df_gyro`` の片方だけが渡された場合
     """
     _validate_scale(scale)
+    if not np.isfinite(initial_direction):
+        raise ValueError("initial_direction は有限な値を指定してください。")
+    if gyro_bias is not None and not np.isfinite(gyro_bias):
+        raise ValueError("gyro_bias は有限な値を指定してください。")
+    if (
+        not np.isfinite(motion_predictive_weight_power)
+        or motion_predictive_weight_power < 0.0
+    ):
+        raise ValueError(
+            "motion_predictive_weight_power は有限な0以上の値を指定してください。"
+        )
+    if pf_path_selection not in {"current", "sequence"}:
+        raise ValueError(
+            "pf_path_selection は current または sequence を指定してください。"
+        )
+    if particle_count <= 0:
+        raise ValueError("particle_count は正の整数を指定してください。")
+    if step_frames_range is not None:
+        first_step, last_step = step_frames_range
+        if first_step < 1 or first_step > last_step:
+            raise ValueError(
+                "step_frames_range は 1 <= A <= B を満たす必要があります。"
+            )
+    if step_frames_arrows < 0:
+        raise ValueError("step_frames_arrows は0以上を指定してください。")
+    if step_frames_dpi <= 0:
+        raise ValueError("step_frames_dpi は正の整数を指定してください。")
+    if (save_step_frames or save_path_comparison) and not use_particle_filter:
+        raise ValueError("粒子可視化の保存には use_particle_filter=True が必要です。")
     sidestep_lateral_ratio = _validate_positive_parameter(
         "sidestep_lateral_ratio",
         sidestep_lateral_ratio,
@@ -178,6 +280,12 @@ def run(
     if df_acc is None or df_gyro is None:
         raise RuntimeError("内部エラー: df_acc または df_gyro が None（到達不能）")
 
+    # ``t`` 列を明示した入力の欠損・重複・逆順は、固定周期へ切り替えず拒否する。
+    _time_values(df_acc)
+    _time_values(df_gyro)
+    if use_particle_filter:
+        _validate_particle_floormap(floormap_path, origin_px)
+
     # 通常 PDR と particle filter で共有する決定論的ステップ情報を先に作る。
     prepared_steps = prepare_pdr_steps(
         df_acc,
@@ -195,6 +303,8 @@ def run(
         forward_heading_source=selected_forward_heading_source,
         sidestep_heading_source=selected_sidestep_heading_source,
         sidestep_suspect_mode=selected_sidestep_suspect_mode,
+        motion_estimation=motion_estimation,
+        smoothing_mode=smoothing_mode,
     )
     df_acc = prepared_steps.df_acc
     df_gyro = prepared_steps.df_gyro
@@ -259,14 +369,41 @@ def run(
     df_gyro_bias.to_csv(gyro_bias_path, index=False)
     print(f"Gyro bias saved to {gyro_bias_path}")
 
+    df_length_observations = _build_step_length_observations_dataframe(
+        prepared_steps.length_observations
+    )
+    length_observations_path = output_dir / "step_length_observations.csv"
+    df_length_observations.to_csv(length_observations_path, index=False)
+    print(f"Step length observations saved to {length_observations_path}")
+    if prepared_steps.motion_posteriors:
+        df_motion_posteriors = _build_motion_posteriors_dataframe(
+            prepared_steps.motion_posteriors
+        )
+        motion_posteriors_path = output_dir / "motion_posteriors.csv"
+        df_motion_posteriors.to_csv(motion_posteriors_path, index=False)
+        print(f"Motion posteriors saved to {motion_posteriors_path}")
+    if prepared_steps.direction_posteriors:
+        df_direction_posteriors = _build_direction_posteriors_dataframe(
+            prepared_steps.direction_posteriors
+        )
+        direction_posteriors_path = output_dir / "direction_posteriors.csv"
+        df_direction_posteriors.to_csv(direction_posteriors_path, index=False)
+        print(f"Direction posteriors saved to {direction_posteriors_path}")
+
     # particle filter は prepared_steps を受け取り、同じステップ列を地図制約で補正する。
     if use_particle_filter:
         from ..particle_filter import (  # noqa: PLC0415
+            ParticleFilterStepDiagnostics,
+            ParticlePathComparison,
+            ParticleStepStages,
             plot_particle_filter_trajectory,
             run_particle_filter,
             save_particle_animation,
         )
 
+        particle_diagnostics: list[ParticleFilterStepDiagnostics] = []
+        particle_stages: list[ParticleStepStages] = []
+        path_comparisons: list[ParticlePathComparison] = []
         (
             trajectory,
             step_lengths,
@@ -289,6 +426,8 @@ def run(
             prepared_step_headings=prepared_steps.step_headings,
             prepared_step_lengths=prepared_steps.step_lengths,
             prepared_step_times=prepared_steps.t_at_steps,
+            prepared_motion_evidences=prepared_steps.motion_evidences,
+            prepared_motion_posteriors=prepared_steps.motion_posteriors,
             sidestep_lateral_ratio=sidestep_lateral_ratio,
             sidestep_min_lateral_displacement=sidestep_min_lateral_displacement,
             motion_heading_correction=selected_motion_heading_correction,
@@ -297,6 +436,14 @@ def run(
             sidestep_heading_source=selected_sidestep_heading_source,
             sidestep_suspect_mode=selected_sidestep_suspect_mode,
             seed=particle_seed,
+            n_particles=particle_count,
+            motion_predictive_weight_power=motion_predictive_weight_power,
+            path_selection=pf_path_selection,
+            diagnostics_collector=particle_diagnostics,
+            stage_collector=particle_stages if save_step_frames else None,
+            path_comparison_collector=(
+                path_comparisons if save_path_comparison else None
+            ),
         )
 
         print(f"Peaks detected: {len(peaks)}")
@@ -328,6 +475,65 @@ def run(
         step_heading_path = output_dir / "step_headings.csv"
         df_step_headings.to_csv(step_heading_path, index=False)
         print(f"Step headings saved to {step_heading_path}")
+
+        diagnostic_columns = [
+            field.name for field in fields(ParticleFilterStepDiagnostics)
+        ]
+        df_particle_diagnostics = pd.DataFrame(
+            [asdict(item) for item in particle_diagnostics],
+            columns=diagnostic_columns,
+        )
+        diagnostics_path = output_dir / "particle_diagnostics.csv"
+        df_particle_diagnostics.to_csv(diagnostics_path, index=False)
+        print(f"Particle diagnostics saved to {diagnostics_path}")
+
+        if save_step_frames or save_path_comparison:
+            from ..particle.frames import (  # noqa: PLC0415
+                generated_files_size,
+                save_particle_path_comparison,
+                save_particle_step_frames,
+            )
+
+            visualization_paths: list[Path] = []
+            if save_step_frames:
+                visualization_paths.extend(
+                    save_particle_step_frames(
+                        particle_stages,
+                        particle_diagnostics,
+                        trajectory,
+                        gx_mean=gx_mean,
+                        gz_mean=gz_mean,
+                        floormap_path=floormap_path,
+                        origin_px=origin_px,
+                        scale=scale,
+                        output_dir=output_dir,
+                        step_range=step_frames_range,
+                        arrows=step_frames_arrows,
+                        dpi=step_frames_dpi,
+                    )
+                )
+            if save_path_comparison:
+                if len(path_comparisons) != 1:
+                    raise RuntimeError(
+                        "内部エラー: 代表軌跡候補が収集されませんでした。"
+                    )
+                visualization_paths.append(
+                    save_particle_path_comparison(
+                        path_comparisons[0],
+                        gx_mean=gx_mean,
+                        gz_mean=gz_mean,
+                        floormap_path=floormap_path,
+                        origin_px=origin_px,
+                        scale=scale,
+                        output_path=output_dir / "particle_paths_comparison.png",
+                        dpi=step_frames_dpi,
+                    )
+                )
+            size_mb = generated_files_size(visualization_paths) / (1024 * 1024)
+            print(
+                "Particle visualization saved: "
+                f"{len(visualization_paths)} files, {size_mb:.2f} MiB"
+            )
 
         if step_detection.method == "paper_vertical_threshold":
             df_step_segments = _build_step_segments_dataframe(

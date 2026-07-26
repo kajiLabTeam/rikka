@@ -21,8 +21,10 @@ import pandas as pd
 
 from ...config import (
     FORWARD_HEADING_SOURCE,
+    MOTION_ESTIMATION,
     SIDESTEP_LATERAL_RATIO,
     SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
+    SMOOTHING_MODE,
 )
 
 
@@ -80,6 +82,11 @@ class StepHeading(NamedTuple):
     sidestep_evidence_reason: str | None = None
     sidestep_cluster_id: int | None = None
     device_orientation_mode: str = "normal"
+    decoded_motion_mode: str | None = None
+    decoded_motion_confidence: float = 0.0
+    device_body_offset: float = 0.0
+    dynamic_body_heading_confidence: float = 0.0
+    body_heading_update_reason: str | None = None
 
 
 class GyroBiasResult(NamedTuple):
@@ -113,6 +120,112 @@ class StepMotion(NamedTuple):
     length_scale: float
 
 
+class StepMotionEvidence(NamedTuple):
+    """PFが利用する1歩ごとの運動状態観測。"""
+
+    forward_likelihood: float
+    sidestep_left_likelihood: float
+    sidestep_right_likelihood: float
+    turning_likelihood: float
+    motion_reliability: float
+    calibration_reliability: float
+
+
+class StepMotionObservation(NamedTuple):
+    """端末方位、身体方位候補、移動軸を分離した1歩の観測。
+
+    ``motion_axis_heading`` は方向を確定しない modulo pi の軸であり、
+    ``directed_motion_heading`` の正負の向きは後段で再検証できるよう別に保持する。
+    """
+
+    step_index: int
+    timestamp_s: float
+    device_yaw_heading: float | None
+    body_heading_candidate: float | None
+    directed_motion_heading: float | None
+    motion_axis_heading: float | None
+    forward_displacement: float | None
+    lateral_displacement: float | None
+    displacement_norm: float
+    yaw_delta: float | None
+    motion_confidence: float
+    calibration_reliability: float
+    raw_movement_type: str
+    trajectory_movement_type: str
+    device_orientation_mode: str
+
+
+class StepLengthObservation(NamedTuple):
+    """1歩区間から得た歩幅の物理観測と不確かさ。"""
+
+    step_index: int
+    nominal_length_m: float
+    interval_length_m: float
+    step_period_s: float | None
+    vertical_amplitude: float
+    horizontal_energy: float
+    quality: float
+    log_length_sigma: float
+    fallback_reason: str | None
+
+
+class StepMotionPosterior(NamedTuple):
+    """運動状態、方位、歩幅、端末姿勢ずれの1歩ごとの事後分布。"""
+
+    step_index: int
+    forward_probability: float
+    sidestep_left_probability: float
+    sidestep_right_probability: float
+    turning_probability: float
+    heading_mean: float
+    heading_std: float
+    length_mean_m: float
+    length_std_m: float
+    device_body_offset_mean: float
+    device_body_offset_std: float
+    selected_mode: str
+    source: str
+
+
+class AdaptivePdrState(NamedTuple):
+    """逐次更新できる適応PDRの内部状態。"""
+
+    heading_mean: float | None
+    heading_variance: float
+    forward_log_scale_mean: float
+    forward_log_scale_variance: float
+    sidestep_log_scale_mean: float
+    sidestep_log_scale_variance: float
+    device_body_offset_mean: float
+    device_body_offset_variance: float
+    mode_probabilities: tuple[float, float, float, float]
+    step_count: int
+
+
+@dataclass(frozen=True)
+class AdaptivePdrResult:
+    """適応PDRが返す因果推定またはオフライン平滑化結果。"""
+
+    step_headings: list[StepHeading]
+    step_lengths: list[float]
+    posteriors: tuple[StepMotionPosterior, ...]
+    final_state: AdaptivePdrState
+
+
+@dataclass(frozen=True)
+class StepDirectionPosterior:
+    """移動軸の2方向候補に対する1歩ごとの事後分布。"""
+
+    step_index: int
+    positive_axis_probability: float
+    negative_axis_probability: float
+    selected_heading: float
+    selected_motion_mode: str
+    confidence: float
+    source: str
+    flip_supported: bool
+
+
 @dataclass(frozen=True)
 class PreparedPdrSteps:
     """通常PDRとPFで共用するステップ単位の推定結果。"""
@@ -133,3 +246,10 @@ class PreparedPdrSteps:
     forward_heading_source: str
     sidestep_heading_source: str
     sidestep_suspect_mode: str
+    motion_evidences: tuple[StepMotionEvidence, ...] = ()
+    motion_observations: tuple[StepMotionObservation, ...] = ()
+    length_observations: tuple[StepLengthObservation, ...] = ()
+    motion_posteriors: tuple[StepMotionPosterior, ...] = ()
+    motion_estimation: str = MOTION_ESTIMATION
+    smoothing_mode: str = SMOOTHING_MODE
+    direction_posteriors: tuple[StepDirectionPosterior, ...] = ()
