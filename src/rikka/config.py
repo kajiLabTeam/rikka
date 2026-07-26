@@ -18,14 +18,14 @@ from math import isfinite
 # Data directory path
 # Change this path to use different input data
 
-DATA_DIR = "input/1turn_rightsidestep_3turn_leftsidestep5"
+DATA_DIR = "input/sensor_data/natsuki/1turn_rightsidestep_3turn_leftsidestep5"
 
 # フロアマップ設定
 # 背景として表示するフロアマップ画像のパス
 FLOORMAP_PATH = "input/Floormap_building14_5floor.png"
 # 軌跡の起点（原点）がフロアマップ上で対応するピクセル座標 (x_px, y_px)
 # 実際の歩行開始位置に合わせて調整すること
-FLOORMAP_ORIGIN_PX: tuple[int, int] = (2050, 600)
+FLOORMAP_ORIGIN_PX: tuple[int, int] = (2050, 400)
 # 1ピクセルあたりのメートル数（1px = 1cm = 0.01m）
 
 FLOORMAP_SCALE = 0.01
@@ -44,11 +44,14 @@ WINDOW_ACC = 80
 WINDOW_GYRO = 40
 
 # ジャイロバイアス推定手法
+# "prewalk_guarded": 歩行前推定が小さい場合だけ採用する標準方式
+# "zero"           : 補正しない
 # "prewalk_robust": 歩行開始直前の区間からロバスト推定
 # "initial_robust": 記録先頭の短い区間からロバスト推定
 # "quietest"       : 既存方式（全期間で分散最小の窓を使用）
 # "manual"         : 指定値をそのまま使用
-GYRO_BIAS_METHOD = "prewalk_robust"
+GYRO_BIAS_METHOD = "prewalk_guarded"
+GYRO_BIAS_GUARD_MAX_ABS_RAD_S = 0.003
 GYRO_BIAS_PREWALK_MAX_SECONDS = 5.0
 GYRO_BIAS_MIN_CALIBRATION_SECONDS = 0.5
 GYRO_BIAS_WALK_ONSET_MIN_STEPS = 4
@@ -133,7 +136,8 @@ HEADING_METHOD = "gyro_accel_motion"
 # forward 判定ステップを軌跡へ積むときの方位ソース
 # "body"  : ジャイロ由来の体/端末方向を使う
 # "motion": 水平加速度から得た移動方向を使う
-FORWARD_HEADING_SOURCE = "motion"
+FORWARD_HEADING_SOURCE = "body"
+SIDESTEP_SUSPECT_MODE = "forward"
 
 # 加速度平面成分方位の信頼度パラメータ
 ACCEL_HEADING_MIN_PEAK_NORM = 1.0
@@ -148,7 +152,7 @@ SIDESTEP_LATERAL_RATIO = 1.2
 SIDESTEP_MIN_LATERAL_DISPLACEMENT_M = 0.03
 SIDESTEP_SMOOTHING_METHOD = "clustered"
 MOTION_HEADING_CALIBRATION_STEPS = 8
-SIDESTEP_LENGTH_SCALE = 1
+SIDESTEP_LENGTH_SCALE = 0.8
 TURNING_LENGTH_SCALE = 0.3
 BACKWARD_LENGTH_SCALE = 1
 TURNING_YAW_DELTA_THRESHOLD_DEG = 35.0
@@ -161,6 +165,28 @@ K_FORWARD = 9.0
 
 # パーティクルフィルタ設定
 PF_NUM_PARTICLES = 500
-PF_SIGMA_INIT_HEADING = 0.15  # 初期方向ばらつき [rad]（±9°）
-PF_SIGMA_HEADING = 0.05  # ステップごとの方位角ドリフト [rad/step]（±3°）
-PF_SIGMA_STEP_LENGTH_RATIO = 0.08  # ステップ長ノイズ比率（±8%）
+PF_SIGMA_INIT_HEADING = 0.03  # 初期方向ばらつき [rad]
+PF_SIGMA_HEADING = 0.01  # ステップごとの方位角ドリフト [rad/step]
+PF_SIGMA_STEP_LENGTH_RATIO = 0.01  # 永続倍率で説明できない歩ごとの歩幅ノイズ
+PF_STRIDE_SCALE_PRIOR_MEAN = 1.03  # 正解軌跡長と決定論的歩幅合計から得た事前中心
+PF_STRIDE_SCALE_INIT_SIGMA = 0.05  # 粒子ごとの初期歩幅倍率ばらつき
+PF_STRIDE_SCALE_RETENTION = 0.995  # 学習した歩幅倍率偏差の1歩ごとの保持率
+PF_STRIDE_SCALE_PROCESS_SIGMA = 0.002  # 歩幅倍率の1歩ごとの変動
+PF_STRIDE_SCALE_REJUVENATION_SIGMA = 0.003  # 再標本化後の歩幅倍率多様化
+PF_STRIDE_SCALE_MIN = 0.90  # 歩幅倍率の下限
+PF_STRIDE_SCALE_MAX = 1.15  # 歩幅倍率の上限
+PF_HEADING_DRIFT_RETENTION = 0.85  # 通常方位ドリフトの1歩ごとの保持率
+PF_RESAMPLE_ESS_RATIO = 0.5  # ESSが粒子数に占める割合を下回ると再標本化
+PF_REJUVENATION_SIGMA_HEADING = 0.009  # 再標本化後の方位多様化の上限 [rad]
+PF_STEP_FRAMES_ARROWS = 40  # 段階別画像に描く重み上位の方位矢印数
+PF_STEP_FRAMES_DPI = 100  # 段階別画像と代表軌跡比較図の既定解像度
+PF_RECOVERY_VALID_RATIO = 0.05  # 有効な重み付き粒子率が下回ると復旧
+PF_RECOVERY_HEADING_SIGMA = 0.08  # local recoveryの方位分散 [rad]
+PF_RECOVERY_MAX_ATTEMPTS = 5  # recovery候補を追加生成する最大回数
+PF_MOTION_DISPLACEMENT_FULL_CONFIDENCE_M = 0.08
+PF_MOTION_CALIBRATION_MIN_STEPS = 4
+PF_MOTION_STATE_TRANSITION_STAY = 0.82
+MOTION_ESTIMATION = "adaptive"  # 標準の運動状態・方位・歩幅推定方式
+SMOOTHING_MODE = "causal"  # 標準の時系列平滑化方式
+PF_MOTION_PREDICTIVE_WEIGHT_POWER = 0.1  # 運動状態予測尤度の重み指数
+PF_PATH_SELECTION = "sequence"  # 反転減少時だけ単一祖先経路を採用

@@ -21,14 +21,20 @@ from ...config import SAMPLING_RATE, STEP_LENGTH_METHOD
 
 
 def _time_values(df: pd.DataFrame) -> np.ndarray | None:
-    """単調増加する時刻配列を返す。利用できない場合は None を返す。"""
+    """単調増加する時刻配列を返す。時刻列がなければ ``None`` を返す。
+
+    ``t`` 列が明示されている場合は固定周期へ暗黙にフォールバックせず、欠損、
+    非有限値、重複、逆順を入力エラーとして扱う。
+    """
     if "t" not in df.columns:
         return None
     times = np.asarray(pd.to_numeric(df["t"], errors="coerce"), dtype=float)
-    if len(times) == 0 or not np.isfinite(times).all():
+    if len(times) == 0:
         return None
+    if not np.isfinite(times).all():
+        raise ValueError("t 列には有限な数値だけを指定してください。")
     if len(times) > 1 and not np.all(np.diff(times) > 0):
-        return None
+        raise ValueError("t 列は重複のない単調増加である必要があります。")
     return times
 
 

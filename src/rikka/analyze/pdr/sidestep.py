@@ -21,8 +21,12 @@ import numpy as np
 from ...config import (
     BACKWARD_LENGTH_SCALE,
     FORWARD_HEADING_SOURCE,
+    PF_MOTION_CALIBRATION_MIN_STEPS,
+    PF_MOTION_DISPLACEMENT_FULL_CONFIDENCE_M,
     SIDESTEP_LENGTH_SCALE,
+    SIDESTEP_SUSPECT_MODE,
     TURNING_LENGTH_SCALE,
+    TURNING_YAW_DELTA_THRESHOLD_DEG,
 )
 from .common import (
     INITIAL_FORWARD_MOTION_BODY_CONSTRAINT_RAD,
@@ -39,7 +43,249 @@ from .common import (
     _validate_sidestep_smoothing,
     _validate_sidestep_suspect_mode,
 )
-from .models import StepHeading, StepMotion
+from .models import (
+    StepHeading,
+    StepMotion,
+    StepMotionEvidence,
+    StepMotionObservation,
+)
+
+
+def _motion_calibration_reliability(step_headings: list[StepHeading]) -> float:
+    """初期の前進候補から端末方位と移動方位の対応安定度を返す。"""
+    residuals: list[float] = []
+    for heading in step_headings:
+        if len(residuals) >= 8:
+            break
+        if heading.body_heading is None or heading.motion_heading is None:
+            continue
+        if heading.movement_type not in {"forward", "unknown"}:
+            continue
+        if heading.yaw_delta is not None and abs(heading.yaw_delta) >= np.deg2rad(20.0):
+            continue
+        residuals.append(
+            _normalize_angle(heading.motion_heading - heading.body_heading)
+        )
+    if not residuals:
+        return 0.0
+    concentration = float(
+        np.hypot(np.mean(np.sin(residuals)), np.mean(np.cos(residuals)))
+    )
+    coverage = min(1.0, len(residuals) / PF_MOTION_CALIBRATION_MIN_STEPS)
+    return float(np.clip(concentration * coverage, 0.0, 1.0))
+
+
+def _local_motion_consistency(step_headings: list[StepHeading], index: int) -> float:
+    """近傍3歩の移動方位が同じ方向を示す度合いを返す。"""
+    angles = [
+        heading.motion_heading
+        for heading in step_headings[max(0, index - 1) : index + 2]
+        if heading.motion_heading is not None
+    ]
+    if len(angles) <= 1:
+        return 0.5
+    return float(np.hypot(np.mean(np.sin(angles)), np.mean(np.cos(angles))))
+
+
+def _normalize_motion_axis_heading(angle: float) -> float:
+    """方向の正負を決めずに移動軸を [-pi/2, pi/2) へ正規化する。"""
+    return float((angle + np.pi / 2.0) % np.pi - np.pi / 2.0)
+
+
+def build_step_motion_observations(
+    step_headings: list[StepHeading],
+) -> tuple[StepMotionObservation, ...]:
+    """既存の採用方位を変更せず、方位候補と移動軸の観測列を作る。"""
+    calibration = _motion_calibration_reliability(step_headings)
+    observations: list[StepMotionObservation] = []
+    for heading in step_headings:
+        motion_axis_heading = (
+            None
+            if heading.motion_heading is None
+            else _normalize_motion_axis_heading(heading.motion_heading)
+        )
+        displacement_norm = float(
+            np.hypot(
+                heading.forward_displacement or 0.0,
+                heading.lateral_displacement or 0.0,
+            )
+        )
+        observations.append(
+            StepMotionObservation(
+                step_index=heading.step_index,
+                timestamp_s=heading.timestamp_s,
+                device_yaw_heading=heading.gyro_heading,
+                body_heading_candidate=heading.body_heading,
+                directed_motion_heading=heading.motion_heading,
+                motion_axis_heading=motion_axis_heading,
+                forward_displacement=heading.forward_displacement,
+                lateral_displacement=heading.lateral_displacement,
+                displacement_norm=displacement_norm,
+                yaw_delta=heading.yaw_delta,
+                motion_confidence=heading.motion_confidence,
+                calibration_reliability=calibration,
+                raw_movement_type=heading.movement_type,
+                trajectory_movement_type=(
+                    heading.trajectory_movement_type or heading.movement_type
+                ),
+                device_orientation_mode=heading.device_orientation_mode,
+            )
+        )
+    return tuple(observations)
+
+
+def build_step_motion_evidences(
+    step_headings: list[StepHeading],
+) -> tuple[StepMotionEvidence, ...]:
+    """確定分類を上書きせず、PF向けの運動状態尤度列を生成する。"""
+    calibration = _motion_calibration_reliability(step_headings)
+    evidences: list[StepMotionEvidence] = []
+    turning_threshold = np.deg2rad(TURNING_YAW_DELTA_THRESHOLD_DEG)
+    for index, heading in enumerate(step_headings):
+        displacement = float(
+            np.hypot(
+                heading.forward_displacement or 0.0,
+                heading.lateral_displacement or 0.0,
+            )
+        )
+        displacement_quality = float(
+            np.clip(
+                displacement / PF_MOTION_DISPLACEMENT_FULL_CONFIDENCE_M,
+                0.0,
+                1.0,
+            )
+        )
+        consistency = _local_motion_consistency(step_headings, index)
+        reliability = float(
+            np.clip(displacement_quality * consistency * calibration, 0.0, 1.0)
+        )
+        movement = heading.trajectory_movement_type or heading.movement_type
+        raw_turning = heading.movement_type == "turning" or (
+            heading.movement_type.startswith("turning_sidestep_")
+        )
+        is_suspect = movement in {
+            "sidestep_suspect_left",
+            "sidestep_suspect_right",
+        }
+        left = movement in {
+            "sidestep_left",
+            "turning_sidestep_left",
+            "sidestep_suspect_left",
+        }
+        right = movement in {
+            "sidestep_right",
+            "turning_sidestep_right",
+            "sidestep_suspect_right",
+        }
+        yaw_strength = min(
+            1.0,
+            abs(heading.yaw_delta or 0.0) / max(turning_threshold, 1e-12),
+        )
+        if movement == "turning":
+            forward_likelihood = 0.02
+            left_likelihood = 0.01
+            right_likelihood = 0.01
+            turning = 0.95
+        elif left or right:
+            if is_suspect:
+                side_strength = 0.15 + 0.45 * reliability
+                forward_likelihood = 0.6
+            elif heading.sidestep_cluster_id is not None and calibration >= 0.5:
+                # 複数歩で確定したclusterは、forwardから横歩きへ遷移できる
+                # 観測比を与える。校正不良時は従来の連続値へ戻す。
+                side_strength = 0.98
+                forward_likelihood = 0.01
+            else:
+                side_strength = float(np.clip((reliability - 0.45) / 0.35, 0.01, 0.99))
+                forward_likelihood = max(0.01, 1.0 - side_strength)
+            left_likelihood = 0.01 + (side_strength if left else 0.0)
+            right_likelihood = 0.01 + (side_strength if right else 0.0)
+            turning = (
+                0.35 + 0.55 * yaw_strength
+                if raw_turning
+                else 0.05 + 0.15 * yaw_strength
+                if is_suspect
+                else 0.01
+            )
+        else:
+            forward_likelihood = 0.15 if raw_turning else 0.95
+            left_likelihood = 0.01
+            right_likelihood = 0.01
+            turning = 0.8 if raw_turning else 0.01
+        values = np.asarray(
+            [forward_likelihood, left_likelihood, right_likelihood, turning],
+            dtype=float,
+        )
+        values /= values.sum()
+        evidences.append(
+            StepMotionEvidence(
+                forward_likelihood=float(values[0]),
+                sidestep_left_likelihood=float(values[1]),
+                sidestep_right_likelihood=float(values[2]),
+                turning_likelihood=float(values[3]),
+                motion_reliability=reliability,
+                calibration_reliability=calibration,
+            )
+        )
+    return tuple(evidences)
+
+
+def build_particle_motion_headings(
+    step_headings: list[StepHeading],
+) -> tuple[float | None, ...]:
+    """通常PDRを変えず、PF向けに横歩き境界を連続化した方位列を返す。"""
+    result: list[float | None] = []
+    previous_heading: float | None = None
+    previous_type: str | None = None
+    after_sidestep_steps = 0
+    for heading in step_headings:
+        movement = heading.trajectory_movement_type or heading.movement_type
+        candidate = heading.selected_heading
+        if candidate is None:
+            result.append(None)
+            continue
+        yaw_deg = abs(float(np.degrees(heading.yaw_delta or 0.0)))
+        raw_sidestep_evidence = (
+            "sidestep" in heading.movement_type
+            or heading.sidestep_evidence_reason is not None
+        )
+        use_motion = (
+            heading.motion_heading is not None
+            and yaw_deg < TURNING_YAW_DELTA_THRESHOLD_DEG
+            and (
+                raw_sidestep_evidence
+                or movement == "forward"
+                and after_sidestep_steps > 0
+            )
+        )
+        if use_motion:
+            assert heading.motion_heading is not None
+            candidate = float(heading.motion_heading)
+        genuine_turn = (
+            movement == "turning"
+            or previous_type == "turning"
+            or yaw_deg >= TURNING_YAW_DELTA_THRESHOLD_DEG
+        )
+        if previous_heading is not None and not genuine_turn:
+            limit = np.deg2rad(
+                45.0
+                if _is_trajectory_sidestep_movement(movement) or raw_sidestep_evidence
+                else 25.0
+            )
+            delta = np.clip(
+                _normalize_angle(candidate - previous_heading),
+                -limit,
+                limit,
+            )
+            candidate = _normalize_angle(previous_heading + float(delta))
+        result.append(candidate)
+        if _is_trajectory_sidestep_movement(movement):
+            after_sidestep_steps = 2
+        elif after_sidestep_steps > 0:
+            after_sidestep_steps -= 1
+        previous_heading = candidate
+        previous_type = movement
+    return tuple(result)
 
 
 def _is_sidestep_movement(movement_type: str) -> bool:
@@ -67,6 +313,13 @@ def _is_trajectory_sidestep_movement(movement_type: str | None) -> bool:
 def _is_sidestep_suspect_movement(movement_type: str | None) -> bool:
     """横歩き疑いの移動タイプかどうかを返す。"""
     return movement_type in {"sidestep_suspect_left", "sidestep_suspect_right"}
+
+
+def _movement_type_when_sidestep_is_suppressed(step_heading: StepHeading) -> str:
+    """横歩きを抑制しても、生の旋回情報は軌跡用分類に残す。"""
+    if step_heading.movement_type.startswith("turning_sidestep_"):
+        return step_heading.movement_type
+    return "forward"
 
 
 def _sidestep_body_lateral_heading(
@@ -278,7 +531,6 @@ def _sidestep_cluster_has_lateral_strength(
         return False
     if lateral_smoothed * direction <= 0:
         return False
-
     current = step_headings[indexes[0]]
     lateral_abs = abs(lateral_smoothed)
     return (
@@ -405,7 +657,7 @@ def _is_confirmed_sidestep_cluster(
 def _smooth_step_headings(
     step_headings: list[StepHeading],
     method: str = "none",
-    sidestep_suspect_mode: str = "motion",
+    sidestep_suspect_mode: str = SIDESTEP_SUSPECT_MODE,
 ) -> list[StepHeading]:
     """横歩き判定の軌跡反映を平滑化する。"""
     selected_method = _validate_sidestep_smoothing(method)
@@ -428,7 +680,11 @@ def _smooth_step_headings(
                 and prev_type == "forward"
                 and next_type == "forward"
             ):
-                smoothed[i] = current._replace(trajectory_movement_type="forward")
+                smoothed[i] = current._replace(
+                    trajectory_movement_type=(
+                        _movement_type_when_sidestep_is_suppressed(current)
+                    )
+                )
         return smoothed
 
     # 各歩の横歩きらしさを evidence 化し、同方向の連続区間だけを軌跡へ強く反映する。
@@ -531,7 +787,13 @@ def _smooth_step_headings(
                     selected_heading=suspect_heading
                     if suspect
                     else step_headings[evidence_index].selected_heading,
-                    trajectory_movement_type=suspect_type if suspect else "forward",
+                    trajectory_movement_type=(
+                        suspect_type
+                        if suspect
+                        else _movement_type_when_sidestep_is_suppressed(
+                            step_headings[evidence_index]
+                        )
+                    ),
                     body_motion_angle_diff=member_evidence.angle_diff,
                     sidestep_evidence_direction=_sidestep_direction_label(direction),
                     sidestep_evidence_reason=member_evidence.reason,
@@ -760,7 +1022,7 @@ def estimate_step_motion(
     previous_heading: float | None = None,
     forward_heading_source: str = FORWARD_HEADING_SOURCE,
     sidestep_heading_source: str = "motion",
-    sidestep_suspect_mode: str = "motion",
+    sidestep_suspect_mode: str = SIDESTEP_SUSPECT_MODE,
 ) -> StepMotion | None:
     """状態別に1歩の移動方位と歩幅を決める。"""
     selected_forward_heading_source = _validate_forward_heading_source(

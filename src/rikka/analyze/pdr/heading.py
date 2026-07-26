@@ -419,6 +419,7 @@ def _estimate_device_orientation_mode(
     for mode in DEVICE_ORIENTATION_MODES:
         score = 0.0
         count = 0
+        observed_count = 0
         for i in range(min(len(peaks), MOTION_HEADING_CALIBRATION_STEPS)):
             mid_idx = _step_mid_index(peaks, i)
             mid_time = _step_mid_time(df_acc, peaks, i)
@@ -446,11 +447,21 @@ def _estimate_device_orientation_mode(
                 or motion.motion_heading is None
             ):
                 continue
+            observed_count += 1
+            if (
+                motion.movement_type != "forward"
+                or motion.confidence < MOTION_HEADING_CONFIDENCE_THRESHOLD
+                or motion.forward_displacement <= 0.0
+            ):
+                continue
             forward = motion.forward_displacement
             lateral = abs(motion.lateral_displacement)
             diff = abs(_normalize_angle(motion.motion_heading - body_heading))
             score += forward - lateral - max(-forward, 0.0) - 0.25 * diff
             count += 1
+        # 初期区間が横歩き・旋回中心なら装着向きを推定せず、既定向きを保つ。
+        if count < 2 or count < 0.6 * observed_count:
+            continue
         if count > 0:
             score /= count
         if score > best_score:
