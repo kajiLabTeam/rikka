@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from rikka.analyze.particle.frames import save_particle_step_frames
 from rikka.analyze.particle.motion import _motion_state_transition_matrix
 from rikka.analyze.particle.paths import _unsupported_reversal_count
 from rikka.analyze.particle.recovery import (
@@ -15,7 +16,11 @@ from rikka.analyze.particle.runner import (
     _adaptive_heading_rejuvenation_sigma,
     run_particle_filter,
 )
-from rikka.analyze.particle_filter import ParticleFilterStepDiagnostics
+from rikka.analyze.particle_filter import (
+    ParticleFilterStepDiagnostics,
+    ParticlePathComparison,
+    ParticleStepStages,
+)
 from rikka.analyze.pdr.models import StepHeading
 
 
@@ -205,3 +210,155 @@ def test_nonempty_prepared_steps_reject_empty_motion_posteriors(tmp_path) -> Non
             prepared_motion_posteriors=(),
             seed=1,
         )
+
+
+def test_stage_collection_preserves_fixed_seed_result_and_shapes(tmp_path) -> None:
+    floormap_path = tmp_path / "open_map.png"
+    mpimg.imsave(
+        floormap_path,
+        np.ones((41, 41)),
+        cmap="gray",
+        vmin=0.0,
+        vmax=1.0,
+    )
+    headings = [_forward_heading(index) for index in range(1, 4)]
+    common_arguments = {
+        "peaks": np.arange(3),
+        "df_gyro": pd.DataFrame({"low_angle": [0.0, 0.0, 0.0]}),
+        "df_acc": pd.DataFrame({"h_y": [0.0, 0.0, 0.0], "h_z": [0.0, 0.0, 0.0]}),
+        "gx_mean": 0.0,
+        "gz_mean": 9.8,
+        "floormap_path": floormap_path,
+        "origin_px": (20, 20),
+        "scale": 1.0,
+        "n_particles": 16,
+        "prepared_step_headings": headings,
+        "prepared_step_lengths": [1.0, 1.0, 1.0],
+        "prepared_step_times": [0.0, 1.0, 2.0],
+        "seed": 42,
+    }
+    diagnostics_without: list[ParticleFilterStepDiagnostics] = []
+    result_without = run_particle_filter(
+        **common_arguments,
+        diagnostics_collector=diagnostics_without,
+    )
+    diagnostics_with: list[ParticleFilterStepDiagnostics] = []
+    stages: list[ParticleStepStages] = []
+    path_comparisons: list[ParticlePathComparison] = []
+    result_with = run_particle_filter(
+        **common_arguments,
+        diagnostics_collector=diagnostics_with,
+        stage_collector=stages,
+        path_comparison_collector=path_comparisons,
+    )
+
+    np.testing.assert_array_equal(result_with[3], result_without[3])
+    np.testing.assert_array_equal(result_with[0], result_without[0])
+    assert result_with[1:3] == result_without[1:3]
+    assert result_with[4] == result_without[4]
+    assert diagnostics_with == diagnostics_without
+    assert len(stages) == 3
+    assert len(path_comparisons) == 1
+    np.testing.assert_array_equal(
+        path_comparisons[0].selected_path,
+        np.asarray(result_with[0]),
+    )
+    for stage, diagnostic in zip(stages, diagnostics_with, strict=True):
+        assert stage.before_positions.shape == (16, 2)
+        assert stage.proposed_positions.shape == (16, 2)
+        assert stage.after_positions.shape == (16, 2)
+        assert stage.before_offsets.shape == (16,)
+        assert stage.proposed_headings.shape == (16,)
+        assert stage.proposed_step_lengths.shape == (16,)
+        assert stage.valid_transition.shape == (16,)
+        assert stage.posterior_weights.shape == (16,)
+        assert stage.parent_indices.shape == (16,)
+        assert int(np.count_nonzero(stage.valid_transition)) == diagnostic.valid_count
+
+
+def test_stage_proposed_heading_contains_particle_offset(tmp_path) -> None:
+    floormap_path = tmp_path / "open_map.png"
+    mpimg.imsave(
+        floormap_path,
+        np.ones((21, 21)),
+        cmap="gray",
+        vmin=0.0,
+        vmax=1.0,
+    )
+    heading = _forward_heading()._replace(
+        selected_heading=0.4,
+        body_heading=0.4,
+        motion_heading=0.4,
+    )
+    stages: list[ParticleStepStages] = []
+
+    run_particle_filter(
+        np.array([0]),
+        pd.DataFrame({"low_angle": [0.0]}),
+        pd.DataFrame({"h_y": [0.0], "h_z": [0.0]}),
+        gx_mean=0.0,
+        gz_mean=9.8,
+        floormap_path=floormap_path,
+        origin_px=(10, 10),
+        scale=1.0,
+        n_particles=8,
+        sigma_init_heading=0.0,
+        sigma_heading=0.0,
+        prepared_step_headings=[heading],
+        prepared_step_lengths=[1.0],
+        prepared_step_times=[0.0],
+        seed=7,
+        stage_collector=stages,
+    )
+
+    np.testing.assert_allclose(stages[0].before_offsets, 0.0)
+    np.testing.assert_allclose(stages[0].proposed_headings, 0.4)
+
+
+def test_step_frame_range_saves_only_requested_steps(tmp_path) -> None:
+    floormap_path = tmp_path / "open_map.png"
+    mpimg.imsave(
+        floormap_path,
+        np.ones((41, 41)),
+        cmap="gray",
+        vmin=0.0,
+        vmax=1.0,
+    )
+    diagnostics: list[ParticleFilterStepDiagnostics] = []
+    stages: list[ParticleStepStages] = []
+    headings = [_forward_heading(index) for index in range(1, 4)]
+    result = run_particle_filter(
+        np.arange(3),
+        pd.DataFrame({"low_angle": [0.0, 0.0, 0.0]}),
+        pd.DataFrame({"h_y": [0.0, 0.0, 0.0], "h_z": [0.0, 0.0, 0.0]}),
+        gx_mean=0.0,
+        gz_mean=9.8,
+        floormap_path=floormap_path,
+        origin_px=(20, 20),
+        scale=1.0,
+        n_particles=12,
+        prepared_step_headings=headings,
+        prepared_step_lengths=[1.0, 1.0, 1.0],
+        prepared_step_times=[0.0, 1.0, 2.0],
+        seed=2,
+        diagnostics_collector=diagnostics,
+        stage_collector=stages,
+    )
+
+    paths = save_particle_step_frames(
+        stages,
+        diagnostics,
+        result[0],
+        gx_mean=0.0,
+        gz_mean=9.8,
+        floormap_path=floormap_path,
+        origin_px=(20, 20),
+        scale=1.0,
+        output_dir=tmp_path / "result",
+        step_range=(2, 2),
+        arrows=2,
+        dpi=30,
+    )
+
+    assert [path.name for path in paths] == ["step_002.png"]
+    assert paths[0].is_file()

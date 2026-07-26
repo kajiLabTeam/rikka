@@ -18,7 +18,11 @@ from .particle.map_constraints import (
     _normalize_floormap_gray,
     _snap_trajectory_to_walkable_pixels,
 )
-from .particle.models import ParticleFilterStepDiagnostics
+from .particle.models import (
+    ParticleFilterStepDiagnostics,
+    ParticlePathComparison,
+    ParticleStepStages,
+)
 from .particle.motion import _motion_state_headings, _sample_motion_states
 from .particle.paths import (
     _reconstruct_particle_paths,
@@ -36,6 +40,8 @@ from .particle.runner import run_particle_filter
 
 __all__ = [
     "ParticleFilterStepDiagnostics",
+    "ParticlePathComparison",
+    "ParticleStepStages",
     "_effective_sample_size",
     "_evaluate_particle_transitions",
     "_generate_recovery_candidates",

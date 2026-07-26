@@ -24,6 +24,7 @@ from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize
 
 from ...config import FLOORMAP_ORIGIN_PX, FLOORMAP_PATH, FLOORMAP_SCALE
+from ...matplotlib_config import configure_japanese_font
 from ..pdr.particle_api import StepHeading, compute_pixel_coords, plot_heading_overlay
 
 
@@ -48,6 +49,7 @@ def plot_particle_filter_trajectory(
         scale: 1ピクセルあたりのメートル数
         output_dir: 出力ディレクトリ（指定時に PNG 保存）
     """
+    configure_japanese_font()
     df = pd.DataFrame(trajectory, columns=["x", "y"])
     px, py = compute_pixel_coords(
         df["x"].to_numpy(), df["y"].to_numpy(), gx_mean, gz_mean, origin_px, scale
@@ -66,8 +68,8 @@ def plot_particle_filter_trajectory(
     lc.set_array(np.arange(n - 1))
     ax.add_collection(lc)
     sc = ax.scatter(px, py, c=np.arange(n), cmap=cmap, norm=norm, s=20, zorder=3)
-    fig.colorbar(sc, ax=ax, label="Step")
-    ax.plot(px[0], py[0], "go", markersize=10, label="Start", zorder=4)
+    fig.colorbar(sc, ax=ax, label="歩番号")
+    ax.plot(px[0], py[0], "go", markersize=10, label="開始点", zorder=4)
     plot_heading_overlay(
         ax,
         trajectory,
@@ -78,7 +80,7 @@ def plot_particle_filter_trajectory(
         scale,
     )
 
-    ax.set_title("Particle Filter Trajectory on Floormap")
+    ax.set_title("フロアマップ上のパーティクルフィルタ軌跡")
     ax.legend()
     plt.tight_layout()
     if output_dir is not None:
@@ -113,6 +115,7 @@ def save_particle_animation(
     """
     from matplotlib.animation import FFMpegWriter, PillowWriter  # noqa: PLC0415
 
+    configure_japanese_font()
     map_img = plt.imread(Path(floormap_path))
     representative_arr = np.array(mean_trajectory)  # shape: (T, 2)
 
@@ -155,7 +158,7 @@ def save_particle_animation(
             scale,
         )
         ax.scatter(px_c, py_c, s=60, c="red", zorder=4)
-        ax.set_title(f"Step {frame}")
+        ax.set_title(f"ステップ {frame}")
         return []
 
     anim = FuncAnimation(fig, update, frames=len(all_particles), interval=1000 // fps)

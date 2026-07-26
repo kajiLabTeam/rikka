@@ -25,6 +25,7 @@ from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize
 
 from ...config import FLOORMAP_ORIGIN_PX, FLOORMAP_PATH, FLOORMAP_SCALE
+from ...matplotlib_config import configure_japanese_font
 from .models import StepHeading
 
 
@@ -154,7 +155,7 @@ def _plot_heading_overlay(
                 color="dodgerblue",
                 alpha=0.85,
                 zorder=5,
-                label="Move heading" if not motion_label_added else None,
+                label="移動方位" if not motion_label_added else None,
             )
             motion_label_added = True
         if heading.body_heading is not None:
@@ -177,7 +178,7 @@ def _plot_heading_overlay(
                 color="orangered",
                 alpha=0.95,
                 zorder=6,
-                label="Body heading" if not body_label_added else None,
+                label="身体方位" if not body_label_added else None,
             )
             body_label_added = True
         if _is_plot_sidestep_suspect_movement(trajectory_movement_type):
@@ -196,7 +197,7 @@ def _plot_heading_overlay(
             edgecolors="lime",
             linewidths=1.8,
             zorder=7,
-            label="Sidestep",
+            label="横歩き",
         )
     if sidestep_suspect_points:
         sidestep_suspect_arr = np.asarray(sidestep_suspect_points, dtype=float)
@@ -209,7 +210,7 @@ def _plot_heading_overlay(
             edgecolors="gold",
             linewidths=1.8,
             zorder=7,
-            label="Sidestep suspect",
+            label="横歩き疑い",
         )
 
 
@@ -224,6 +225,7 @@ def plot_trajectory(
     step_headings: list[StepHeading] | None = None,
 ) -> None:
     """推定した2次元歩行軌跡をフロアマップ上にプロットする。"""
+    configure_japanese_font()
     df = pd.DataFrame(trajectory, columns=["x", "y"])
 
     px, py = _compute_pixel_coords(
@@ -248,9 +250,9 @@ def plot_trajectory(
     ax.add_collection(lc)
     # 各ステップ点を同じカラーマップで描画
     sc = ax.scatter(px, py, c=np.arange(n), cmap=cmap, norm=norm, s=20, zorder=3)
-    fig.colorbar(sc, ax=ax, label="Step")
+    fig.colorbar(sc, ax=ax, label="歩番号")
     # 起点を強調表示
-    ax.plot(px[0], py[0], "go", markersize=10, label="Start", zorder=4)
+    ax.plot(px[0], py[0], "go", markersize=10, label="開始点", zorder=4)
     _plot_heading_overlay(
         ax,
         trajectory,
@@ -261,7 +263,7 @@ def plot_trajectory(
         scale,
     )
 
-    ax.set_title("Walking Trajectory on Floormap")
+    ax.set_title("フロアマップ上の歩行軌跡")
     ax.legend()
     plt.tight_layout()
     if output_dir is not None:

@@ -3,7 +3,7 @@
 役割:
     粒子フィルタが1歩ごとに記録する診断値の不変データ型を定義する。
 依存元:
-    Python標準ライブラリの ``dataclasses`` だけを利用する。
+    Python標準ライブラリの ``dataclasses`` と NumPy を利用する。
 利用先:
     粒子フィルタ実行処理と診断CSV生成処理から使用される。
 処理フロー:
@@ -11,6 +11,8 @@
 """
 
 from dataclasses import dataclass
+
+import numpy as np
 
 
 @dataclass(frozen=True)
@@ -59,3 +61,50 @@ class ParticleFilterStepDiagnostics:
     trajectory_source_index: int | None
     recovery_candidate_branch_count: int = 0
     recovery_selected_branch_count: int = 0
+
+
+@dataclass(frozen=True)
+class ParticleStepStages:
+    """1歩分の段階別パーティクル状態。可視化専用で、推定には使用しない。"""
+
+    step: int
+    timestamp_s: float
+    sensor_heading: float | None
+    sensor_yaw_delta: float | None
+    movement_type: str
+    deterministic_step_length_m: float
+    before_positions: np.ndarray
+    before_offsets: np.ndarray
+    before_weights: np.ndarray
+    before_motion_state: np.ndarray
+    proposed_positions: np.ndarray
+    proposed_headings: np.ndarray
+    proposed_step_lengths: np.ndarray
+    proposed_motion_state: np.ndarray
+    valid_transition: np.ndarray
+    posterior_weights: np.ndarray
+    ess_before_observation: float
+    ess_after_observation: float
+    parent_indices: np.ndarray
+    resampled: bool
+    recovery_mode: str
+    recovery_candidate_headings: np.ndarray | None
+    recovery_candidate_valid: np.ndarray | None
+    recovery_selected_index: np.ndarray | None
+    after_positions: np.ndarray
+    after_offsets: np.ndarray
+    after_weights: np.ndarray
+    after_motion_state: np.ndarray
+
+
+@dataclass(frozen=True)
+class ParticlePathComparison:
+    """代表軌跡候補と個別粒子祖先経路の可視化用スナップショット。"""
+
+    selected_mode: str
+    selected_path: np.ndarray
+    current_path: np.ndarray
+    sequence_path: np.ndarray
+    particle_paths: np.ndarray
+    current_reversals: int
+    sequence_reversals: int

@@ -54,6 +54,9 @@ from .plotting import (
     _compute_pixel_coords as compute_pixel_coords,
 )
 from .plotting import (
+    _pixel_vector_from_heading as pixel_vector_from_heading,
+)
+from .plotting import (
     _plot_heading_overlay as plot_heading_overlay,
 )
 from .sidestep import (
@@ -93,6 +96,7 @@ __all__ = [
     "estimate_step_length_forward",
     "estimate_step_motion",
     "plot_heading_overlay",
+    "pixel_vector_from_heading",
     "resolve_motion_heading_correction",
     "resolve_step_heading",
     "smooth_step_headings",

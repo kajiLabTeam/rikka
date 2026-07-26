@@ -98,6 +98,17 @@ uv run rikka particle
 uv run rikka particle --no-plot --save-animation
 ```
 
+問題歩の粒子状態と代表軌跡候補を静止画で確認する場合:
+
+```sh
+uv run rikka particle --no-plot --pf-seed 10 \
+  --save-step-frames --step-frames-range 70 85 \
+  --save-path-comparison
+```
+
+段階別画像は既定で無効です。`--step-frames-arrows` で方位矢印数、
+`--step-frames-dpi` で解像度を調整できます。
+
 センサー波形を確認します。入力フォルダに `sensor_plot.png` を保存します。
 
 ```sh
@@ -273,8 +284,11 @@ uv run rikka run --motion-estimation robust --smoothing causal
 ```sh
 uv run rikka particle --motion-estimation adaptive \
   --motion-predictive-weight-power 0.1 \
-  --pf-path-selection sequence --pf-seed 42
+  --pf-path-selection sequence --pf-particles 500 --pf-seed 42
 ```
+
+粒子数の既定値は `config.py` の `PF_NUM_PARTICLES` で設定します。実行単位で
+変更する場合はCLIの `--pf-particles`、Python APIの `particle_count` を使います。
 
 `robust` は移動軸の180度方向曖昧性を区間で解決する実験方式である。5反復計測では
 一部データを改善した一方で中央値を悪化させたため、既定や推奨へは昇格していない。
@@ -369,6 +383,8 @@ uv run rikka run \
 | `pf_trajectory.png` | PF の平均優先、または反転抑制された単一祖先軌跡 |
 | `particle_diagnostics.csv` | 各歩のESS、有効粒子数、位置・方位分散、歩幅倍率、recovery、軌跡選択モード |
 | `particle_filter.mp4` / `.gif` | パーティクル分布アニメーション |
+| `particle_frames/step_*.png` | 明示保存時の開始・提案・壁判定・重み・選択/復旧・確定と方位ローズ |
+| `particle_paths_comparison.png` | 明示保存時の加重平均・単一祖先・個別粒子経路と方位変化の比較 |
 
 ## コード構成
 
@@ -411,6 +427,7 @@ Particle filter の内部実装は `src/rikka/analyze/particle/` に責務別で
 | `particle/paths.py` | 粒子祖先の復元と代表軌跡の選択 |
 | `particle/recovery.py` | recovery 候補生成と checkpoint replay |
 | `particle/runner.py` | `run_particle_filter()` の実行 orchestration |
+| `particle/frames.py` | 段階別粒子状態と代表軌跡候補の静止画保存 |
 | `particle/plotting.py` | 粒子軌跡の描画とアニメーション保存 |
 
 `particle/runner.py` は `prepare_pdr_steps()` で作った決定論的なステップ方位・歩幅・
@@ -448,6 +465,10 @@ trajectory = run(
     df_acc=df_acc,
     df_gyro=df_gyro,
     use_particle_filter=True,
+    particle_count=500,
+    save_step_frames=True,
+    step_frames_range=(70, 85),
+    save_path_comparison=True,
 )
 ```
 
