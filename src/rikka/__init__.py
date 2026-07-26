@@ -30,7 +30,10 @@ from .config import (
     INITIAL_DIRECTION,
     MOTION_ESTIMATION,
     PF_MOTION_PREDICTIVE_WEIGHT_POWER,
+    PF_NUM_PARTICLES,
     PF_PATH_SELECTION,
+    PF_STEP_FRAMES_ARROWS,
+    PF_STEP_FRAMES_DPI,
     SIDESTEP_LATERAL_RATIO,
     SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
     SIDESTEP_SMOOTHING_METHOD,
@@ -85,8 +88,11 @@ _MOTION_ESTIMATION_CHOICES = ("legacy", "adaptive", "robust")
 _SMOOTHING_MODE_DEFAULT = SMOOTHING_MODE
 _SMOOTHING_MODE_CHOICES = ("causal", "offline")
 _PF_MOTION_PREDICTIVE_WEIGHT_POWER_DEFAULT = PF_MOTION_PREDICTIVE_WEIGHT_POWER
+_PF_NUM_PARTICLES_DEFAULT = PF_NUM_PARTICLES
 _PF_PATH_SELECTION_DEFAULT = PF_PATH_SELECTION
 _PF_PATH_SELECTION_CHOICES = ("current", "sequence")
+_PF_STEP_FRAMES_ARROWS_DEFAULT = PF_STEP_FRAMES_ARROWS
+_PF_STEP_FRAMES_DPI_DEFAULT = PF_STEP_FRAMES_DPI
 
 
 def _validate_cli_scale(
@@ -119,6 +125,20 @@ def _validate_cli_non_negative_float(
     """0以上の float オプションであることを確認する。"""
     if not isfinite(value) or value < 0:
         raise click.BadParameter(f"{param.name} は有限な0以上の値を指定してください。")
+    return value
+
+
+def _validate_cli_step_frames_range(
+    _ctx: click.Context,
+    _param: click.Parameter,
+    value: tuple[int, int] | None,
+) -> tuple[int, int] | None:
+    """歩画像の範囲が1始まりで昇順であることを確認する。"""
+    if value is None:
+        return None
+    first, last = value
+    if first < 1 or first > last:
+        raise click.BadParameter("1 <= A <= B を満たす範囲を指定してください。")
     return value
 
 
@@ -471,10 +491,52 @@ def pdr(
     help="運動状態の予測尤度をPF重みに掛ける指数（0で無効）",
 )
 @click.option(
+    "--pf-particles",
+    type=click.IntRange(min=1),
+    default=_PF_NUM_PARTICLES_DEFAULT,
+    show_default=True,
+    help="パーティクルフィルタで使用する粒子数",
+)
+@click.option(
     "--pf-seed",
     type=int,
     default=None,
     help="パーティクルフィルタ乱数の seed（回帰検証用）",
+)
+@click.option(
+    "--save-path-comparison",
+    is_flag=True,
+    default=False,
+    help="代表軌跡候補の比較図を保存",
+)
+@click.option(
+    "--step-frames-dpi",
+    type=click.IntRange(min=1),
+    default=_PF_STEP_FRAMES_DPI_DEFAULT,
+    show_default=True,
+    help="段階別画像と代表軌跡比較図の解像度",
+)
+@click.option(
+    "--step-frames-arrows",
+    type=click.IntRange(min=0),
+    default=_PF_STEP_FRAMES_ARROWS_DEFAULT,
+    show_default=True,
+    help="段階別画像へ描く重み上位の方位矢印数",
+)
+@click.option(
+    "--step-frames-range",
+    type=int,
+    nargs=2,
+    default=None,
+    callback=_validate_cli_step_frames_range,
+    metavar="A B",
+    help="保存する歩の範囲（1始まり、両端含む）",
+)
+@click.option(
+    "--save-step-frames",
+    is_flag=True,
+    default=False,
+    help="1歩ごとの段階別パーティクル画像を保存",
 )
 @click.option(
     "--save-animation",
@@ -505,6 +567,12 @@ def particle(
     smoothing_mode: str,
     no_plot: bool,
     save_animation: bool,
+    save_step_frames: bool,
+    step_frames_range: tuple[int, int] | None,
+    step_frames_arrows: int,
+    step_frames_dpi: int,
+    save_path_comparison: bool,
+    pf_particles: int,
     pf_seed: int | None,
     motion_predictive_weight_power: float,
     pf_path_selection: str,
@@ -520,6 +588,11 @@ def particle(
         df_gyro=df_gyro,
         plot=not no_plot,
         save_animation=True if save_animation else None,
+        save_step_frames=save_step_frames,
+        step_frames_range=step_frames_range,
+        step_frames_arrows=step_frames_arrows,
+        step_frames_dpi=step_frames_dpi,
+        save_path_comparison=save_path_comparison,
         use_particle_filter=True,
         floormap_path=floormap,
         origin_px=origin_px,
@@ -540,6 +613,7 @@ def particle(
         motion_estimation=motion_estimation,
         smoothing_mode=smoothing_mode,
         particle_seed=pf_seed,
+        particle_count=pf_particles,
         motion_predictive_weight_power=motion_predictive_weight_power,
         pf_path_selection=pf_path_selection,
     )

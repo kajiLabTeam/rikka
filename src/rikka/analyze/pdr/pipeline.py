@@ -30,7 +30,10 @@ from ...config import (
     INITIAL_DIRECTION,
     MOTION_ESTIMATION,
     PF_MOTION_PREDICTIVE_WEIGHT_POWER,
+    PF_NUM_PARTICLES,
     PF_PATH_SELECTION,
+    PF_STEP_FRAMES_ARROWS,
+    PF_STEP_FRAMES_DPI,
     SAMPLING_RATE,
     SIDESTEP_LATERAL_RATIO,
     SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
@@ -107,6 +110,11 @@ def run(
     plot: bool = True,
     use_particle_filter: bool = False,
     save_animation: bool | None = None,
+    save_step_frames: bool = False,
+    step_frames_range: tuple[int, int] | None = None,
+    step_frames_arrows: int = PF_STEP_FRAMES_ARROWS,
+    step_frames_dpi: int = PF_STEP_FRAMES_DPI,
+    save_path_comparison: bool = False,
     floormap_path: str | Path = FLOORMAP_PATH,
     origin_px: tuple[int, int] = FLOORMAP_ORIGIN_PX,
     scale: float = FLOORMAP_SCALE,
@@ -124,6 +132,7 @@ def run(
     sidestep_heading_source: str = "motion",
     sidestep_suspect_mode: str = SIDESTEP_SUSPECT_MODE,
     particle_seed: int | None = None,
+    particle_count: int = PF_NUM_PARTICLES,
     motion_estimation: str = MOTION_ESTIMATION,
     smoothing_mode: str = SMOOTHING_MODE,
     motion_predictive_weight_power: float = PF_MOTION_PREDICTIVE_WEIGHT_POWER,
@@ -152,6 +161,16 @@ def run(
         save_animation (bool | None):
             パーティクルフィルタのアニメーション保存を制御する。
             ``None`` のときは ``plot`` と同じ値を使う。
+        save_step_frames:
+            ``True`` のとき1歩ごとの段階別粒子画像を保存する。
+        step_frames_range:
+            保存する歩の範囲。1始まりで両端を含む。
+        step_frames_arrows:
+            段階別画像へ描く重み上位の方位矢印数。
+        step_frames_dpi:
+            段階別画像と代表軌跡比較図の解像度。
+        save_path_comparison:
+            ``True`` のとき代表軌跡候補の比較図を保存する。
         floormap_path (str | Path):
             フロアマップ画像のパス。デフォルトは ``FLOORMAP_PATH``。
         origin_px (tuple[int, int]):
@@ -187,6 +206,8 @@ def run(
             横歩き疑いステップの軌跡反映モード。
         particle_seed:
             パーティクルフィルタの乱数 seed。``None`` のときは非決定的に実行する。
+        particle_count:
+            パーティクルフィルタで使用する粒子数。
         motion_predictive_weight_power:
             運動状態の予測尤度をPF重みに掛ける指数。0のときは無効。
         pf_path_selection:
@@ -213,6 +234,20 @@ def run(
         raise ValueError(
             "pf_path_selection は current または sequence を指定してください。"
         )
+    if particle_count <= 0:
+        raise ValueError("particle_count は正の整数を指定してください。")
+    if step_frames_range is not None:
+        first_step, last_step = step_frames_range
+        if first_step < 1 or first_step > last_step:
+            raise ValueError(
+                "step_frames_range は 1 <= A <= B を満たす必要があります。"
+            )
+    if step_frames_arrows < 0:
+        raise ValueError("step_frames_arrows は0以上を指定してください。")
+    if step_frames_dpi <= 0:
+        raise ValueError("step_frames_dpi は正の整数を指定してください。")
+    if (save_step_frames or save_path_comparison) and not use_particle_filter:
+        raise ValueError("粒子可視化の保存には use_particle_filter=True が必要です。")
     sidestep_lateral_ratio = _validate_positive_parameter(
         "sidestep_lateral_ratio",
         sidestep_lateral_ratio,
@@ -359,12 +394,16 @@ def run(
     if use_particle_filter:
         from ..particle_filter import (  # noqa: PLC0415
             ParticleFilterStepDiagnostics,
+            ParticlePathComparison,
+            ParticleStepStages,
             plot_particle_filter_trajectory,
             run_particle_filter,
             save_particle_animation,
         )
 
         particle_diagnostics: list[ParticleFilterStepDiagnostics] = []
+        particle_stages: list[ParticleStepStages] = []
+        path_comparisons: list[ParticlePathComparison] = []
         (
             trajectory,
             step_lengths,
@@ -397,9 +436,14 @@ def run(
             sidestep_heading_source=selected_sidestep_heading_source,
             sidestep_suspect_mode=selected_sidestep_suspect_mode,
             seed=particle_seed,
+            n_particles=particle_count,
             motion_predictive_weight_power=motion_predictive_weight_power,
             path_selection=pf_path_selection,
             diagnostics_collector=particle_diagnostics,
+            stage_collector=particle_stages if save_step_frames else None,
+            path_comparison_collector=(
+                path_comparisons if save_path_comparison else None
+            ),
         )
 
         print(f"Peaks detected: {len(peaks)}")
@@ -442,6 +486,54 @@ def run(
         diagnostics_path = output_dir / "particle_diagnostics.csv"
         df_particle_diagnostics.to_csv(diagnostics_path, index=False)
         print(f"Particle diagnostics saved to {diagnostics_path}")
+
+        if save_step_frames or save_path_comparison:
+            from ..particle.frames import (  # noqa: PLC0415
+                generated_files_size,
+                save_particle_path_comparison,
+                save_particle_step_frames,
+            )
+
+            visualization_paths: list[Path] = []
+            if save_step_frames:
+                visualization_paths.extend(
+                    save_particle_step_frames(
+                        particle_stages,
+                        particle_diagnostics,
+                        trajectory,
+                        gx_mean=gx_mean,
+                        gz_mean=gz_mean,
+                        floormap_path=floormap_path,
+                        origin_px=origin_px,
+                        scale=scale,
+                        output_dir=output_dir,
+                        step_range=step_frames_range,
+                        arrows=step_frames_arrows,
+                        dpi=step_frames_dpi,
+                    )
+                )
+            if save_path_comparison:
+                if len(path_comparisons) != 1:
+                    raise RuntimeError(
+                        "内部エラー: 代表軌跡候補が収集されませんでした。"
+                    )
+                visualization_paths.append(
+                    save_particle_path_comparison(
+                        path_comparisons[0],
+                        gx_mean=gx_mean,
+                        gz_mean=gz_mean,
+                        floormap_path=floormap_path,
+                        origin_px=origin_px,
+                        scale=scale,
+                        output_path=output_dir / "particle_paths_comparison.png",
+                        dpi=step_frames_dpi,
+                    )
+                )
+            size_mb = generated_files_size(visualization_paths) / (1024 * 1024)
+            print(
+                "Particle visualization saved: "
+                f"{len(visualization_paths)} files, {size_mb:.2f} MiB"
+            )
 
         if step_detection.method == "paper_vertical_threshold":
             df_step_segments = _build_step_segments_dataframe(

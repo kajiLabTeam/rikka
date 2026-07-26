@@ -8,6 +8,7 @@ from rikka.config import (
     HEADING_METHOD,
     MOTION_ESTIMATION,
     PF_MOTION_PREDICTIVE_WEIGHT_POWER,
+    PF_NUM_PARTICLES,
     PF_PATH_SELECTION,
     PF_REJUVENATION_SIGMA_HEADING,
     SIDESTEP_LATERAL_RATIO,
@@ -49,6 +50,7 @@ def test_default_sidestep_detection_settings_match_selected_standard() -> None:
     assert MOTION_ESTIMATION == "adaptive"
     assert SMOOTHING_MODE == "causal"
     assert PF_MOTION_PREDICTIVE_WEIGHT_POWER == pytest.approx(0.1)
+    assert PF_NUM_PARTICLES == 500
     assert PF_PATH_SELECTION == "sequence"
     assert GYRO_BIAS_METHOD == "prewalk_guarded"
     assert PF_REJUVENATION_SIGMA_HEADING == pytest.approx(0.009)
@@ -78,10 +80,43 @@ def test_particle_help_includes_pf_seed_option() -> None:
 
     assert result.exit_code == 0
     assert "--pf-seed" in result.output
+    assert "--pf-particles" in result.output
     assert "--motion-predictive-weight-power" in result.output
     assert "--pf-path-selection" in result.output
+    assert "--save-step-frames" in result.output
+    assert "--step-frames-range" in result.output
+    assert "--step-frames-arrows" in result.output
+    assert "--step-frames-dpi" in result.output
+    assert "--save-path-comparison" in result.output
     assert "default: 0.1" in result.output
     assert "default: sequence" in result.output
+    assert "default: 500" in result.output
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        ("0", "1"),
+        ("3", "2"),
+    ],
+)
+def test_particle_rejects_invalid_step_frames_range(
+    value: tuple[str, str],
+) -> None:
+    result = CliRunner().invoke(
+        cli,
+        ["particle", "--step-frames-range", value[0], value[1]],
+    )
+
+    assert result.exit_code == 2
+    assert "Invalid value for '--step-frames-range'" in result.output
+
+
+def test_particle_rejects_non_positive_particle_count() -> None:
+    result = CliRunner().invoke(cli, ["particle", "--pf-particles", "0"])
+
+    assert result.exit_code == 2
+    assert "Invalid value for '--pf-particles'" in result.output
 
 
 @pytest.mark.parametrize("command", ["run", "pdr", "particle", "sensor"])

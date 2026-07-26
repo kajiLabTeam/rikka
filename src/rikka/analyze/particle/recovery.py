@@ -40,6 +40,9 @@ class _RecoveryResult:
     mean_cost: float
     route_branch_ids: np.ndarray
     path_log_score_delta: np.ndarray
+    candidate_headings: np.ndarray | None = None
+    candidate_valid: np.ndarray | None = None
+    selected_candidate_indices: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -85,6 +88,7 @@ def _generate_recovery_candidates(
     allow_stride_adaptation: bool = False,
     stride_scale_min: float = 0.5,
     stride_scale_max: float = 1.6,
+    capture_candidates: bool = False,
 ) -> _RecoveryResult | None:
     """決定論的方位に近い壁非交差候補から復旧粒子を生成する。"""
     local_degrees = np.array(
@@ -113,6 +117,10 @@ def _generate_recovery_candidates(
     candidate_offsets: list[np.ndarray] = []
     candidate_length_factors: list[np.ndarray] = []
     candidate_costs: list[np.ndarray] = []
+    captured_headings: list[np.ndarray] = []
+    captured_valid: list[np.ndarray] = []
+    captured_valid_indices: list[np.ndarray] = []
+    captured_count = 0
     attempts = 0
     for stage_number, (_mode, offset_degrees, length_factors) in enumerate(
         stages[:max_attempts], start=1
@@ -171,6 +179,11 @@ def _generate_recovery_candidates(
             scale,
         )
         valid &= previous_weights[parent_indices] > 0.0
+        if capture_candidates:
+            captured_headings.append(theta.copy())
+            captured_valid.append(valid.copy())
+            captured_valid_indices.append(np.flatnonzero(valid) + captured_count)
+            captured_count += len(theta)
         if not valid.any():
             continue
 
@@ -219,6 +232,11 @@ def _generate_recovery_candidates(
                 mean_cost=float(np.mean(costs[selected_local])),
                 route_branch_ids=np.zeros(n_particles, dtype=np.int8),
                 path_log_score_delta=-0.5 * costs[selected_local],
+                candidate_headings=theta.copy() if capture_candidates else None,
+                candidate_valid=valid.copy() if capture_candidates else None,
+                selected_candidate_indices=(
+                    select.copy() if capture_candidates else None
+                ),
             )
         candidate_particles.append(candidates[valid])
         candidate_parent_indices.append(parent_indices[valid])
@@ -264,6 +282,9 @@ def _generate_recovery_candidates(
     selected_costs = costs_all[select]
     selected_correction = corrections_all[select]
     selected_drift = _normalize_angle(drifts_all[select] + selected_offsets)
+    selected_candidate_indices = (
+        np.concatenate(captured_valid_indices)[select] if capture_candidates else None
+    )
     return _RecoveryResult(
         particles=particles_all[select],
         heading_correction=selected_correction,
@@ -283,6 +304,13 @@ def _generate_recovery_candidates(
         mean_cost=float(np.mean(selected_costs)),
         route_branch_ids=selected_route_branch_ids,
         path_log_score_delta=-0.5 * selected_costs,
+        candidate_headings=(
+            np.concatenate(captured_headings) if capture_candidates else None
+        ),
+        candidate_valid=(
+            np.concatenate(captured_valid) if capture_candidates else None
+        ),
+        selected_candidate_indices=selected_candidate_indices,
     )
 
 
@@ -306,6 +334,7 @@ def _replay_from_checkpoint(
     allow_stride_adaptation: bool = False,
     stride_scale_min: float = 0.5,
     stride_scale_max: float = 1.6,
+    capture_candidates: bool = False,
 ) -> _CheckpointReplayResult | None:
     """同じ小方位差で最大3歩を再生し、壁非交差経路を返す。"""
     if len(angles) == 0 or len(angles) != len(step_lengths):
@@ -410,6 +439,9 @@ def _replay_from_checkpoint(
         mean_cost=float(np.mean(selected_costs)),
         route_branch_ids=np.zeros(n_particles, dtype=np.int8),
         path_log_score_delta=-0.5 * selected_costs,
+        candidate_headings=theta.copy() if capture_candidates else None,
+        candidate_valid=valid.copy() if capture_candidates else None,
+        selected_candidate_indices=select.copy() if capture_candidates else None,
     )
     selected_positions = np.stack(
         [positions[select] for positions in replay_positions],
