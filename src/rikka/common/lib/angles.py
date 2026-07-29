@@ -38,4 +38,3 @@ def score_ratio(value: float, target: float) -> float:
 _normalize_angle = normalize_angle
 _abs_angle_diff = abs_angle_diff
 _score_ratio = score_ratio
-
