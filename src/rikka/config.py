@@ -18,7 +18,7 @@ from math import isfinite
 # Data directory path
 # Change this path to use different input data
 
-DATA_DIR = "input/sensor_data/natsuki/1turn_rightsidestep_3turn_leftsidestep5"
+DATA_DIR = "input/sensor_data/hiroto/hiroto_1turn_rightsidestep_3turn_leftsidestep"
 
 # フロアマップ設定
 # 背景として表示するフロアマップ画像のパス
