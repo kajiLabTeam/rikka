@@ -253,3 +253,26 @@ class PreparedPdrSteps:
     motion_estimation: str = MOTION_ESTIMATION
     smoothing_mode: str = SMOOTHING_MODE
     direction_posteriors: tuple[StepDirectionPosterior, ...] = ()
+
+
+@dataclass(frozen=True)
+class ParticleFilterResult:
+    """particle filter の代表軌跡と描画・診断用状態。"""
+
+    trajectory: list[list[float]]
+    all_particles: list[np.ndarray]
+    diagnostics: tuple[object, ...] = ()
+    stages: tuple[object, ...] = ()
+    path_comparisons: tuple[object, ...] = ()
+
+
+@dataclass(frozen=True)
+class TrajectoryResult:
+    """PDR/PF と出力領域を結ぶ解析結果。"""
+
+    trajectory: list[list[float]]
+    step_lengths: list[float]
+    t_at_steps: list[float]
+    step_headings: list[StepHeading]
+    prepared: PreparedPdrSteps
+    particle: ParticleFilterResult | None = None

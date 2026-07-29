@@ -19,13 +19,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from ...analyze.pdr.gyro_bias import estimate_gyro_bias
 from ..config import (
     DATA_DIR,
     GYRO_BIAS_METHOD,
     WINDOW_ACC,
     WINDOW_GYRO,
 )
-from ...analyze.pdr.gyro_bias import estimate_gyro_bias
 from .time_utils import _gyro_integration_dt
 
 ACC_COLUMNS = {

@@ -52,4 +52,3 @@ def validate_non_negative_parameter(name: str, value: float) -> float:
     if not np.isfinite(value) or value < 0:
         raise ValueError(f"{name} は有限な0以上の値を指定してください。")
     return value
-
