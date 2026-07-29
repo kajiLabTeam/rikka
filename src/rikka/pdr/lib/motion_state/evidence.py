@@ -11,4 +11,3 @@ __all__ = [
     "build_step_motion_evidences",
     "build_step_motion_observations",
 ]
-

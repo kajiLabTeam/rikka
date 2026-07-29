@@ -28,10 +28,8 @@ def integrate_steps(
             raise ValueError("selected_heading が未確定です。")
         trajectory.append(
             [
-                trajectory[-1][0]
-                + length * float(np.cos(heading.selected_heading)),
-                trajectory[-1][1]
-                + length * float(np.sin(heading.selected_heading)),
+                trajectory[-1][0] + length * float(np.cos(heading.selected_heading)),
+                trajectory[-1][1] + length * float(np.sin(heading.selected_heading)),
             ]
         )
     return trajectory

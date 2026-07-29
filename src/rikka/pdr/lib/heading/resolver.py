@@ -710,3 +710,20 @@ def resolve_step_heading(
         sidestep_min_lateral_displacement=sidestep_min_lateral_displacement,
         device_orientation_mode=device_orientation_mode,
     )
+
+
+# 領域内の別モジュールから利用する helper は public 名で公開する。
+apply_device_orientation_to_horizontal = _apply_device_orientation_to_horizontal
+classify_movement_type = _classify_movement_type
+dataframe_times_or_sample_index = _dataframe_times_or_sample_index
+estimate_accel_headings = _estimate_accel_headings
+estimate_device_orientation_mode = _estimate_device_orientation_mode
+estimate_motion_heading_correction = _estimate_motion_heading_correction
+estimate_motion_heading_from_horizontal_accel = (
+    _estimate_motion_heading_from_horizontal_accel
+)
+integrate_motion_with_zero_velocity = _integrate_motion_with_zero_velocity
+resolve_motion_heading_correction = _resolve_motion_heading_correction
+rotate_vector = _rotate_vector
+select_two_accel_peaks = _select_two_accel_peaks
+step_segment_bounds = _step_segment_bounds
