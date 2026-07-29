@@ -14,7 +14,7 @@
 """
 
 from dataclasses import dataclass
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import numpy as np
 import pandas as pd
@@ -253,6 +253,7 @@ class PreparedPdrSteps:
     motion_estimation: str = MOTION_ESTIMATION
     smoothing_mode: str = SMOOTHING_MODE
     direction_posteriors: tuple[StepDirectionPosterior, ...] = ()
+    particle_motion_headings: tuple[float | None, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -261,9 +262,18 @@ class ParticleFilterResult:
 
     trajectory: list[list[float]]
     all_particles: list[np.ndarray]
-    diagnostics: tuple[object, ...] = ()
-    stages: tuple[object, ...] = ()
-    path_comparisons: tuple[object, ...] = ()
+    diagnostics: tuple[Any, ...] = ()
+    stages: tuple[Any, ...] = ()
+    path_comparisons: tuple[Any, ...] = ()
+
+
+@dataclass(frozen=True)
+class FloorMap:
+    """particle filter が利用する地図画像と座標変換設定。"""
+
+    path: str
+    origin_px: tuple[int, int]
+    scale: float
 
 
 @dataclass(frozen=True)

@@ -15,7 +15,7 @@
 
 import numpy as np
 
-from ..pdr.particle_api import StepMotionEvidence
+from ...common.lib.models import StepMotionEvidence
 from .models import ParticleFilterStepDiagnostics
 from .motion import _MOTION_STATE_NAMES, _normalize_angle, _weighted_circular_std
 

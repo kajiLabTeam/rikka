@@ -14,7 +14,7 @@
 import numpy as np
 from scipy.ndimage import distance_transform_edt
 
-from ..pdr.particle_api import compute_pixel_coords
+from ...plot.lib.floormap import compute_pixel_coords
 
 
 def _normalize_floormap_gray(map_raw: np.ndarray) -> np.ndarray:

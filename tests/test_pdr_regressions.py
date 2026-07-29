@@ -30,11 +30,11 @@ from rikka.analyze.pdr.motion_decoder import decode_step_motion_segments
 from rikka.analyze.pdr.motion_refinement import (
     refine_step_headings_with_motion_model,
 )
-from rikka.analyze.pdr.particle_api import (
+from rikka.analyze.sensor_plot import _project_acceleration_to_step_axes
+from rikka.pdr.lib.motion_state.evidence import (
     build_step_motion_evidences,
     build_step_motion_observations,
 )
-from rikka.analyze.sensor_plot import _project_acceleration_to_step_axes
 
 
 def _forward_step_heading(
