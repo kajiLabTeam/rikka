@@ -267,9 +267,7 @@ def _save_step_frame(
         "⑤ 選択・復旧",
         "⑥ 確定",
     )
-    for panel_index, (axis, title) in enumerate(
-        zip(map_axes, titles, strict=True)
-    ):
+    for panel_index, (axis, title) in enumerate(zip(map_axes, titles, strict=True)):
         _prepare_map_axis(axis, map_image, x_limits, y_limits, title)
         if panel_index > 0:
             _plot_recent_trajectory(
