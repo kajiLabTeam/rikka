@@ -33,8 +33,8 @@ from ...config import (
     WEINBERG_K,
     compute_weinberg_k,
 )
+from ...pdr.lib.fusion.protocol import MOTION_ESTIMATORS
 from ...pdr.lib.integrate import integrate_steps
-from .adaptive_estimator import estimate_adaptive_pdr
 from .common import (
     _validate_forward_heading_source,
     _validate_heading_method,
@@ -45,7 +45,6 @@ from .common import (
     _validate_sidestep_smoothing,
     _validate_sidestep_suspect_mode,
 )
-from .direction_resolver import resolve_step_directions
 from .gyro_bias import _validate_gyro_bias_method
 from .heading import (
     _estimate_device_orientation_mode,
@@ -54,9 +53,7 @@ from .heading import (
 )
 from .models import (
     PreparedPdrSteps,
-    StepDirectionPosterior,
     StepHeading,
-    StepMotionPosterior,
     StepSegment,
 )
 from .motion_refinement import refine_step_headings_with_motion_model
@@ -371,30 +368,21 @@ def prepare_pdr_steps(
             strict=True,
         )
     )
-    motion_posteriors: tuple[StepMotionPosterior, ...] = ()
-    direction_posteriors: tuple[StepDirectionPosterior, ...] = ()
-    if motion_estimation == "adaptive":
-        adaptive_result = estimate_adaptive_pdr(
-            step_headings,
-            length_observations,
-            motion_evidences,
-            smoothing_mode,
-        )
-        step_headings = adaptive_result.step_headings
-        step_lengths = adaptive_result.step_lengths
-        motion_posteriors = adaptive_result.posteriors
-        trajectory = integrate_steps(step_headings, step_lengths)
-
-    if motion_estimation == "robust":
-        initial_observations = build_step_motion_observations(step_headings)
-        step_headings, direction_posteriors = resolve_step_directions(
-            step_headings,
-            initial_observations,
-            smoothing_mode=smoothing_mode,
-            fixed_lag=direction_fixed_lag,
-        )
-        trajectory = integrate_steps(step_headings, step_lengths)
-        motion_evidences = build_step_motion_evidences(step_headings)
+    estimator = MOTION_ESTIMATORS[motion_estimation]
+    estimation = estimator(
+        step_headings,
+        step_lengths,
+        length_observations,
+        motion_evidences,
+        smoothing_mode,
+        direction_fixed_lag,
+    )
+    step_headings = estimation.step_headings
+    step_lengths = estimation.step_lengths
+    motion_evidences = estimation.motion_evidences
+    motion_posteriors = estimation.motion_posteriors
+    direction_posteriors = estimation.direction_posteriors
+    trajectory = integrate_steps(step_headings, step_lengths)
 
     return PreparedPdrSteps(
         df_acc=processed_acc,

@@ -1138,3 +1138,9 @@ def estimate_step_motion(
         movement_type=movement_type,
         length_scale=float(scale),
     )
+
+
+# 領域内の別モジュールから利用する helper は public 名で公開する。
+smooth_step_headings = _smooth_step_headings
+stabilize_trajectory_body_headings = _stabilize_trajectory_body_headings
+stabilize_trajectory_headings = _stabilize_trajectory_headings
