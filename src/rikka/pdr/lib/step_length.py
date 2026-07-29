@@ -237,3 +237,6 @@ def estimate_step_length_forward(
     osc_disp = abs(_integrate_forward_acceleration(a_fwd, times))
 
     return K_FORWARD * osc_disp
+
+
+estimate_initial_forward_angle = _estimate_initial_forward_angle

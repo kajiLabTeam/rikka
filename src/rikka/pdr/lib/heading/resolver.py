@@ -20,16 +20,6 @@ import numpy as np
 import pandas as pd
 from scipy.signal import find_peaks
 
-from ....analyze.pdr.common import (
-    DEVICE_ORIENTATION_MODES,
-    _abs_angle_diff,
-    _normalize_angle,
-    _score_ratio,
-    _validate_heading_method,
-    _validate_motion_heading_correction,
-    _validate_non_negative_parameter,
-    _validate_positive_parameter,
-)
 from ....common.config import (
     ACCEL_HEADING_MIN_LINE_LENGTH,
     ACCEL_HEADING_MIN_PEAK_DISTANCE,
@@ -48,6 +38,16 @@ from ....common.config import (
     TURNING_YAW_DELTA_THRESHOLD_DEG,
 )
 from ....common.lib.models import StepHeading, StepSegment
+from ....common.lib.pdr_math import (
+    DEVICE_ORIENTATION_MODES,
+    _abs_angle_diff,
+    _normalize_angle,
+    _score_ratio,
+    _validate_heading_method,
+    _validate_motion_heading_correction,
+    _validate_non_negative_parameter,
+    _validate_positive_parameter,
+)
 from ....common.lib.time_utils import (
     _sample_gyro_angle,
     _step_mid_index,

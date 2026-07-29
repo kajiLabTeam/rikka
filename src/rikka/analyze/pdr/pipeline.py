@@ -22,11 +22,22 @@ import matplotlib.image as mpimg
 import numpy as np
 import pandas as pd
 
+from ...common.lib.models import FloorMap
+from ...common.settings import (
+    HeadingSettings,
+    MotionStateSettings,
+    ParticleSettings,
+    PdrSettings,
+    SensorSettings,
+    StepSettings,
+)
 from ...config import (
     FLOORMAP_ORIGIN_PX,
     FLOORMAP_PATH,
     FLOORMAP_SCALE,
     FORWARD_HEADING_SOURCE,
+    GYRO_BIAS_METHOD,
+    HEADING_METHOD,
     INITIAL_DIRECTION,
     MOTION_ESTIMATION,
     PF_MOTION_PREDICTIVE_WEIGHT_POWER,
@@ -40,8 +51,11 @@ from ...config import (
     SIDESTEP_SMOOTHING_METHOD,
     SIDESTEP_SUSPECT_MODE,
     SMOOTHING_MODE,
+    STEP_DETECTION_METHOD,
     USER_HEIGHT_M,
 )
+from ...particle.pipeline import run_particle
+from ...pdr.pipeline import run_pdr
 from .common import (
     _validate_forward_heading_source,
     _validate_motion_heading_correction,
@@ -68,7 +82,6 @@ from .outputs import (
 from .plotting import plot_trajectory
 from .sensors import load_sensor_data
 from .time_utils import _time_values
-from .trajectory import prepare_pdr_steps
 
 
 def _validate_particle_floormap(
@@ -287,25 +300,42 @@ def run(
         _validate_particle_floormap(floormap_path, origin_px)
 
     # 通常 PDR と particle filter で共有する決定論的ステップ情報を先に作る。
-    prepared_steps = prepare_pdr_steps(
+    pdr_result = run_pdr(
+        PdrSettings(
+            sensor=SensorSettings(
+                gyro_bias_method=(
+                    GYRO_BIAS_METHOD if gyro_bias_method is None else gyro_bias_method
+                ),
+                gyro_bias=gyro_bias,
+            ),
+            step=StepSettings(
+                detection_method=(
+                    STEP_DETECTION_METHOD
+                    if step_detection_method is None
+                    else step_detection_method
+                ),
+                height_m=height_m,
+            ),
+            heading=HeadingSettings(
+                initial_direction=initial_direction,
+                method=HEADING_METHOD if heading_method is None else heading_method,
+            ),
+            motion_state=MotionStateSettings(
+                sidestep_lateral_ratio=sidestep_lateral_ratio,
+                sidestep_min_lateral_displacement=(sidestep_min_lateral_displacement),
+                motion_heading_correction=selected_motion_heading_correction,
+                sidestep_smoothing=selected_sidestep_smoothing,
+                forward_heading_source=selected_forward_heading_source,
+                sidestep_heading_source=selected_sidestep_heading_source,
+                sidestep_suspect_mode=selected_sidestep_suspect_mode,
+                motion_estimation=motion_estimation,
+                smoothing_mode=smoothing_mode,
+            ),
+        ),
         df_acc,
         df_gyro,
-        initial_direction=initial_direction,
-        height_m=height_m,
-        step_detection_method=step_detection_method,
-        heading_method=heading_method,
-        gyro_bias_method=gyro_bias_method,
-        gyro_bias=gyro_bias,
-        sidestep_lateral_ratio=sidestep_lateral_ratio,
-        sidestep_min_lateral_displacement=sidestep_min_lateral_displacement,
-        motion_heading_correction=selected_motion_heading_correction,
-        sidestep_smoothing=selected_sidestep_smoothing,
-        forward_heading_source=selected_forward_heading_source,
-        sidestep_heading_source=selected_sidestep_heading_source,
-        sidestep_suspect_mode=selected_sidestep_suspect_mode,
-        motion_estimation=motion_estimation,
-        smoothing_mode=smoothing_mode,
     )
+    prepared_steps = pdr_result.prepared
     df_acc = prepared_steps.df_acc
     df_gyro = prepared_steps.df_gyro
     step_detection = prepared_steps.step_detection
@@ -394,57 +424,33 @@ def run(
     if use_particle_filter:
         from ..particle_filter import (  # noqa: PLC0415
             ParticleFilterStepDiagnostics,
-            ParticlePathComparison,
-            ParticleStepStages,
             plot_particle_filter_trajectory,
-            run_particle_filter,
             save_particle_animation,
         )
 
-        particle_diagnostics: list[ParticleFilterStepDiagnostics] = []
-        particle_stages: list[ParticleStepStages] = []
-        path_comparisons: list[ParticlePathComparison] = []
-        (
-            trajectory,
-            step_lengths,
-            t_at_steps,
-            all_particles,
-            step_headings,
-        ) = run_particle_filter(
-            peaks,
-            df_gyro,
-            df_acc,
-            gx_mean,
-            gz_mean,
-            floormap_path=floormap_path,
-            origin_px=origin_px,
-            scale=scale,
-            initial_direction=initial_direction,
-            weinberg_k=weinberg_k,
-            heading_method=selected_heading_method,
-            step_segments=step_detection.segments,
-            prepared_step_headings=prepared_steps.step_headings,
-            prepared_step_lengths=prepared_steps.step_lengths,
-            prepared_step_times=prepared_steps.t_at_steps,
-            prepared_motion_evidences=prepared_steps.motion_evidences,
-            prepared_motion_posteriors=prepared_steps.motion_posteriors,
-            sidestep_lateral_ratio=sidestep_lateral_ratio,
-            sidestep_min_lateral_displacement=sidestep_min_lateral_displacement,
-            motion_heading_correction=selected_motion_heading_correction,
-            sidestep_smoothing=selected_sidestep_smoothing,
-            forward_heading_source=selected_forward_heading_source,
-            sidestep_heading_source=selected_sidestep_heading_source,
-            sidestep_suspect_mode=selected_sidestep_suspect_mode,
-            seed=particle_seed,
-            n_particles=particle_count,
-            motion_predictive_weight_power=motion_predictive_weight_power,
-            path_selection=pf_path_selection,
-            diagnostics_collector=particle_diagnostics,
-            stage_collector=particle_stages if save_step_frames else None,
-            path_comparison_collector=(
-                path_comparisons if save_path_comparison else None
+        mapped_result = run_particle(
+            prepared_steps,
+            FloorMap(str(floormap_path), origin_px, scale),
+            ParticleSettings(
+                floormap_path=floormap_path,
+                origin_px=origin_px,
+                scale=scale,
+                seed=particle_seed,
+                count=particle_count,
+                motion_predictive_weight_power=motion_predictive_weight_power,
+                path_selection=pf_path_selection,
             ),
         )
+        if mapped_result.particle is None:
+            raise RuntimeError("内部エラー: particle filter 結果がありません。")
+        trajectory = mapped_result.trajectory
+        step_lengths = mapped_result.step_lengths
+        t_at_steps = mapped_result.t_at_steps
+        step_headings = mapped_result.step_headings
+        all_particles = np.asarray(mapped_result.particle.all_particles)
+        particle_diagnostics = list(mapped_result.particle.diagnostics)
+        particle_stages = list(mapped_result.particle.stages)
+        path_comparisons = list(mapped_result.particle.path_comparisons)
 
         print(f"Peaks detected: {len(peaks)}")
         print(f"Steps used: {len(step_lengths)}")

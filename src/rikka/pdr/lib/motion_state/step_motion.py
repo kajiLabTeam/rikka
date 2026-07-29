@@ -18,21 +18,6 @@ from typing import NamedTuple
 
 import numpy as np
 
-from ....analyze.pdr.common import (
-    INITIAL_FORWARD_MOTION_BODY_CONSTRAINT_RAD,
-    SIDESTEP_BODY_MOTION_ANGLE_THRESHOLD_RAD,
-    SIDESTEP_BODY_MOTION_RATIO_THRESHOLD,
-    SIDESTEP_HEADING_MAX_STEP_DELTA_RAD,
-    SIDESTEP_MOTION_LATERAL_CONSTRAINT_RAD,
-    SIDESTEP_STRONG_ANGLE_THRESHOLD_RAD,
-    TRAJECTORY_HEADING_MAX_STEP_DELTA_RAD,
-    TURNING_SIDESTEP_HEADING_MAX_STEP_DELTA_RAD,
-    _normalize_angle,
-    _validate_forward_heading_source,
-    _validate_sidestep_heading_source,
-    _validate_sidestep_smoothing,
-    _validate_sidestep_suspect_mode,
-)
 from ....common.config import (
     BACKWARD_LENGTH_SCALE,
     FORWARD_HEADING_SOURCE,
@@ -48,6 +33,21 @@ from ....common.lib.models import (
     StepMotion,
     StepMotionEvidence,
     StepMotionObservation,
+)
+from ....common.lib.pdr_math import (
+    INITIAL_FORWARD_MOTION_BODY_CONSTRAINT_RAD,
+    SIDESTEP_BODY_MOTION_ANGLE_THRESHOLD_RAD,
+    SIDESTEP_BODY_MOTION_RATIO_THRESHOLD,
+    SIDESTEP_HEADING_MAX_STEP_DELTA_RAD,
+    SIDESTEP_MOTION_LATERAL_CONSTRAINT_RAD,
+    SIDESTEP_STRONG_ANGLE_THRESHOLD_RAD,
+    TRAJECTORY_HEADING_MAX_STEP_DELTA_RAD,
+    TURNING_SIDESTEP_HEADING_MAX_STEP_DELTA_RAD,
+    _normalize_angle,
+    _validate_forward_heading_source,
+    _validate_sidestep_heading_source,
+    _validate_sidestep_smoothing,
+    _validate_sidestep_suspect_mode,
 )
 
 

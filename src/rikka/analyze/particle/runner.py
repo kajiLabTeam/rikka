@@ -21,6 +21,32 @@ import matplotlib.image as mpimg
 import numpy as np
 import pandas as pd
 
+from ...common.lib.models import (
+    StepHeading,
+    StepMotionEvidence,
+    StepMotionPosterior,
+    StepSegment,
+)
+from ...common.lib.pdr_math import (
+    _validate_forward_heading_source as validate_forward_heading_source,
+)
+from ...common.lib.pdr_math import (
+    _validate_motion_heading_correction as validate_motion_heading_correction,
+)
+from ...common.lib.pdr_math import (
+    _validate_sidestep_heading_source as validate_sidestep_heading_source,
+)
+from ...common.lib.pdr_math import (
+    _validate_sidestep_smoothing as validate_sidestep_smoothing,
+)
+from ...common.lib.pdr_math import (
+    _validate_sidestep_suspect_mode as validate_sidestep_suspect_mode,
+)
+from ...common.lib.time_utils import _step_output_time as step_output_time
+from ...common.lib.validation import (
+    validate_non_negative_parameter,
+    validate_positive_parameter,
+)
 from ...config import (
     FLOORMAP_ORIGIN_PX,
     FLOORMAP_PATH,
@@ -55,30 +81,20 @@ from ...config import (
     TURNING_LENGTH_SCALE,
     WEINBERG_K,
 )
-from ..pdr.particle_api import (
-    StepHeading,
-    StepMotionEvidence,
-    StepMotionPosterior,
-    StepSegment,
+from ...pdr.lib.heading.device_orientation import estimate_device_orientation_mode
+from ...pdr.lib.heading.motion import resolve_motion_heading_correction
+from ...pdr.lib.heading.resolver import resolve_step_heading
+from ...pdr.lib.motion_state.clustering import smooth_step_headings
+from ...pdr.lib.motion_state.evidence import (
     build_particle_motion_headings,
     build_step_motion_evidences,
-    estimate_device_orientation_mode,
+)
+from ...pdr.lib.motion_state.heading_policy import stabilize_trajectory_headings
+from ...pdr.lib.motion_state.step_motion import estimate_step_motion
+from ...pdr.lib.step_length import (
     estimate_initial_forward_angle,
     estimate_step_length,
     estimate_step_length_forward,
-    estimate_step_motion,
-    resolve_motion_heading_correction,
-    resolve_step_heading,
-    smooth_step_headings,
-    stabilize_trajectory_headings,
-    step_output_time,
-    validate_forward_heading_source,
-    validate_motion_heading_correction,
-    validate_non_negative_parameter,
-    validate_positive_parameter,
-    validate_sidestep_heading_source,
-    validate_sidestep_smoothing,
-    validate_sidestep_suspect_mode,
 )
 from .diagnostics import _build_step_diagnostics
 from .map_constraints import (
@@ -164,6 +180,7 @@ def run_particle_filter(
     prepared_step_lengths: list[float] | None = None,
     prepared_step_times: list[float] | None = None,
     prepared_motion_evidences: tuple[StepMotionEvidence, ...] | None = None,
+    prepared_particle_motion_headings: tuple[float | None, ...] | None = None,
     prepared_motion_posteriors: tuple[StepMotionPosterior, ...] | None = None,
     seed: int | None = None,
     heading_drift_retention: float = PF_HEADING_DRIFT_RETENTION,
@@ -506,7 +523,16 @@ def run_particle_filter(
                     "prepared_motion_posteriors と prepared_step_headings の"
                     "長さが一致しません"
                 )
-    particle_motion_headings = build_particle_motion_headings(stabilized_step_headings)
+    particle_motion_headings = (
+        build_particle_motion_headings(stabilized_step_headings)
+        if prepared_particle_motion_headings is None
+        else prepared_particle_motion_headings
+    )
+    if len(particle_motion_headings) != len(stabilized_step_headings):
+        raise ValueError(
+            "prepared_particle_motion_headings と prepared_step_headings の"
+            "長さが一致しません"
+        )
     recording_motion_reliability = (
         float(np.median([evidence.motion_reliability for evidence in motion_evidences]))
         if motion_evidences

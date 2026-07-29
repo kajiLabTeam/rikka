@@ -12,8 +12,8 @@
 
 import numpy as np
 
+from ...common.lib.models import StepHeading, StepMotionEvidence
 from ...config import PF_MOTION_STATE_TRANSITION_STAY
-from ..pdr.particle_api import StepHeading, StepMotionEvidence
 
 _MOTION_FORWARD = 0
 _MOTION_SIDESTEP_LEFT = 1
