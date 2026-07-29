@@ -11,7 +11,7 @@
     使用される。
 処理フロー:
     入力を検証して3系列の乱数生成器を初期化し、各歩の提案・観測・復旧・履歴更新を
-    行い、祖先経路から到達可能な代表軌跡と診断結果を返す。
+    行い、各時点の到達可能な有力粒子クラスタから代表軌跡と診断結果を返す。
 """
 
 from dataclasses import replace
@@ -99,7 +99,7 @@ from .motion import (
 )
 from .paths import (
     _reconstruct_particle_paths,
-    _select_reachable_mean_path,
+    _select_reachable_cluster_path,
     _select_sequence_map_path,
     _unsupported_reversal_count,
 )
@@ -1371,9 +1371,10 @@ def run_particle_filter(
             sensor_headings,
             turning_evidence,
         )
-        current_path, current_modes, current_sources = _select_reachable_mean_path(
-            particle_paths,
-            weights,
+        current_path, current_modes, current_sources = _select_reachable_cluster_path(
+            position_history,
+            weight_history,
+            parent_history,
             map_gray,
             gx_mean,
             gz_mean,
@@ -1402,9 +1403,10 @@ def run_particle_filter(
             selected_mode = "current"
     else:
         selected_path, trajectory_modes, trajectory_sources = (
-            _select_reachable_mean_path(
-                particle_paths,
-                weights,
+            _select_reachable_cluster_path(
+                position_history,
+                weight_history,
+                parent_history,
                 map_gray,
                 gx_mean,
                 gz_mean,

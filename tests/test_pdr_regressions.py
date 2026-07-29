@@ -18,6 +18,7 @@ from rikka.analyze.particle_filter import (
     _reconstruct_resampled_paths,
     _replay_from_checkpoint,
     _sample_motion_states,
+    _select_reachable_cluster_path,
     _select_reachable_mean_path,
     _snap_trajectory_to_walkable_pixels,
     _systematic_resample,
@@ -1137,7 +1138,7 @@ def test_checkpoint_replay_reconstructs_wall_valid_multi_step_path() -> None:
     ).all()
 
 
-def test_reachable_mean_path_falls_back_without_using_zero_weight_path() -> None:
+def test_reachable_mean_path_averages_only_dominant_reachable_cluster() -> None:
     map_gray = np.full((7, 7), 255.0)
     map_gray[3, 3] = 0.0
     upper_path = np.array([[1.0, 3.0], [2.0, 2.0], [3.0, 1.0], [4.0, 2.0], [5.0, 3.0]])
@@ -1154,7 +1155,12 @@ def test_reachable_mean_path_falls_back_without_using_zero_weight_path() -> None
         scale=1.0,
     )
 
-    assert "particle_fallback" in modes
+    assert modes == ["weighted_mean"] * len(upper_path)
+    assert sources == [None] * len(upper_path)
+    np.testing.assert_allclose(
+        selected,
+        [[1.0, 3.0], [2.0, 3.0], [3.0, 1.0], [4.0, 3.0], [5.0, 3.0]],
+    )
     assert 2 not in sources
     assert _evaluate_particle_transitions(
         selected[:-1],
@@ -1165,6 +1171,64 @@ def test_reachable_mean_path_falls_back_without_using_zero_weight_path() -> None
         origin_px=(0, 0),
         scale=1.0,
     ).all()
+
+
+def test_reachable_cluster_path_averages_particles_on_same_side_of_wall() -> None:
+    map_gray = np.full((7, 7), 255.0)
+    map_gray[:, 3] = 0.0
+    upper_paths = np.array(
+        [
+            [[1.0, 1.0], [1.0, 2.0], [1.0, 3.0]],
+            [[2.0, 1.0], [2.0, 2.0], [2.0, 3.0]],
+        ]
+    )
+    other_side_path = np.array([[[5.0, 1.0], [5.0, 2.0], [5.0, 3.0]]])
+
+    particle_paths = np.concatenate([upper_paths, other_side_path])
+    selected, modes, sources = _select_reachable_cluster_path(
+        [particle_paths[:, index, :] for index in range(3)],
+        [np.array([0.35, 0.35, 0.3]) for _ in range(3)],
+        [np.arange(3), np.arange(3)],
+        map_gray,
+        gx_mean=0.0,
+        gz_mean=1.0,
+        origin_px=(0, 0),
+        scale=1.0,
+    )
+
+    np.testing.assert_allclose(selected[:, 0], 1.5)
+    np.testing.assert_allclose(selected[:, 1], [1.0, 2.0, 3.0])
+    assert modes == ["weighted_mean"] * 3
+    assert sources == [None] * 3
+
+
+def test_reachable_cluster_path_uses_weights_from_each_step() -> None:
+    map_gray = np.full((8, 8), 255.0)
+    position_history = [
+        np.array([[1.0, 1.0], [1.0, 1.0]]),
+        np.array([[2.0, 1.0], [2.0, 3.0]]),
+        np.array([[3.0, 1.0], [3.0, 3.0]]),
+    ]
+    weight_history = [
+        np.array([0.5, 0.5]),
+        np.array([0.8, 0.2]),
+        np.array([0.2, 0.8]),
+    ]
+
+    selected, modes, sources = _select_reachable_cluster_path(
+        position_history,
+        weight_history,
+        [np.array([0, 1]), np.array([0, 1])],
+        map_gray,
+        gx_mean=0.0,
+        gz_mean=1.0,
+        origin_px=(0, 0),
+        scale=1.0,
+    )
+
+    np.testing.assert_allclose(selected, [[1.0, 1.0], [2.0, 1.4], [3.0, 2.6]])
+    assert modes == ["weighted_mean"] * 3
+    assert sources == [None] * 3
 
 
 def test_adaptive_pdr_exposes_normalized_state_and_length_uncertainty() -> None:

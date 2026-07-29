@@ -9,12 +9,11 @@
 利用先:
     ``pdr.pipeline`` が明示的な保存オプションを受けた場合だけ呼び出す。
 処理フロー:
-    収集済み状態を歩単位で共通表示範囲へ変換して8パネル画像を保存し、
+    収集済み状態を歩単位で共通表示範囲へ変換して6パネル画像を保存し、
     必要に応じて平均・単一祖先・個別粒子の経路比較図も保存する。
 """
 
 from pathlib import Path
-from typing import cast
 
 import matplotlib.image as mpimg
 import matplotlib.pyplot as plt
@@ -22,7 +21,6 @@ import numpy as np
 from matplotlib import colormaps
 from matplotlib.axes import Axes
 from matplotlib.colors import to_rgba_array
-from matplotlib.projections.polar import PolarAxes
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 from ...matplotlib_config import configure_japanese_font
@@ -34,7 +32,6 @@ from .models import (
 )
 
 _MOTION_COLORS = np.asarray(["#2563eb", "#f59e0b", "#16a34a", "#9333ea"])
-_MOTION_LABELS = ("前進", "左横歩き", "右横歩き", "旋回")
 _DISPLAY_NAMES = {
     "none": "なし",
     "forward": "前進",
@@ -236,135 +233,8 @@ def _plot_recent_trajectory(
     axis.plot(pixels[:, 0], pixels[:, 1], color="black", linewidth=1.0, alpha=0.7)
 
 
-def _plot_rose(
-    axis: PolarAxes,
-    stage: ParticleStepStages,
-    previous_trajectory_heading: float | None,
-) -> None:
-    """全粒子の提案方位を壁判定別の重み付きローズ図にする。"""
-    bins = np.deg2rad(np.arange(-180.0, 181.0, 10.0))
-    headings = (stage.proposed_headings + np.pi) % (2 * np.pi) - np.pi
-    valid_weights = np.where(stage.valid_transition, stage.before_weights, 0.0)
-    invalid_weights = np.where(~stage.valid_transition, stage.before_weights, 0.0)
-    valid_hist, _ = np.histogram(headings, bins=bins, weights=valid_weights)
-    invalid_hist, _ = np.histogram(headings, bins=bins, weights=invalid_weights)
-    centers = (bins[:-1] + bins[1:]) / 2.0
-    widths = np.diff(bins)
-    axis.bar(
-        centers,
-        valid_hist,
-        width=widths,
-        color="#2563eb",
-        alpha=0.75,
-        label="壁判定OK",
-    )
-    axis.bar(
-        centers,
-        invalid_hist,
-        width=widths,
-        bottom=valid_hist,
-        color="#dc2626",
-        alpha=0.75,
-        label="壁判定NG",
-    )
-    maximum = max(float(np.max(valid_hist + invalid_hist)), 1e-12)
-    if stage.sensor_heading is not None:
-        axis.plot(
-            [stage.sensor_heading, stage.sensor_heading],
-            [0.0, maximum],
-            color="black",
-            linewidth=2.0,
-            label="センサー採用方位",
-        )
-    if previous_trajectory_heading is not None:
-        axis.plot(
-            [previous_trajectory_heading, previous_trajectory_heading],
-            [0.0, maximum],
-            color="#f59e0b",
-            linestyle="--",
-            linewidth=1.5,
-            label="前歩の代表軌跡",
-        )
-    if stage.recovery_candidate_headings is not None:
-        recovery_valid = (
-            np.ones(len(stage.recovery_candidate_headings), dtype=bool)
-            if stage.recovery_candidate_valid is None
-            else stage.recovery_candidate_valid
-        )
-        for mask, color, linestyle, label in (
-            (recovery_valid, "#9333ea", "-", "有効な復旧候補"),
-            (~recovery_valid, "#6b7280", ":", "無効な復旧候補"),
-        ):
-            recovery_hist, _ = np.histogram(
-                stage.recovery_candidate_headings[mask],
-                bins=bins,
-            )
-            if recovery_hist.max(initial=0) > 0:
-                scaled = recovery_hist / recovery_hist.max() * maximum
-                axis.plot(
-                    centers,
-                    scaled,
-                    color=color,
-                    linestyle=linestyle,
-                    linewidth=1.0,
-                    label=label,
-                )
-    axis.set_theta_zero_location("E")
-    axis.set_theta_direction(-1)
-    axis.set_title("全粒子の方位ローズ図", fontsize=10)
-    axis.legend(loc="lower left", bbox_to_anchor=(-0.2, -0.2), fontsize=7)
-
-
-def _metadata_text(
-    stage: ParticleStepStages,
-    diagnostic: ParticleFilterStepDiagnostics | None,
-) -> str:
-    """メタ情報パネルへ表示する診断文字列を作る。"""
-    sensor_deg = (
-        "なし"
-        if stage.sensor_heading is None
-        else f"{np.degrees(stage.sensor_heading):.1f}°"
-    )
-    yaw_deg = (
-        "なし"
-        if stage.sensor_yaw_delta is None
-        else f"{np.degrees(stage.sensor_yaw_delta):.1f}°"
-    )
-    lines = [
-        f"歩番号: {stage.step}",
-        f"時刻: {stage.timestamp_s:.3f} s",
-        f"センサー採用方位: {sensor_deg}",
-        f"ヨー角変化: {yaw_deg}",
-        f"移動状態: {_display_name(stage.movement_type)}",
-        f"決定論的歩幅: {stage.deterministic_step_length_m:.3f} m",
-        f"壁判定OK: {int(np.count_nonzero(stage.valid_transition))}"
-        f" / {len(stage.valid_transition)}",
-        f"ESS 観測前/後: {stage.ess_before_observation:.1f}"
-        f" / {stage.ess_after_observation:.1f}",
-        f"再標本化: {'あり' if stage.resampled else 'なし'}",
-        f"復旧方式: {_display_name(stage.recovery_mode)}",
-        f"一意な親粒子数: {len(np.unique(stage.parent_indices))}",
-    ]
-    if diagnostic is not None:
-        recovery_heading_delta = (
-            "なし"
-            if diagnostic.recovery_heading_delta_deg is None
-            else f"{diagnostic.recovery_heading_delta_deg:.1f}°"
-        )
-        lines.extend(
-            [
-                f"選択後ESS: {diagnostic.ess_after_resampling:.1f}",
-                f"復旧方位差: {recovery_heading_delta}",
-                f"位置分散: {diagnostic.position_spread_rms_m:.3f} m",
-                f"軌跡方式: {_display_name(diagnostic.trajectory_mode)}",
-            ]
-        )
-    return "\n".join(lines)
-
-
 def _save_step_frame(
     stage: ParticleStepStages,
-    diagnostic: ParticleFilterStepDiagnostics | None,
     trajectory: np.ndarray,
     map_image: np.ndarray,
     gx_mean: float,
@@ -375,25 +245,12 @@ def _save_step_frame(
     dpi: int,
     output_path: Path,
 ) -> None:
-    """1歩分の8パネル画像を保存する。"""
-    figure = plt.figure(figsize=(20, 10))
-    grid = figure.add_gridspec(2, 4)
+    """1歩分の6段階パネルを上3枚・下3枚で保存する。"""
+    figure = plt.figure(figsize=(15, 10))
+    grid = figure.add_gridspec(2, 3)
     map_axes = [
-        figure.add_subplot(grid[row, column])
-        for row, column in (
-            (0, 0),
-            (0, 1),
-            (0, 2),
-            (0, 3),
-            (1, 0),
-            (1, 1),
-        )
+        figure.add_subplot(grid[row, column]) for row in range(2) for column in range(3)
     ]
-    rose_axis = cast(
-        PolarAxes,
-        figure.add_subplot(grid[1, 2], projection="polar"),
-    )
-    metadata_axis = figure.add_subplot(grid[1, 3])
     x_limits, y_limits = _common_limits(
         stage,
         map_image.shape,
@@ -403,24 +260,27 @@ def _save_step_frame(
         scale,
     )
     titles = (
-        "① 開始（矢印：センサー方位からの累積オフセット）",
+        "① 開始",
         "② 提案（絶対方位）",
         "③ 壁判定",
         "④ 観測重み",
         "⑤ 選択・復旧",
         "⑥ 確定",
     )
-    for axis, title in zip(map_axes, titles, strict=True):
+    for panel_index, (axis, title) in enumerate(
+        zip(map_axes, titles, strict=True)
+    ):
         _prepare_map_axis(axis, map_image, x_limits, y_limits, title)
-        _plot_recent_trajectory(
-            axis,
-            trajectory,
-            stage.step,
-            gx_mean,
-            gz_mean,
-            origin_px,
-            scale,
-        )
+        if panel_index > 0:
+            _plot_recent_trajectory(
+                axis,
+                trajectory,
+                stage.step,
+                gx_mean,
+                gz_mean,
+                origin_px,
+                scale,
+            )
 
     before_px = _pixel_positions(
         stage.before_positions, gx_mean, gz_mean, origin_px, scale
@@ -434,23 +294,7 @@ def _save_step_frame(
     before_colors = _motion_colors(stage.before_motion_state)
     proposed_colors = _motion_colors(stage.proposed_motion_state)
     after_colors = _motion_colors(stage.after_motion_state)
-    base_lengths = np.full(
-        len(stage.before_positions),
-        stage.deterministic_step_length_m,
-    )
     _scatter_particles(map_axes[0], before_px, stage.before_weights, before_colors)
-    _draw_top_headings(
-        map_axes[0],
-        before_px,
-        stage.before_offsets,
-        base_lengths,
-        stage.before_weights,
-        before_colors,
-        arrows,
-        gx_mean,
-        gz_mean,
-        scale,
-    )
     _scatter_particles(map_axes[1], proposed_px, stage.before_weights, proposed_colors)
     _draw_top_headings(
         map_axes[1],
@@ -560,25 +404,6 @@ def _save_step_frame(
             alpha=0.55,
         )
 
-    previous_heading = None
-    if stage.step >= 2 and stage.step < len(trajectory):
-        delta = trajectory[stage.step - 1] - trajectory[stage.step - 2]
-        if float(np.linalg.norm(delta)) > 1e-12:
-            previous_heading = float(np.arctan2(delta[1], delta[0]))
-    _plot_rose(rose_axis, stage, previous_heading)
-    metadata_axis.axis("off")
-    metadata_axis.text(
-        0.02,
-        0.98,
-        _metadata_text(stage, diagnostic),
-        va="top",
-        ha="left",
-        fontsize=10,
-    )
-    legend_text = "\n".join(
-        f"{index}: {label}" for index, label in enumerate(_MOTION_LABELS)
-    )
-    metadata_axis.text(0.62, 0.98, legend_text, va="top", fontsize=8)
     figure.suptitle(
         f"パーティクルフィルタ 第{stage.step:03d}歩",
         fontsize=14,
@@ -626,7 +451,6 @@ def save_particle_step_frames(
     frames_dir = Path(output_dir) / "particle_frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
     trajectory_array = np.asarray(trajectory, dtype=float)
-    diagnostics_by_step = {item.step: item for item in diagnostics}
     output_paths: list[Path] = []
     for stage in stages:
         if stage.step < first or stage.step > last:
@@ -634,7 +458,6 @@ def save_particle_step_frames(
         output_path = frames_dir / f"step_{stage.step:03d}.png"
         _save_step_frame(
             stage,
-            diagnostics_by_step.get(stage.step),
             trajectory_array,
             map_image,
             gx_mean,
