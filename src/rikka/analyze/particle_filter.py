@@ -27,6 +27,7 @@ from .particle.motion import _motion_state_headings, _sample_motion_states
 from .particle.paths import (
     _reconstruct_particle_paths,
     _reconstruct_resampled_paths,
+    _select_reachable_cluster_path,
     _select_reachable_mean_path,
     _select_sequence_map_path,
 )
@@ -51,6 +52,7 @@ __all__ = [
     "_reconstruct_resampled_paths",
     "_replay_from_checkpoint",
     "_sample_motion_states",
+    "_select_reachable_cluster_path",
     "_select_reachable_mean_path",
     "_select_sequence_map_path",
     "_snap_trajectory_to_walkable_pixels",
