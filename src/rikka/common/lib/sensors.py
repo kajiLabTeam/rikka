@@ -19,7 +19,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from ...analyze.pdr.gyro_bias import estimate_gyro_bias
+from ...pdr.lib.gyro_bias import estimate_gyro_bias
 from ..config import (
     DATA_DIR,
     GYRO_BIAS_METHOD,

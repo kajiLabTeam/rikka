@@ -33,6 +33,7 @@ from ...config import (
     WEINBERG_K,
     compute_weinberg_k,
 )
+from ...pdr.lib.integrate import integrate_steps
 from .adaptive_estimator import estimate_adaptive_pdr
 from .common import (
     _validate_forward_heading_source,
@@ -246,9 +247,7 @@ def estimate_trajectory_with_headings(
         t_at_steps.append(step_time)
         step_headings.append(step_heading)
         previous_heading = step_motion.heading
-        x = points[-1][0] + step_motion.length * float(np.cos(step_motion.heading))
-        y = points[-1][1] + step_motion.length * float(np.sin(step_motion.heading))
-        points.append([x, y])
+    points = integrate_steps(step_headings, step_lengths)
 
     return points, step_lengths, t_at_steps, step_headings
 
@@ -384,17 +383,7 @@ def prepare_pdr_steps(
         step_headings = adaptive_result.step_headings
         step_lengths = adaptive_result.step_lengths
         motion_posteriors = adaptive_result.posteriors
-        trajectory = [[0.0, 0.0]]
-        for heading, length in zip(step_headings, step_lengths, strict=True):
-            assert heading.selected_heading is not None
-            trajectory.append(
-                [
-                    trajectory[-1][0]
-                    + length * float(np.cos(heading.selected_heading)),
-                    trajectory[-1][1]
-                    + length * float(np.sin(heading.selected_heading)),
-                ]
-            )
+        trajectory = integrate_steps(step_headings, step_lengths)
 
     if motion_estimation == "robust":
         initial_observations = build_step_motion_observations(step_headings)
@@ -404,17 +393,7 @@ def prepare_pdr_steps(
             smoothing_mode=smoothing_mode,
             fixed_lag=direction_fixed_lag,
         )
-        trajectory = [[0.0, 0.0]]
-        for heading, length in zip(step_headings, step_lengths, strict=True):
-            assert heading.selected_heading is not None
-            trajectory.append(
-                [
-                    trajectory[-1][0]
-                    + length * float(np.cos(heading.selected_heading)),
-                    trajectory[-1][1]
-                    + length * float(np.sin(heading.selected_heading)),
-                ]
-            )
+        trajectory = integrate_steps(step_headings, step_lengths)
         motion_evidences = build_step_motion_evidences(step_headings)
 
     return PreparedPdrSteps(
