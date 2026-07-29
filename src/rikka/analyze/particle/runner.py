@@ -81,6 +81,7 @@ from ...config import (
     TURNING_LENGTH_SCALE,
     WEINBERG_K,
 )
+from ...particle.lib.state import ParticleHistory, ParticleState
 from ...pdr.lib.heading.device_orientation import estimate_device_orientation_mode
 from ...pdr.lib.heading.motion import resolve_motion_heading_correction
 from ...pdr.lib.heading.resolver import resolve_step_heading
@@ -382,17 +383,27 @@ def run_particle_filter(
         effective_stride_scale_max,
     )
     weights = np.ones(n_particles) / n_particles
+    initial_state = ParticleState(
+        particles,
+        heading_correction,
+        heading_drift,
+        motion_state,
+        stride_scale,
+        weights,
+    )
 
     step_lengths: list[float] = []
     t_at_steps: list[float] = []
-    position_history: list[np.ndarray] = [particles.copy()]
-    heading_correction_history: list[np.ndarray] = [heading_correction.copy()]
-    heading_drift_history: list[np.ndarray] = [heading_drift.copy()]
-    motion_state_history: list[np.ndarray] = [motion_state.copy()]
-    stride_scale_history: list[np.ndarray] = [stride_scale.copy()]
-    weight_history: list[np.ndarray] = [weights.copy()]
-    path_log_score_history: list[np.ndarray] = [np.zeros(n_particles, dtype=float)]
-    parent_history: list[np.ndarray] = []
+    history = ParticleHistory()
+    history.append(initial_state, np.zeros(n_particles, dtype=float))
+    position_history = history.positions
+    heading_correction_history = history.heading_corrections
+    heading_drift_history = history.heading_drifts
+    motion_state_history = history.motion_states
+    stride_scale_history = history.stride_scales
+    weight_history = history.weights
+    path_log_score_history = history.path_log_scores
+    parent_history = history.parents
     all_particles_list: list[np.ndarray] = [particles.copy()]  # ステップ0（原点）
     step_headings: list[StepHeading] = []
     healthy_checkpoint_steps = [0]
