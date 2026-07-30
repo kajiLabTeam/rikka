@@ -7,8 +7,8 @@
     ``config`` から地図の既定値、``models`` から ``StepHeading`` を取得し、
     NumPy、Pandas、Matplotlib を座標変換と描画に利用する。
 利用先:
-    ``pipeline`` が通常軌跡を描画し、``particle_api`` を経由して
-    ``particle_filter`` も座標変換と方位オーバーレイを再利用する。
+    ``plot.pipeline`` が通常軌跡を描画し、particle filter の描画処理も
+    座標変換と方位オーバーレイを再利用する。
 処理フロー:
     地図を読み、端末姿勢に合わせて座標とベクトルをピクセルへ変換し、軌跡線と
     診断情報を描画して必要なら PNG を保存する。
@@ -25,48 +25,12 @@ from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize
 
 from ...common.config import FLOORMAP_ORIGIN_PX, FLOORMAP_PATH, FLOORMAP_SCALE
+from ...common.lib.floormap import compute_pixel_coords, pixel_vector_from_heading
 from ...common.lib.models import StepHeading
 from ...matplotlib_config import configure_japanese_font
 
-
-def _compute_pixel_coords(
-    xs: np.ndarray,
-    ys: np.ndarray,
-    gx_mean: float,
-    gz_mean: float,
-    origin_px: tuple[int, int],
-    scale: float,
-) -> tuple[np.ndarray, np.ndarray]:
-    """メートル座標をフロアマップのピクセル座標に変換する。"""
-    if abs(gx_mean) > abs(gz_mean):
-        y_sign = -1 if gx_mean > 0 else 1
-    else:
-        y_sign = -1 if gz_mean < 0 else 1
-    px = origin_px[0] + xs / scale
-    py = origin_px[1] + y_sign * ys / scale
-    return px, py
-
-
-def _pixel_vector_from_heading(
-    heading: float,
-    length_m: float,
-    gx_mean: float,
-    gz_mean: float,
-    scale: float,
-) -> tuple[float, float]:
-    """メートル座標の方位ベクトルをピクセル座標の差分に変換する。"""
-    y_sign = (
-        -1
-        if (
-            (abs(gx_mean) > abs(gz_mean) and gx_mean > 0)
-            or (abs(gz_mean) >= abs(gx_mean) and gz_mean < 0)
-        )
-        else 1
-    )
-    return (
-        length_m * float(np.cos(heading)) / scale,
-        y_sign * length_m * float(np.sin(heading)) / scale,
-    )
+_compute_pixel_coords = compute_pixel_coords
+_pixel_vector_from_heading = pixel_vector_from_heading
 
 
 def _is_plot_sidestep_movement(movement_type: str | None) -> bool:

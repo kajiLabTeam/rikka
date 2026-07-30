@@ -7,8 +7,8 @@
     ``config`` の移動別倍率、``common`` の判定閾値・角度処理、``models`` の
     ``StepHeading`` / ``StepMotion`` を利用する。
 利用先:
-    ``trajectory`` が通常 PDR に使用し、``particle_api`` 経由で
-    ``particle_filter`` も同じ平滑化・移動量決定ロジックを使用する。
+    ``pdr.pipeline`` が通常 PDR に使用し、確定結果を共有型へ格納して
+    particle filter へ渡す。
 処理フロー:
     各歩の横方向 evidence を作り、隣接歩をクラスタ平滑化し、急激な方位変化を
     移動種別ごとの上限で抑えた後、最終的な ``StepMotion`` を返す。

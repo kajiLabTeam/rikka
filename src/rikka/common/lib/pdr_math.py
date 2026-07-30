@@ -5,8 +5,7 @@
 依存元:
     NumPy の有限値・角度計算だけを利用し、他の PDR モジュールには依存しない。
 利用先:
-    ``heading``、``sidestep``、``trajectory``、``pipeline``、``particle_api`` と
-    互換 facade が共通ルールとして使用する。
+    PDR、particle filter、CLI、互換 facade が共通ルールとして使用する。
 処理フロー:
     入力値を正規化または検証して返し、不正値は ``ValueError`` にする。
     アルゴリズム本体から独立させることでモジュール間の循環 import を避ける。

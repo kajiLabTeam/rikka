@@ -7,8 +7,8 @@
     ``config`` から窓幅・係数・区間上限、``time_utils`` から時刻とジャイロ角の
     サンプリングを取得し、NumPy と Pandas で数値積分する。
 利用先:
-    ``trajectory`` が通常 PDR に使用し、``particle_api`` を通じて
-    ``particle_filter`` も同じ決定論的歩幅を使用する。
+    ``pdr.pipeline`` が通常 PDR に使用し、確定した歩幅を共有型へ格納して
+    particle filter へ渡す。
 処理フロー:
     対象ステップ区間を切り出し、方式に応じて加速度振幅または前進方向変位を計算し、
     1歩分の距離をメートルで返す。

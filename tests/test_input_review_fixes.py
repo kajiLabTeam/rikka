@@ -12,9 +12,9 @@ from click.testing import CliRunner
 
 from rikka import cli
 from rikka.analyze import sensor_plot
-from rikka.analyze.pdr import pipeline
 from rikka.analyze.pdr.gyro_bias import estimate_gyro_bias
 from rikka.analyze.pdr.time_utils import _gyro_integration_dt, _time_values
+from rikka.cli import commands as pipeline
 
 
 @pytest.mark.parametrize(

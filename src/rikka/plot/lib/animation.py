@@ -3,7 +3,7 @@
 役割:
     地図上へ代表軌跡と全粒子分布を描き、静止画表示と動画保存を行う。
 依存元:
-    ``config`` の地図既定値、``pdr.particle_api`` の座標変換と方位重ね描き、
+    ``config`` の地図既定値、``plot.lib`` の座標変換と方位重ね描き、
     Matplotlib、NumPy、Pandasを利用する。
 利用先:
     PDR pipelineがparticle filter実行後の軌跡表示と任意のanimation保存に使用する。
