@@ -14,6 +14,7 @@
 """
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -56,33 +57,84 @@ def _recovery_route_branch_ids(offsets: np.ndarray) -> np.ndarray:
     return branch_ids
 
 
+_RECOVERY_PARAMETERS = (
+    "previous_particles",
+    "previous_heading_correction",
+    "previous_heading_drift",
+    "previous_stride_scale",
+    "proposed_motion_state",
+    "previous_weights",
+    "angle_det",
+    "step_length",
+    "sigma_step_length_ratio",
+    "n_particles",
+    "map_gray",
+    "gx_mean",
+    "gz_mean",
+    "origin_px",
+    "scale",
+    "heading_sigma",
+    "max_attempts",
+    "rng",
+    "allow_turn_candidates",
+    "preserve_route_branches",
+    "allow_stride_adaptation",
+    "stride_scale_min",
+    "stride_scale_max",
+    "capture_candidates",
+)
+_RECOVERY_DEFAULTS = {
+    "allow_turn_candidates": False,
+    "preserve_route_branches": True,
+    "allow_stride_adaptation": False,
+    "stride_scale_min": 0.5,
+    "stride_scale_max": 1.6,
+    "capture_candidates": False,
+}
+
+
 def _generate_recovery_candidates(
-    previous_particles: np.ndarray,
-    previous_heading_correction: np.ndarray,
-    previous_heading_drift: np.ndarray,
-    previous_stride_scale: np.ndarray,
-    proposed_motion_state: np.ndarray,
-    previous_weights: np.ndarray,
-    angle_det: float | np.ndarray,
-    step_length: float | np.ndarray,
-    sigma_step_length_ratio: float,
-    n_particles: int,
-    map_gray: np.ndarray,
-    gx_mean: float,
-    gz_mean: float,
-    origin_px: tuple[int, int],
-    scale: float,
-    heading_sigma: float,
-    max_attempts: int,
-    rng: np.random.Generator,
-    allow_turn_candidates: bool = False,
-    preserve_route_branches: bool = True,
-    allow_stride_adaptation: bool = False,
-    stride_scale_min: float = 0.5,
-    stride_scale_max: float = 1.6,
-    capture_candidates: bool = False,
+    *args: Any,
+    **kwargs: Any,
 ) -> _RecoveryResult | None:
     """決定論的方位に近い壁非交差候補から復旧粒子を生成する。"""
+    values = dict(zip(_RECOVERY_PARAMETERS, args, strict=False))
+    duplicated = set(values) & set(kwargs)
+    if duplicated:
+        raise TypeError(f"{sorted(duplicated)[0]} が重複指定されています")
+    values.update(kwargs)
+    for name, default in _RECOVERY_DEFAULTS.items():
+        values.setdefault(name, default)
+    missing = [name for name in _RECOVERY_PARAMETERS if name not in values]
+    if missing:
+        raise TypeError(f"必須引数が不足しています: {', '.join(missing)}")
+    if len(args) > len(_RECOVERY_PARAMETERS):
+        raise TypeError("位置引数が多すぎます")
+
+    previous_particles = values["previous_particles"]
+    previous_heading_correction = values["previous_heading_correction"]
+    previous_heading_drift = values["previous_heading_drift"]
+    previous_stride_scale = values["previous_stride_scale"]
+    proposed_motion_state = values["proposed_motion_state"]
+    previous_weights = values["previous_weights"]
+    angle_det = values["angle_det"]
+    step_length = values["step_length"]
+    sigma_step_length_ratio = values["sigma_step_length_ratio"]
+    n_particles = values["n_particles"]
+    map_gray = values["map_gray"]
+    gx_mean = values["gx_mean"]
+    gz_mean = values["gz_mean"]
+    origin_px = values["origin_px"]
+    scale = values["scale"]
+    heading_sigma = values["heading_sigma"]
+    max_attempts = values["max_attempts"]
+    rng = values["rng"]
+    allow_turn_candidates = values["allow_turn_candidates"]
+    preserve_route_branches = values["preserve_route_branches"]
+    allow_stride_adaptation = values["allow_stride_adaptation"]
+    stride_scale_min = values["stride_scale_min"]
+    stride_scale_max = values["stride_scale_max"]
+    capture_candidates = values["capture_candidates"]
     local_degrees = np.array(
         [0.0, 5.0, -5.0, 10.0, -10.0, 20.0, -20.0, 30.0, -30.0, 45.0, -45.0]
     )

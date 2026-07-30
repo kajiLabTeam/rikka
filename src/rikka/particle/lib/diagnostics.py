@@ -13,48 +13,47 @@
     軌跡選択前を示すpending状態の不変dataclassを返す。
 """
 
+from typing import Any
+
 import numpy as np
 
-from ...common.lib.models import StepMotionEvidence
 from ...particle.lib.recorder import ParticleFilterStepDiagnostics
 from .proposal import _MOTION_STATE_NAMES, _normalize_angle, _weighted_circular_std
 
 
-def _build_step_diagnostics(
-    *,
-    step_number: int,
-    step_time: float,
-    valid_count: int,
-    n_particles: int,
-    valid_weight_count: int,
-    valid_weight_mass: float,
-    ess_before_observation: float,
-    ess_after_observation: float,
-    ess_after_resampling: float,
-    weights: np.ndarray,
-    particles: np.ndarray,
-    heading_drift: np.ndarray,
-    heading_correction: np.ndarray,
-    stride_scale: np.ndarray,
-    effective_step_lengths: np.ndarray,
-    parent_indices: np.ndarray,
-    resampled: bool,
-    motion_state: np.ndarray,
-    motion_state_before: np.ndarray,
-    motion_evidence: StepMotionEvidence,
-    recovery_attempted: bool,
-    recovery_mode: str,
-    recovery_valid_count: int,
-    recovery_attempts: int,
-    recovery_heading_delta_deg: float | None,
-    recovery_step_scale: float | None,
-    recovery_cost: float | None,
-    recovery_checkpoint_step: int | None,
-    recovery_replay_steps: int,
-    recovery_candidate_branch_count: int,
-    recovery_selected_branch_count: int,
-) -> ParticleFilterStepDiagnostics:
+def _build_step_diagnostics(**values: Any) -> ParticleFilterStepDiagnostics:
     """粒子更新後の値から従来と同じ演算順で1歩分の診断値を返す。"""
+    step_number = values["step_number"]
+    step_time = values["step_time"]
+    valid_count = values["valid_count"]
+    n_particles = values["n_particles"]
+    valid_weight_count = values["valid_weight_count"]
+    valid_weight_mass = values["valid_weight_mass"]
+    ess_before_observation = values["ess_before_observation"]
+    ess_after_observation = values["ess_after_observation"]
+    ess_after_resampling = values["ess_after_resampling"]
+    weights = values["weights"]
+    particles = values["particles"]
+    heading_drift = values["heading_drift"]
+    heading_correction = values["heading_correction"]
+    stride_scale = values["stride_scale"]
+    effective_step_lengths = values["effective_step_lengths"]
+    parent_indices = values["parent_indices"]
+    resampled = values["resampled"]
+    motion_state = values["motion_state"]
+    motion_state_before = values["motion_state_before"]
+    motion_evidence = values["motion_evidence"]
+    recovery_attempted = values["recovery_attempted"]
+    recovery_mode = values["recovery_mode"]
+    recovery_valid_count = values["recovery_valid_count"]
+    recovery_attempts = values["recovery_attempts"]
+    recovery_heading_delta_deg = values["recovery_heading_delta_deg"]
+    recovery_step_scale = values["recovery_step_scale"]
+    recovery_cost = values["recovery_cost"]
+    recovery_checkpoint_step = values["recovery_checkpoint_step"]
+    recovery_replay_steps = values["recovery_replay_steps"]
+    recovery_candidate_branch_count = values["recovery_candidate_branch_count"]
+    recovery_selected_branch_count = values["recovery_selected_branch_count"]
     unique_position_count = int(
         np.unique(np.round(particles, decimals=9), axis=0).shape[0]
     )

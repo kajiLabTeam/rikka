@@ -9,12 +9,13 @@ from ..particle.lib.map_constraints import (
     _normalize_floormap_gray,
     _snap_trajectory_to_walkable_pixels,
 )
-from ..particle.lib.paths import (
+from ..particle.lib.path_history import (
     _reconstruct_particle_paths,
     _reconstruct_resampled_paths,
+)
+from ..particle.lib.path_selection import (
     _select_reachable_cluster_path,
     _select_reachable_mean_path,
-    _select_sequence_map_path,
 )
 from ..particle.lib.proposal import _motion_state_headings, _sample_motion_states
 from ..particle.lib.recorder import (
@@ -26,6 +27,9 @@ from ..particle.lib.recovery.checkpoint import _replay_from_checkpoint
 from ..particle.lib.recovery.local import _generate_recovery_candidates
 from ..particle.lib.resampling import _effective_sample_size, _systematic_resample
 from ..particle.lib.runner import run_particle_filter
+from ..particle.lib.sequence_path import (
+    _select_sequence_map_path,
+)
 from ..plot.lib.animation import (
     plot_particle_filter_trajectory,
     save_particle_animation,
