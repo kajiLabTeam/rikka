@@ -53,21 +53,23 @@ from ..common.lib.sensors import load_sensor_data, process_sensor_data
 from ..common.lib.time_utils import _step_output_time
 from ..common.settings import PdrSettings
 from .lib.fusion.protocol import MOTION_ESTIMATORS
-from .lib.gyro_bias import _validate_gyro_bias_method
+from .lib.gyro_bias_estimators import _validate_gyro_bias_method
+from .lib.heading.device_orientation import estimate_device_orientation_mode
+from .lib.heading.motion import resolve_motion_heading_correction
 from .lib.heading.resolver import (
-    estimate_device_orientation_mode,
-    resolve_motion_heading_correction,
     resolve_step_heading,
 )
 from .lib.integrate import integrate_steps
-from .lib.motion_state.refinement import refine_step_headings_with_motion_model
-from .lib.motion_state.step_motion import (
+from .lib.motion_state.clustering import smooth_step_headings
+from .lib.motion_state.evidence import (
     build_particle_motion_headings,
     build_step_motion_evidences,
     build_step_motion_observations,
+)
+from .lib.motion_state.heading_policy import stabilize_trajectory_headings
+from .lib.motion_state.refinement import refine_step_headings_with_motion_model
+from .lib.motion_state.step_motion import (
     estimate_step_motion,
-    smooth_step_headings,
-    stabilize_trajectory_headings,
 )
 from .lib.step_detection import detect_step_result
 from .lib.step_length import (
