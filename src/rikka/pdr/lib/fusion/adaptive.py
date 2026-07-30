@@ -49,6 +49,138 @@ _TRANSITION = np.asarray(
 )
 
 
+def _adaptive_mode_probabilities(
+    previous: AdaptivePdrState,
+    step_heading: StepHeading,
+    evidence: StepMotionEvidence,
+    candidates: np.ndarray,
+) -> np.ndarray:
+    """遷移事前分布、観測尤度、方位連続性から状態確率を更新する。"""
+    prior = np.asarray(previous.mode_probabilities) @ _TRANSITION
+    likelihood = np.asarray(
+        [
+            evidence.forward_likelihood,
+            evidence.sidestep_left_likelihood,
+            evidence.sidestep_right_likelihood,
+            evidence.turning_likelihood,
+        ],
+        dtype=float,
+    )
+    if previous.heading_mean is None:
+        continuity = np.ones(4, dtype=float)
+    else:
+        expected_yaw = float(step_heading.yaw_delta or 0.0)
+        residuals = np.asarray(
+            [
+                _normalize_angle(value - previous.heading_mean - expected_yaw)
+                for value in candidates
+            ]
+        )
+        sigmas = np.deg2rad(np.asarray([24.0, 34.0, 34.0, 70.0]))
+        continuity = np.exp(-0.5 * np.square(residuals / sigmas)) + 1e-4
+    probabilities = prior * np.maximum(likelihood, 1e-4) * continuity
+    probabilities /= probabilities.sum()
+    return np.asarray(probabilities, dtype=float)
+
+
+def _adaptive_heading_state(
+    previous: AdaptivePdrState,
+    step_heading: StepHeading,
+    candidates: np.ndarray,
+    probabilities: np.ndarray,
+) -> tuple[float, float]:
+    """代表方位を選び、横歩き誤遷移時の急変を抑制する。"""
+    representative = next(
+        (
+            value
+            for value in (
+                step_heading.selected_heading,
+                step_heading.motion_heading,
+                _body_heading(step_heading),
+            )
+            if value is not None
+        ),
+        float(candidates[int(np.argmax(probabilities))]),
+    )
+    heading_mean = float(representative)
+    if previous.heading_mean is not None:
+        heading_jump = _normalize_angle(heading_mean - previous.heading_mean)
+        movement_type = (
+            step_heading.trajectory_movement_type or step_heading.movement_type
+        )
+        previous_side = previous.mode_probabilities[1] + previous.mode_probabilities[2]
+        if (
+            movement_type in {"sidestep_left", "sidestep_right"}
+            and previous_side < 0.5
+            and abs(heading_jump) > np.deg2rad(45.0)
+            and abs(float(step_heading.yaw_delta or 0.0)) < np.deg2rad(20.0)
+            and probabilities[3] < 0.25
+        ):
+            heading_mean = previous.heading_mean
+    return heading_mean, min(_circular_std(candidates, probabilities), np.pi)
+
+
+def _adaptive_length_state(
+    previous: AdaptivePdrState,
+    observation: StepLengthObservation,
+    probabilities: np.ndarray,
+) -> tuple[float, float, float, float, float, float]:
+    """forward/sidestepの歩幅scale状態と混合分布のmomentsを更新する。"""
+    nominal = max(observation.nominal_length_m, 1e-4)
+    interval = max(observation.interval_length_m, 1e-4)
+    measurement = float(np.log(np.clip(interval / nominal, 0.60, 1.45)))
+    variance = float(observation.log_length_sigma**2)
+    side_probability = float(probabilities[1] + probabilities[2])
+    forward_probability = float(probabilities[0] + probabilities[3])
+    forward_mean, forward_variance = _kalman_update(
+        previous.forward_log_scale_mean,
+        previous.forward_log_scale_variance,
+        measurement,
+        variance,
+        forward_probability,
+    )
+    side_mean, side_variance = _kalman_update(
+        previous.sidestep_log_scale_mean,
+        previous.sidestep_log_scale_variance,
+        measurement,
+        variance,
+        side_probability,
+    )
+    mode_scales = np.exp(np.asarray([forward_mean, side_mean, side_mean, forward_mean]))
+    length_mean, length_std = _length_moments(
+        probabilities,
+        nominal * mode_scales,
+        np.asarray([forward_variance, side_variance, side_variance, forward_variance])
+        + variance,
+    )
+    return (
+        forward_mean,
+        forward_variance,
+        side_mean,
+        side_variance,
+        length_mean,
+        length_std,
+    )
+
+
+def _adaptive_offset_state(
+    previous: AdaptivePdrState,
+    step_heading: StepHeading,
+) -> tuple[float, float]:
+    """端末―身体方位offsetの状態を更新する。"""
+    variance = float(
+        np.deg2rad(6.0 + 24.0 * (1.0 - step_heading.dynamic_body_heading_confidence))
+        ** 2
+    )
+    return _kalman_update(
+        previous.device_body_offset_mean,
+        previous.device_body_offset_variance,
+        float(step_heading.device_body_offset),
+        variance,
+        max(step_heading.dynamic_body_heading_confidence, 0.05),
+    )
+
+
 class AdaptivePdrEstimator:
     """ステップ到着ごとに更新可能な適応PDR推定器。"""
 
@@ -63,114 +195,34 @@ class AdaptivePdrEstimator:
     ) -> StepMotionPosterior:
         """1歩分の観測だけを使い、因果的に状態を更新する。"""
         previous = self.state
-        prior = np.asarray(previous.mode_probabilities) @ _TRANSITION
-        sensor_likelihood = np.asarray(
-            [
-                motion_evidence.forward_likelihood,
-                motion_evidence.sidestep_left_likelihood,
-                motion_evidence.sidestep_right_likelihood,
-                motion_evidence.turning_likelihood,
-            ],
-            dtype=float,
-        )
         candidates = _mode_heading_candidates(step_heading)
-        if previous.heading_mean is None:
-            continuity = np.ones(4, dtype=float)
-        else:
-            expected_yaw = float(step_heading.yaw_delta or 0.0)
-            residuals = np.asarray(
-                [
-                    _normalize_angle(value - previous.heading_mean - expected_yaw)
-                    for value in candidates
-                ]
-            )
-            sigmas = np.deg2rad(np.asarray([24.0, 34.0, 34.0, 70.0]))
-            continuity = np.exp(-0.5 * np.square(residuals / sigmas)) + 1e-4
-        probabilities = prior * np.maximum(sensor_likelihood, 1e-4) * continuity
-        probabilities /= probabilities.sum()
-
-        representative_heading = next(
-            (
-                value
-                for value in (
-                    step_heading.selected_heading,
-                    step_heading.motion_heading,
-                    _body_heading(step_heading),
-                )
-                if value is not None
-            ),
-            float(candidates[int(np.argmax(probabilities))]),
+        probabilities = _adaptive_mode_probabilities(
+            previous,
+            step_heading,
+            motion_evidence,
+            candidates,
         )
-        heading_mean = float(representative_heading)
-        if previous.heading_mean is not None:
-            heading_jump = _normalize_angle(heading_mean - previous.heading_mean)
-            yaw_delta = abs(float(step_heading.yaw_delta or 0.0))
-            movement_type = (
-                step_heading.trajectory_movement_type or step_heading.movement_type
-            )
-            previous_side_probability = (
-                previous.mode_probabilities[1] + previous.mode_probabilities[2]
-            )
-            if (
-                movement_type in {"sidestep_left", "sidestep_right"}
-                and previous_side_probability < 0.5
-                and abs(heading_jump) > np.deg2rad(45.0)
-                and yaw_delta < np.deg2rad(20.0)
-                and probabilities[3] < 0.25
-            ):
-                heading_mean = previous.heading_mean
-        heading_std = min(_circular_std(candidates, probabilities), np.pi)
-
-        nominal = max(length_observation.nominal_length_m, 1e-4)
-        interval = max(length_observation.interval_length_m, 1e-4)
-        ratio_measurement = float(np.log(np.clip(interval / nominal, 0.60, 1.45)))
-        measurement_variance = float(length_observation.log_length_sigma**2)
-        side_probability = float(probabilities[1] + probabilities[2])
-        forward_probability = float(probabilities[0] + probabilities[3])
-        forward_mean, forward_variance = _kalman_update(
-            previous.forward_log_scale_mean,
-            previous.forward_log_scale_variance,
-            ratio_measurement,
-            measurement_variance,
-            forward_probability,
-        )
-        side_measurement = ratio_measurement
-        side_mean, side_variance = _kalman_update(
-            previous.sidestep_log_scale_mean,
-            previous.sidestep_log_scale_variance,
-            side_measurement,
-            measurement_variance,
-            side_probability,
-        )
-        mode_scales = np.exp(
-            np.asarray([forward_mean, side_mean, side_mean, forward_mean])
-        )
-        length_means = nominal * mode_scales
-        log_variances = (
-            np.asarray(
-                [forward_variance, side_variance, side_variance, forward_variance]
-            )
-            + measurement_variance
-        )
-        length_mean, length_std = _length_moments(
+        heading_mean, heading_std = _adaptive_heading_state(
+            previous,
+            step_heading,
+            candidates,
             probabilities,
-            length_means,
-            log_variances,
         )
-
-        offset_measurement = float(step_heading.device_body_offset)
-        offset_variance = float(
-            np.deg2rad(
-                6.0 + 24.0 * (1.0 - step_heading.dynamic_body_heading_confidence)
-            )
-            ** 2
+        (
+            forward_mean,
+            forward_variance,
+            side_mean,
+            side_variance,
+            length_mean,
+            length_std,
+        ) = _adaptive_length_state(
+            previous,
+            length_observation,
+            probabilities,
         )
-        offset_mean, offset_state_variance = _kalman_update(
-            previous.device_body_offset_mean,
-            previous.device_body_offset_variance,
-            offset_measurement,
-            offset_variance,
-            max(step_heading.dynamic_body_heading_confidence, 0.05),
+        offset_mean, offset_state_variance = _adaptive_offset_state(
+            previous,
+            step_heading,
         )
 
         selected_mode = _MODE_NAMES[int(np.argmax(probabilities))]

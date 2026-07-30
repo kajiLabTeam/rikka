@@ -34,8 +34,79 @@ from ....common.lib.time_utils import (
     _step_mid_time,
     _step_output_time,
 )
-from .accel import _estimate_accel_headings
-from .motion import _estimate_motion_heading_from_horizontal_accel
+from .accel import _AccelHeadingResult, _estimate_accel_headings
+from .motion import _estimate_motion_heading_from_horizontal_accel, _MotionHeadingResult
+
+
+def _select_heading_candidate(
+    method: str,
+    gyro_heading: float | None,
+    accel: _AccelHeadingResult,
+    motion: _MotionHeadingResult,
+) -> tuple[float | None, str]:
+    """指定方式とfallback順から採用方位とsourceを返す。"""
+    if method == "accel_method1" and accel.method1_heading is not None:
+        return accel.method1_heading, "accel_method1"
+    if method == "accel_method2" and accel.method2_heading is not None:
+        return accel.method2_heading, "accel_method2"
+    if method == "gyro_accel_motion":
+        if (
+            motion.motion_heading is not None
+            and motion.confidence >= MOTION_HEADING_CONFIDENCE_THRESHOLD
+        ):
+            return motion.motion_heading, "gyro_accel_motion"
+        selected = gyro_heading
+        source = "gyro" if gyro_heading is not None else "none"
+    else:
+        selected = gyro_heading
+        source = "gyro" if gyro_heading is not None else "none"
+    if selected is None and accel.method1_heading is not None:
+        return accel.method1_heading, "accel_method1"
+    return selected, source
+
+
+def _build_step_heading(
+    index: int,
+    timestamp: float,
+    gyro_heading: float | None,
+    accel: _AccelHeadingResult,
+    motion: _MotionHeadingResult,
+    selected_heading: float | None,
+    source: str,
+    motion_heading_correction: float,
+    sidestep_lateral_ratio: float,
+    sidestep_min_lateral_displacement: float,
+    device_orientation_mode: str,
+) -> StepHeading:
+    """各推定器の結果を共有 StepHeading へまとめる。"""
+    return StepHeading(
+        step_index=index + 1,
+        timestamp_s=timestamp,
+        gyro_heading=gyro_heading,
+        accel_method1_heading=accel.method1_heading,
+        accel_method2_heading=accel.method2_heading,
+        selected_heading=selected_heading,
+        source=source,
+        confidence=accel.confidence,
+        angle_diff_method1=_abs_angle_diff(gyro_heading, accel.method1_heading),
+        angle_diff_method2=_abs_angle_diff(gyro_heading, accel.method2_heading),
+        segment_start_index=accel.segment_start_index,
+        segment_end_index=accel.segment_end_index,
+        peak1_index=accel.peak1_index,
+        peak2_index=accel.peak2_index,
+        body_heading=motion.body_heading,
+        motion_heading=motion.motion_heading,
+        movement_type=motion.movement_type,
+        forward_displacement=motion.forward_displacement,
+        lateral_displacement=motion.lateral_displacement,
+        motion_confidence=motion.confidence,
+        motion_reject_reason=motion.reject_reason,
+        yaw_delta=motion.yaw_delta,
+        motion_heading_correction=motion_heading_correction,
+        sidestep_lateral_ratio=sidestep_lateral_ratio,
+        sidestep_min_lateral_displacement=sidestep_min_lateral_displacement,
+        device_orientation_mode=device_orientation_mode,
+    )
 
 
 def resolve_step_heading(
@@ -85,61 +156,22 @@ def resolve_step_heading(
         device_orientation_mode,
     )
 
-    # 指定された heading_method に従って候補方位を選ぶ。
-    # 失敗時は gyro -> accel の順でフォールバックし、
-    # 後段が扱える StepHeading にまとめる。
-    selected_heading: float | None
-    if selected_method == "accel_method1" and accel_heading.method1_heading is not None:
-        selected_heading = accel_heading.method1_heading
-        source = "accel_method1"
-    elif (
-        selected_method == "accel_method2" and accel_heading.method2_heading is not None
-    ):
-        selected_heading = accel_heading.method2_heading
-        source = "accel_method2"
-    elif selected_method == "gyro_accel_motion":
-        if (
-            motion_heading.motion_heading is not None
-            and motion_heading.confidence >= MOTION_HEADING_CONFIDENCE_THRESHOLD
-        ):
-            selected_heading = motion_heading.motion_heading
-            source = "gyro_accel_motion"
-        else:
-            selected_heading = gyro_heading
-            source = "gyro" if gyro_heading is not None else "none"
-    else:
-        selected_heading = gyro_heading
-        source = "gyro" if gyro_heading is not None else "none"
-
-    if selected_heading is None and accel_heading.method1_heading is not None:
-        selected_heading = accel_heading.method1_heading
-        source = "accel_method1"
-
-    return StepHeading(
-        step_index=i + 1,
-        timestamp_s=_step_output_time(df_acc, peaks, i),
-        gyro_heading=gyro_heading,
-        accel_method1_heading=accel_heading.method1_heading,
-        accel_method2_heading=accel_heading.method2_heading,
-        selected_heading=selected_heading,
-        source=source,
-        confidence=accel_heading.confidence,
-        angle_diff_method1=_abs_angle_diff(gyro_heading, accel_heading.method1_heading),
-        angle_diff_method2=_abs_angle_diff(gyro_heading, accel_heading.method2_heading),
-        segment_start_index=accel_heading.segment_start_index,
-        segment_end_index=accel_heading.segment_end_index,
-        peak1_index=accel_heading.peak1_index,
-        peak2_index=accel_heading.peak2_index,
-        body_heading=motion_heading.body_heading,
-        motion_heading=motion_heading.motion_heading,
-        movement_type=motion_heading.movement_type,
-        forward_displacement=motion_heading.forward_displacement,
-        lateral_displacement=motion_heading.lateral_displacement,
-        motion_confidence=motion_heading.confidence,
-        motion_reject_reason=motion_heading.reject_reason,
-        yaw_delta=motion_heading.yaw_delta,
-        motion_heading_correction=motion_heading_correction,
-        sidestep_lateral_ratio=sidestep_lateral_ratio,
-        sidestep_min_lateral_displacement=sidestep_min_lateral_displacement,
-        device_orientation_mode=device_orientation_mode,
+    selected_heading, source = _select_heading_candidate(
+        selected_method,
+        gyro_heading,
+        accel_heading,
+        motion_heading,
+    )
+    return _build_step_heading(
+        i,
+        _step_output_time(df_acc, peaks, i),
+        gyro_heading,
+        accel_heading,
+        motion_heading,
+        selected_heading,
+        source,
+        motion_heading_correction,
+        sidestep_lateral_ratio,
+        sidestep_min_lateral_displacement,
+        device_orientation_mode,
     )

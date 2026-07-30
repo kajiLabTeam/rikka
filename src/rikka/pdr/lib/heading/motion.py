@@ -89,99 +89,20 @@ def _integrate_motion_with_zero_velocity(
     )
 
 
-def _estimate_motion_heading_from_horizontal_accel(
-    df_acc: pd.DataFrame,
-    df_gyro: pd.DataFrame,
-    peaks: np.ndarray,
-    i: int,
-    body_heading: float | None,
+def _motion_result_from_samples(
+    h_y: np.ndarray,
+    h_z: np.ndarray,
+    sample_times: np.ndarray,
+    gyro_times: np.ndarray,
+    low_angle: np.ndarray,
+    valid_gyro: np.ndarray,
+    body_heading: float,
     direction_offset: float,
-    step_segments: tuple[StepSegment, ...] = (),
-    motion_heading_correction: float = 0.0,
-    sidestep_lateral_ratio: float = SIDESTEP_LATERAL_RATIO,
-    sidestep_min_lateral_displacement: float = SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
-    device_orientation_mode: str = "normal",
+    motion_heading_correction: float,
+    sidestep_lateral_ratio: float,
+    sidestep_min_lateral_displacement: float,
 ) -> _MotionHeadingResult:
-    """ジャイロで向きを固定し、水平加速度から世界座標上の移動方向を推定する。"""
-    if body_heading is None:
-        return _MotionHeadingResult(None, None, "unknown", None, None, 0.0, "no_gyro")
-    if "low_angle" not in df_gyro.columns:
-        return _MotionHeadingResult(
-            body_heading,
-            None,
-            "unknown",
-            None,
-            None,
-            0.0,
-            "no_gyro_angle",
-        )
-
-    bounds = _step_segment_bounds(peaks, i, len(df_acc), step_segments)
-    if bounds is None:
-        return _MotionHeadingResult(
-            body_heading,
-            None,
-            "unknown",
-            None,
-            None,
-            0.0,
-            "no_step_bounds",
-        )
-    start, end = bounds
-    if end - start < 3:
-        return _MotionHeadingResult(
-            body_heading,
-            None,
-            "unknown",
-            None,
-            None,
-            0.0,
-            "short_segment",
-        )
-
-    # 端末座標の水平加速度を取り出し、推定済みの装着向き補正を適用する。
-    h_y = np.asarray(pd.to_numeric(df_acc["h_y"].iloc[start:end], errors="coerce"))
-    h_z = np.asarray(pd.to_numeric(df_acc["h_z"].iloc[start:end], errors="coerce"))
-    sample_times = _dataframe_times_or_sample_index(df_acc)[start:end]
-    valid_acc = np.isfinite(h_y) & np.isfinite(h_z) & np.isfinite(sample_times)
-    if int(valid_acc.sum()) < 3:
-        return _MotionHeadingResult(
-            body_heading,
-            None,
-            "unknown",
-            None,
-            None,
-            0.0,
-            "no_horizontal_accel",
-        )
-
-    h_y = h_y[valid_acc].astype(float)
-    h_z = h_z[valid_acc].astype(float)
-    h_y, h_z = _apply_device_orientation_to_horizontal(
-        h_y,
-        h_z,
-        device_orientation_mode,
-    )
-    sample_times = sample_times[valid_acc].astype(float)
-
-    gyro_times = _dataframe_times_or_sample_index(df_gyro)
-    low_angle = np.asarray(
-        pd.to_numeric(df_gyro["low_angle"], errors="coerce"),
-        dtype=float,
-    )
-    valid_gyro = np.isfinite(gyro_times) & np.isfinite(low_angle)
-    if not valid_gyro.any():
-        return _MotionHeadingResult(
-            body_heading,
-            None,
-            "unknown",
-            None,
-            None,
-            0.0,
-            "no_gyro_angle",
-        )
-
-    # ジャイロ角を加速度サンプル時刻へ補間し、水平加速度を世界座標へ回す。
+    """有効サンプルを世界座標へ積分し移動状態を返す。"""
     angles = np.interp(sample_times, gyro_times[valid_gyro], low_angle[valid_gyro])
     angles = angles + direction_offset
     yaw_delta = _normalize_angle(float(angles[-1] - angles[0]))
@@ -206,9 +127,7 @@ def _estimate_motion_heading_from_horizontal_accel(
             "zero_motion",
             yaw_delta,
         )
-
     motion_heading = _normalize_angle(float(np.arctan2(disp_y, disp_x)))
-    # 体の前方軸・左右軸に射影し、forward / sidestep / turning を分類する。
     body_axis = np.array([np.cos(body_heading), np.sin(body_heading)], dtype=float)
     lateral_axis = np.array([-body_axis[1], body_axis[0]], dtype=float)
     displacement = np.array([disp_x, disp_y], dtype=float)
@@ -221,15 +140,7 @@ def _estimate_motion_heading_from_horizontal_accel(
         sidestep_lateral_ratio,
         sidestep_min_lateral_displacement,
     )
-    confidence = _score_ratio(
-        displacement_norm,
-        MOTION_HEADING_MIN_DISPLACEMENT_M,
-    )
-    reject_reason = (
-        None
-        if confidence >= MOTION_HEADING_CONFIDENCE_THRESHOLD
-        else "low_motion_confidence"
-    )
+    confidence = _score_ratio(displacement_norm, MOTION_HEADING_MIN_DISPLACEMENT_M)
     return _MotionHeadingResult(
         body_heading=body_heading,
         motion_heading=motion_heading,
@@ -237,8 +148,95 @@ def _estimate_motion_heading_from_horizontal_accel(
         forward_displacement=forward_displacement,
         lateral_displacement=lateral_displacement,
         confidence=confidence,
-        reject_reason=reject_reason,
+        reject_reason=(
+            None
+            if confidence >= MOTION_HEADING_CONFIDENCE_THRESHOLD
+            else "low_motion_confidence"
+        ),
         yaw_delta=yaw_delta,
+    )
+
+
+def _unknown_motion_result(
+    body_heading: float | None,
+    reason: str,
+) -> _MotionHeadingResult:
+    """移動方位を計算できない場合の共通結果を返す。"""
+    return _MotionHeadingResult(
+        body_heading,
+        None,
+        "unknown",
+        None,
+        None,
+        0.0,
+        reason,
+    )
+
+
+def _estimate_motion_heading_from_horizontal_accel(
+    df_acc: pd.DataFrame,
+    df_gyro: pd.DataFrame,
+    peaks: np.ndarray,
+    i: int,
+    body_heading: float | None,
+    direction_offset: float,
+    step_segments: tuple[StepSegment, ...] = (),
+    motion_heading_correction: float = 0.0,
+    sidestep_lateral_ratio: float = SIDESTEP_LATERAL_RATIO,
+    sidestep_min_lateral_displacement: float = SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
+    device_orientation_mode: str = "normal",
+) -> _MotionHeadingResult:
+    """ジャイロで向きを固定し、水平加速度から世界座標上の移動方向を推定する。"""
+    if body_heading is None:
+        return _unknown_motion_result(None, "no_gyro")
+    if "low_angle" not in df_gyro.columns:
+        return _unknown_motion_result(body_heading, "no_gyro_angle")
+
+    bounds = _step_segment_bounds(peaks, i, len(df_acc), step_segments)
+    if bounds is None:
+        return _unknown_motion_result(body_heading, "no_step_bounds")
+    start, end = bounds
+    if end - start < 3:
+        return _unknown_motion_result(body_heading, "short_segment")
+
+    # 端末座標の水平加速度を取り出し、推定済みの装着向き補正を適用する。
+    h_y = np.asarray(pd.to_numeric(df_acc["h_y"].iloc[start:end], errors="coerce"))
+    h_z = np.asarray(pd.to_numeric(df_acc["h_z"].iloc[start:end], errors="coerce"))
+    sample_times = _dataframe_times_or_sample_index(df_acc)[start:end]
+    valid_acc = np.isfinite(h_y) & np.isfinite(h_z) & np.isfinite(sample_times)
+    if int(valid_acc.sum()) < 3:
+        return _unknown_motion_result(body_heading, "no_horizontal_accel")
+
+    h_y = h_y[valid_acc].astype(float)
+    h_z = h_z[valid_acc].astype(float)
+    h_y, h_z = _apply_device_orientation_to_horizontal(
+        h_y,
+        h_z,
+        device_orientation_mode,
+    )
+    sample_times = sample_times[valid_acc].astype(float)
+
+    gyro_times = _dataframe_times_or_sample_index(df_gyro)
+    low_angle = np.asarray(
+        pd.to_numeric(df_gyro["low_angle"], errors="coerce"),
+        dtype=float,
+    )
+    valid_gyro = np.isfinite(gyro_times) & np.isfinite(low_angle)
+    if not valid_gyro.any():
+        return _unknown_motion_result(body_heading, "no_gyro_angle")
+
+    return _motion_result_from_samples(
+        h_y,
+        h_z,
+        sample_times,
+        gyro_times,
+        low_angle,
+        valid_gyro,
+        body_heading,
+        direction_offset,
+        motion_heading_correction,
+        sidestep_lateral_ratio,
+        sidestep_min_lateral_displacement,
     )
 
 
