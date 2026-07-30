@@ -65,15 +65,15 @@ from ...pdr.lib.motion_state.step_motion import (
     _is_trajectory_sidestep_movement,
     estimate_step_motion,
 )
+from ...pdr.lib.preparation import prepare_pdr_steps
 from ...pdr.lib.step_detection import detect_step_result, detect_steps
 from ...pdr.lib.step_length import (
     estimate_step_length,
     estimate_step_length_forward,
 )
-from ...pdr.pipeline import (
+from ...pdr.lib.trajectory import (
     estimate_trajectory,
     estimate_trajectory_with_headings,
-    prepare_pdr_steps,
 )
 from ...plot.lib.outputs import _build_trajectory_dataframe, _create_output_dir
 from ...plot.lib.trajectory import plot_trajectory

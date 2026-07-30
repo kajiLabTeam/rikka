@@ -27,6 +27,8 @@ from .config import (
     PF_MOTION_PREDICTIVE_WEIGHT_POWER,
     PF_NUM_PARTICLES,
     PF_PATH_SELECTION,
+    PF_STEP_FRAMES_ARROWS,
+    PF_STEP_FRAMES_DPI,
     SIDESTEP_LATERAL_RATIO,
     SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
     SIDESTEP_SMOOTHING_METHOD,
@@ -133,6 +135,16 @@ class MotionStateSettings:
             self.sidestep_suspect_mode,
             SIDESTEP_SUSPECT_MODES,
         )
+        validate_choice(
+            "motion_estimation",
+            self.motion_estimation,
+            ("legacy", "adaptive", "robust"),
+        )
+        validate_choice(
+            "smoothing_mode",
+            self.smoothing_mode,
+            ("causal", "offline"),
+        )
 
 
 @dataclass(frozen=True)
@@ -160,6 +172,31 @@ class ParticleSettings:
             self.path_selection,
             ("current", "sequence"),
         )
+
+
+@dataclass(frozen=True)
+class OutputSettings:
+    """CSV・図・particle 診断成果物の出力設定。"""
+
+    plot: bool = True
+    save_animation: bool = True
+    save_step_frames: bool = False
+    step_frames_range: tuple[int, int] | None = None
+    step_frames_arrows: int = PF_STEP_FRAMES_ARROWS
+    step_frames_dpi: int = PF_STEP_FRAMES_DPI
+    save_path_comparison: bool = False
+
+    def __post_init__(self) -> None:
+        if self.step_frames_range is not None:
+            first_step, last_step = self.step_frames_range
+            if first_step < 1 or first_step > last_step:
+                raise ValueError(
+                    "step_frames_range は 1 <= A <= B を満たす必要があります。"
+                )
+        if self.step_frames_arrows < 0:
+            raise ValueError("step_frames_arrows は0以上を指定してください。")
+        if self.step_frames_dpi <= 0:
+            raise ValueError("step_frames_dpi は正の整数を指定してください。")
 
 
 @dataclass(frozen=True)
