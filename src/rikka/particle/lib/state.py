@@ -11,6 +11,7 @@
 """
 
 from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 
@@ -87,3 +88,28 @@ class ParticleHistory:
                 state,
                 np.zeros(len(state.positions), dtype=float),
             )
+
+
+@dataclass
+class ParticleRuntime:
+    """段階関数間で共有する1回のPF実行状態。"""
+
+    values: dict[str, Any] = field(default_factory=dict)
+
+    def __getattr__(self, name: str) -> Any:
+        """辞書に保存した実行値を属性として返す。"""
+        try:
+            return self.values[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """定義済みフィールド以外を実行値辞書へ保存する。"""
+        if name == "values":
+            object.__setattr__(self, name, value)
+        else:
+            self.values[name] = value
+
+    def update(self, values: dict[str, Any]) -> None:
+        """複数の入力値を一括登録する。"""
+        self.values.update(values)
