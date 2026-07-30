@@ -18,9 +18,9 @@ import numpy as np
 from ...particle.lib.recorder import (
     ParticlePathComparison,
 )
-from .paths import (
-    _reconstruct_particle_paths,
-    _select_reachable_cluster_path,
+from .path_history import _reconstruct_particle_paths
+from .path_selection import _select_reachable_cluster_path
+from .sequence_path import (
     _select_sequence_map_path,
     _unsupported_reversal_count,
 )

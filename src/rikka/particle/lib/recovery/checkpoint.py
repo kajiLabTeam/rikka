@@ -11,6 +11,7 @@
 """
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -27,29 +28,75 @@ class _CheckpointReplayResult:
     replay_positions: np.ndarray
 
 
+_REPLAY_PARAMETERS = (
+    "checkpoint_particles",
+    "checkpoint_heading_correction",
+    "checkpoint_heading_drift",
+    "checkpoint_stride_scale",
+    "checkpoint_weights",
+    "angles",
+    "step_lengths",
+    "n_particles",
+    "map_gray",
+    "gx_mean",
+    "gz_mean",
+    "origin_px",
+    "scale",
+    "heading_sigma",
+    "rng",
+    "checkpoint_motion_state",
+    "allow_stride_adaptation",
+    "stride_scale_min",
+    "stride_scale_max",
+    "capture_candidates",
+)
+_REPLAY_DEFAULTS = {
+    "checkpoint_motion_state": None,
+    "allow_stride_adaptation": False,
+    "stride_scale_min": 0.5,
+    "stride_scale_max": 1.6,
+    "capture_candidates": False,
+}
+
+
 def _replay_from_checkpoint(
-    checkpoint_particles: np.ndarray,
-    checkpoint_heading_correction: np.ndarray,
-    checkpoint_heading_drift: np.ndarray,
-    checkpoint_stride_scale: np.ndarray,
-    checkpoint_weights: np.ndarray,
-    angles: np.ndarray,
-    step_lengths: np.ndarray,
-    n_particles: int,
-    map_gray: np.ndarray,
-    gx_mean: float,
-    gz_mean: float,
-    origin_px: tuple[int, int],
-    scale: float,
-    heading_sigma: float,
-    rng: np.random.Generator,
-    checkpoint_motion_state: np.ndarray | None = None,
-    allow_stride_adaptation: bool = False,
-    stride_scale_min: float = 0.5,
-    stride_scale_max: float = 1.6,
-    capture_candidates: bool = False,
+    *args: Any,
+    **kwargs: Any,
 ) -> _CheckpointReplayResult | None:
     """同じ小方位差で最大3歩を再生し、壁非交差経路を返す。"""
+    values = dict(zip(_REPLAY_PARAMETERS, args, strict=False))
+    duplicated = set(values) & set(kwargs)
+    if duplicated:
+        raise TypeError(f"{sorted(duplicated)[0]} が重複指定されています")
+    values.update(kwargs)
+    for name, default in _REPLAY_DEFAULTS.items():
+        values.setdefault(name, default)
+    missing = [name for name in _REPLAY_PARAMETERS if name not in values]
+    if missing:
+        raise TypeError(f"必須引数が不足しています: {', '.join(missing)}")
+    if len(args) > len(_REPLAY_PARAMETERS):
+        raise TypeError("位置引数が多すぎます")
+
+    checkpoint_particles = values["checkpoint_particles"]
+    checkpoint_heading_correction = values["checkpoint_heading_correction"]
+    checkpoint_heading_drift = values["checkpoint_heading_drift"]
+    checkpoint_stride_scale = values["checkpoint_stride_scale"]
+    checkpoint_weights = values["checkpoint_weights"]
+    angles = values["angles"]
+    step_lengths = values["step_lengths"]
+    n_particles = values["n_particles"]
+    map_gray = values["map_gray"]
+    gx_mean = values["gx_mean"]
+    gz_mean = values["gz_mean"]
+    origin_px = values["origin_px"]
+    scale = values["scale"]
+    heading_sigma = values["heading_sigma"]
+    rng = values["rng"]
+    checkpoint_motion_state = values["checkpoint_motion_state"]
+    allow_stride_adaptation = values["allow_stride_adaptation"]
+    stride_scale_min = values["stride_scale_min"]
+    stride_scale_max = values["stride_scale_max"]
+    capture_candidates = values["capture_candidates"]
     if len(angles) == 0 or len(angles) != len(step_lengths):
         return None
     offset_degrees = np.array(
