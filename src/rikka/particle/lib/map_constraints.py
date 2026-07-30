@@ -4,7 +4,7 @@
     マップ画像を正規化し、メートル・画素座標を対応付け、移動線分が触れる全画素の
     歩行可否を判定する。必要時には軌跡点を最近傍の歩行可能画素へ寄せる。
 依存元:
-    ``pdr.particle_api`` の画素座標変換、NumPy、SciPyの距離変換を利用する。
+    ``plot.lib`` の画素座標変換、NumPy、SciPy の距離変換を利用する。
 利用先:
     粒子フィルタの伝播・recovery・代表軌跡選択処理が地図制約の適用に使用する。
 処理フロー:
@@ -14,7 +14,7 @@
 import numpy as np
 from scipy.ndimage import distance_transform_edt
 
-from ...plot.lib.floormap import compute_pixel_coords
+from ...common.lib.floormap import compute_pixel_coords
 
 
 def _normalize_floormap_gray(map_raw: np.ndarray) -> np.ndarray:

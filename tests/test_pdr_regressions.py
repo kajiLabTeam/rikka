@@ -31,6 +31,7 @@ from rikka.analyze.pdr.motion_refinement import (
     refine_step_headings_with_motion_model,
 )
 from rikka.analyze.sensor_plot import _project_acceleration_to_step_axes
+from rikka.cli import commands as pdr_commands
 from rikka.pdr.lib.motion_state.evidence import (
     build_step_motion_evidences,
     build_step_motion_observations,
@@ -365,7 +366,7 @@ def test_run_does_not_create_output_dir_when_sensor_pair_is_incomplete(
         calls += 1
         raise AssertionError("_create_output_dir should not be called")
 
-    monkeypatch.setattr(pdr, "_create_output_dir", fake_create_output_dir)
+    monkeypatch.setattr(pdr_commands, "_create_output_dir", fake_create_output_dir)
 
     try:
         pdr.run(df_acc=pd.DataFrame(), df_gyro=None, plot=False)
@@ -402,7 +403,7 @@ def test_run_returns_and_saves_timestamped_trajectory_without_steps(
         output_dir.mkdir()
         return output_dir
 
-    monkeypatch.setattr(pdr, "_create_output_dir", fake_create_output_dir)
+    monkeypatch.setattr(pdr_commands, "_create_output_dir", fake_create_output_dir)
     monkeypatch.setattr(pdr, "detect_steps", lambda _df_acc: np.array([], dtype=int))
 
     df_trajectory = pdr.run(df_acc=df_acc, df_gyro=df_gyro, plot=False)
@@ -3352,10 +3353,10 @@ def test_particle_animation_respects_save_animation_flag(tmp_path, monkeypatch) 
         output_dir.mkdir()
         return output_dir
 
-    monkeypatch.setattr(pdr, "_create_output_dir", fake_create_output_dir)
+    monkeypatch.setattr(pdr_commands, "_create_output_dir", fake_create_output_dir)
     monkeypatch.setattr(pdr, "detect_steps", lambda _df_acc: np.array([], dtype=int))
 
-    import rikka.analyze.particle_filter as particle_filter
+    from rikka.plot.lib import animation
 
     calls = 0
 
@@ -3364,7 +3365,7 @@ def test_particle_animation_respects_save_animation_flag(tmp_path, monkeypatch) 
         calls += 1
 
     monkeypatch.setattr(
-        particle_filter,
+        animation,
         "save_particle_animation",
         fake_save_particle_animation,
     )

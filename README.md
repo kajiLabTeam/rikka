@@ -388,51 +388,23 @@ uv run rikka run \
 
 ## コード構成
 
-PDR 本体は `src/rikka/analyze/pdr/` パッケージに分割されています。
-`rikka.analyze.pdr` からの既存 import は互換 facade として維持しています。
+実装は `common / pdr / particle / plot` の4領域に分割されています。
+`rikka.analyze.*` からの既存 import は薄い互換 shim として維持しています。
 
 | ファイル | 役割 |
 |---|---|
-| `pdr/__init__.py` | 互換 facade。既存の `from rikka.analyze.pdr import run` などを維持 |
-| `pdr/common.py` | 共通定数、角度処理、モード検証、パラメータ検証 |
-| `pdr/models.py` | `StepHeading`、`StepMotion`、`PreparedPdrSteps` などの共有データ型 |
-| `pdr/adaptive_estimator.py` | 運動状態・方位・歩幅・端末姿勢ずれの因果推定とオフライン平滑化 |
-| `pdr/direction_resolver.py` | 移動軸の正方向・逆方向を区間で保持して復号する実験方式 |
-| `pdr/sensors.py` | CSV 読み込み、列名正規化、加速度・ジャイロの前処理 |
-| `pdr/gyro_bias.py` | ジャイロバイアス推定 |
-| `pdr/step_detection.py` | ステップピーク・接地区間の検出 |
-| `pdr/step_length.py` | Weinberg / forward 系の歩幅推定 |
-| `pdr/heading.py` | ジャイロ・加速度・水平加速度からのステップ方位候補推定 |
-| `pdr/sidestep.py` | 横歩き判定、クラスタ平滑化、軌跡用方位の安定化 |
-| `pdr/motion_decoder.py` | 移動軸と体軸特徴から前進・左右横歩きを区間復号 |
-| `pdr/body_heading.py` | 端末yawと移動軸から時変の端末−身体方位差を推定 |
-| `pdr/motion_refinement.py` | 区間復号、動的身体方位、既存横歩きclusterを統合 |
-| `pdr/trajectory.py` | 決定論的 PDR 軌跡生成と `prepare_pdr_steps()` |
-| `pdr/outputs.py` | CSV 出力用 DataFrame 生成 |
-| `pdr/plotting.py` | 通常 PDR の軌跡描画 |
-| `pdr/pipeline.py` | `run()` の実行 orchestration |
-| `pdr/particle_api.py` | particle filter が利用する PDR API の bridge |
+| `common/config/`, `common/settings.py` | 定数と検証済み設定 |
+| `common/lib/models.py` | `PreparedPdrSteps`、`TrajectoryResult` などの共有型 |
+| `pdr/pipeline.py` | センサー入力から通常PDR結果までの手順 |
+| `pdr/lib/` | 歩検出、歩幅、方位、運動状態、積分、fusion |
+| `particle/pipeline.py` | 準備済み歩列へ地図拘束を適用する手順 |
+| `particle/lib/` | 提案、地図拘束、重み、再標本化、復旧、経路、記録 |
+| `plot/pipeline.py` | CSV・図・animationの出力手順 |
+| `plot/lib/` | フロアマップ座標変換と個別成果物 |
 
-Particle filter の内部実装は `src/rikka/analyze/particle/` に責務別で分割されています。
-`particle_filter.py` は既存 import を維持する互換 facade です。
-
-| ファイル | 役割 |
-|---|---|
-| `particle_filter.py` | 互換 facade。既存の公開 API と内部 helper の import を維持 |
-| `particle/models.py` | 1歩ごとの粒子診断データ型 |
-| `particle/diagnostics.py` | 粒子状態・重み・復旧結果から診断値を構築 |
-| `particle/resampling.py` | ESS 計算と粒子のリサンプリング |
-| `particle/motion.py` | 運動状態遷移、方位、観測尤度の計算 |
-| `particle/map_constraints.py` | フロアマップ正規化、座標変換、壁との交差判定 |
-| `particle/paths.py` | 粒子祖先の復元と代表軌跡の選択 |
-| `particle/recovery.py` | recovery 候補生成と checkpoint replay |
-| `particle/runner.py` | `run_particle_filter()` の実行 orchestration |
-| `particle/frames.py` | 段階別粒子状態と代表軌跡候補の静止画保存 |
-| `particle/plotting.py` | 粒子軌跡の描画とアニメーション保存 |
-
-`particle/runner.py` は `prepare_pdr_steps()` で作った決定論的なステップ方位・歩幅・
-時刻を受け取り、フロアマップ制約で軌跡を補正します。PDR の内部 helper は直接参照せず、
-引き続き `pdr/particle_api.py` 経由で必要な API だけを使います。
+新しい `particle.pipeline.run_particle()` は `prepare_pdr_steps()` が作った
+`PreparedPdrSteps` を境界として受け取り、フロアマップ制約で軌跡を補正します。
+従来の `run_particle_filter()` は互換 shim から同じ数値実装へ転送されます。
 
 ## Python から使う
 

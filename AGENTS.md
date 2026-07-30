@@ -27,12 +27,13 @@
 
 詳しい入力形式、データフロー、設定、出力は `README.md` を参照してください。
 
-- `src/rikka/__init__.py` は Click ベースの CLI を定義します。
-- `src/rikka/config.py` の既定値は CLI のデフォルトにも使われます。
-- `src/rikka/analyze/pdr/` は通常 PDR の実装で、`rikka.analyze.pdr` は互換 facade です。
-- `src/rikka/analyze/particle_filter.py` はマップマッチングと粒子フィルタを扱います。
+- `src/rikka/cli/` は Click ベースの CLI を定義します。
+- `src/rikka/common/config/` の既定値は CLI のデフォルトにも使われ、`rikka.config` は互換 shim です。
+- `src/rikka/pdr/` は通常 PDR、`src/rikka/particle/` は地図拘束付き PF の実装です。
+- `src/rikka/plot/` は CSV・図・アニメーションの書き出しを担当します。
+- `rikka.analyze.pdr` / `rikka.analyze.particle_filter` は既存利用者向けの互換 shim です。
 - 通常 PDR と particle filter は `prepare_pdr_steps()` のステップ情報を共有します。
-- particle filter から PDR 内部処理を利用する場合は `pdr/particle_api.py` を bridge にします。
+- `particle.pipeline.run_particle()` は `common.lib.models.PreparedPdrSteps` を境界として受け取ります。
 - `agent/agent_*.py` はエージェントの診断・検証用で、通常のライブラリ API ではありません。
 - 必要な診断・比較・回帰評価コードは `agent/` に追加し、繰り返し利用する場合は `.agents/skills/` 配下の Skill から呼び出して構いません。
 - `agent/EXPERIMENT_LOG.md` は過去の試行、失敗、採用判断を残す実験ログです。
@@ -106,11 +107,11 @@ CI やバッチ確認では `--no-plot` または `plot=False` を使ってく�
   あるファイルでは、別の説明コメントを追加せず、その docstring に内容を統合してください。
 - `pyproject.toml` の Ruff 設定は行長 88、ダブルクォート、スペースインデントです。
 - Mypy は strict 設定ですが、`disallow_untyped_defs = false` です。既存コードの型付け方針に合わせてください。
-- `config.py` の既定値は CLI のデフォルトにも使われます。設定変更は CLI 挙動にも影響します。
-- `pdr.run()` は `pdr/pipeline.py` が実体です。`pdr/__init__.py` は互換 facade なので、外部互換を壊さないよう既存 import を維持してください。
+- `common/config/` の既定値は CLI のデフォルトにも使われます。設定変更は CLI 挙動にも影響します。
+- `pdr.pipeline.run_pdr()` と `particle.pipeline.run_particle()` が解析の入口です。`analyze/` は互換 shim なので実装を追加しないでください。
 - `pdr.run()` は `df_acc` と `df_gyro` を両方渡すか、両方省略する必要があります。片方だけ渡すと `ValueError` になります。
 - 通常 PDR と particle filter で共有するステップ情報は `prepare_pdr_steps()` が作ります。particle 側で同じ heading / step length 推定を重複実装しないでください。
-- `particle_filter.py` から PDR 側の内部処理を使う場合は、`pdr/particle_api.py` に bridge を追加してから利用してください。`pdr/__init__.py` の private re-export へ直接依存しないでください。
+- 新しい領域間の受け渡しには `common/lib/models.py` の共有型を使い、他領域の `lib/` や private helper への依存を増やさないでください。
 - `agent/agent_*.py` はエージェント検証用です。恒常的な機能として扱わず、必要な検証目的・入力データ・出力先が分かる名前と docstring を保ってください。
 - 新しい検証コードは `agent/agent_<目的>.py` の形式で命名し、モジュール docstring に役割、入力、出力、処理フローを記載してください。
 - 検証コードを Skill から使う場合は、対象 Skill の `SKILL.md` に起動条件、実行コマンド、必要入力、合否判定、生成物の削除方法を記載してください。

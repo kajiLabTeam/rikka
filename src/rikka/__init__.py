@@ -323,6 +323,10 @@ def cli() -> None:
     """rikka — PDR 歩行軌跡推定ツール"""
 
 
+# ``rikka.cli`` サブパッケージの import 後も Click グループを参照できるよう保持する。
+_click_cli = cli
+
+
 def _run_pdr(
     data_dir: str,
     floormap: str,
@@ -345,8 +349,8 @@ def _run_pdr(
     smoothing_mode: str,
     no_plot: bool,
 ) -> None:
-    from .analyze.pdr import load_sensor_data  # noqa: PLC0415
-    from .analyze.pdr import run as _run  # noqa: PLC0415
+    from .cli.commands import run as _run  # noqa: PLC0415
+    from .common.lib.sensors import load_sensor_data  # noqa: PLC0415
 
     _validate_gyro_bias_options(gyro_bias_method, gyro_bias)
     df_acc, df_gyro = load_sensor_data(data_dir)
@@ -578,8 +582,8 @@ def particle(
     pf_path_selection: str,
 ) -> None:
     """パーティクルフィルタ + マップマッチングで歩行軌跡を推定する。"""
-    from .analyze.pdr import load_sensor_data  # noqa: PLC0415
-    from .analyze.pdr import run as _run  # noqa: PLC0415
+    from .cli.commands import run as _run  # noqa: PLC0415
+    from .common.lib.sensors import load_sensor_data  # noqa: PLC0415
 
     _validate_gyro_bias_options(gyro_bias_method, gyro_bias)
     df_acc, df_gyro = load_sensor_data(data_dir)
@@ -656,7 +660,7 @@ def sensor(
     gyro_bias: float | None,
 ) -> None:
     """センサーデータをグラフ化して入力フォルダに保存する。"""
-    from .analyze.sensor_plot import plot_sensor_data  # noqa: PLC0415
+    from .plot.lib.sensor import plot_sensor_data  # noqa: PLC0415
 
     _validate_gyro_bias_options(gyro_bias_method, gyro_bias)
     plot_sensor_data(
