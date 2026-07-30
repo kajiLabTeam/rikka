@@ -92,6 +92,10 @@ from ...particle.lib.proposal import (
     _normalize_angle,
     _sample_motion_states,
 )
+from ...particle.lib.recovery.local import (
+    _generate_recovery_candidates,
+    _replay_from_checkpoint,
+)
 from ...particle.lib.resampling import (
     _effective_sample_size,
     _systematic_resample,
@@ -125,7 +129,6 @@ from .paths import (
     _select_sequence_map_path,
     _unsupported_reversal_count,
 )
-from .recovery import _generate_recovery_candidates, _replay_from_checkpoint
 
 
 def _adaptive_heading_rejuvenation_sigma(

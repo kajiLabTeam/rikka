@@ -2,6 +2,8 @@
 
 import numpy as np
 
+from rikka.particle.lib.recovery.fallback import HoldPosition
+from rikka.particle.lib.recovery.protocol import RecoveryChain
 from rikka.particle.lib.state import ParticleHistory, ParticleState
 
 
@@ -33,3 +35,12 @@ def test_particle_history_truncates_all_series_together() -> None:
     np.testing.assert_array_equal(
         history.checkpoint(1).positions, _state(1.0).positions
     )
+
+
+def test_recovery_chain_falls_back_to_hold_position() -> None:
+    state = _state(0.0)
+    outcome = RecoveryChain((HoldPosition(),)).recover(state)
+
+    assert outcome is not None
+    assert outcome.mode == "failed_hold"
+    assert outcome.state is state
