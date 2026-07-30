@@ -4,7 +4,6 @@
 必要なシンボルを再輸出するだけである。
 """
 
-from ..particle.lib.engine import _run_particle_steps as run_particle_filter
 from ..particle.lib.map_constraints import (
     _evaluate_particle_transitions,
     _normalize_floormap_gray,
@@ -28,6 +27,7 @@ from ..particle.lib.recovery.local import (
     _replay_from_checkpoint,
 )
 from ..particle.lib.resampling import _effective_sample_size, _systematic_resample
+from ..particle.lib.runner import run_particle_filter
 from ..plot.lib.animation import (
     plot_particle_filter_trajectory,
     save_particle_animation,

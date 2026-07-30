@@ -17,12 +17,12 @@ from ..common.lib.models import (
     TrajectoryResult,
 )
 from ..common.settings import ParticleSettings
-from .lib.engine import _run_particle_steps
 from .lib.recorder import (
     ParticleFilterStepDiagnostics,
     ParticlePathComparison,
     ParticleStepStages,
 )
+from .lib.runner import run_particle_steps
 
 
 def run_particle(
@@ -34,7 +34,7 @@ def run_particle(
     diagnostics: list[ParticleFilterStepDiagnostics] = []
     stages: list[ParticleStepStages] = []
     path_comparisons: list[ParticlePathComparison] = []
-    trajectory, lengths, times, all_particles, headings = _run_particle_steps(
+    trajectory, lengths, times, all_particles, headings = run_particle_steps(
         prepared.step_detection.peaks,
         prepared.df_gyro,
         prepared.df_acc,
