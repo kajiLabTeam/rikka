@@ -14,7 +14,9 @@ from rikka.analyze.particle.recovery import (
 )
 from rikka.analyze.particle.runner import (
     _adaptive_heading_rejuvenation_sigma,
-    run_particle_filter,
+)
+from rikka.analyze.particle.runner import (
+    run_particle_filter as _run_particle_filter,
 )
 from rikka.analyze.particle_filter import (
     ParticleFilterStepDiagnostics,
@@ -22,6 +24,25 @@ from rikka.analyze.particle_filter import (
     ParticleStepStages,
 )
 from rikka.analyze.pdr.models import StepHeading
+from rikka.pdr.lib.motion_state.evidence import (
+    build_particle_motion_headings,
+    build_step_motion_evidences,
+)
+
+
+def run_particle_filter(*args, **kwargs):
+    """確定済みPDR歩列をPF内部回帰テストへ渡す。"""
+    headings = kwargs.get("prepared_step_headings")
+    if headings is not None:
+        kwargs.setdefault(
+            "prepared_motion_evidences",
+            build_step_motion_evidences(headings),
+        )
+        kwargs.setdefault(
+            "prepared_particle_motion_headings",
+            build_particle_motion_headings(headings),
+        )
+    return _run_particle_filter(*args, **kwargs)
 
 
 def _forward_heading(step_index: int = 1) -> StepHeading:
