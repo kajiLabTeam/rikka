@@ -81,7 +81,23 @@ from ...config import (
     TURNING_LENGTH_SCALE,
     WEINBERG_K,
 )
+from ...particle.lib.map_constraints import (
+    _evaluate_particle_transitions,
+    _normalize_floormap_gray,
+)
+from ...particle.lib.proposal import (
+    _MOTION_FORWARD,
+    _motion_state_headings,
+    _motion_state_likelihoods,
+    _normalize_angle,
+    _sample_motion_states,
+)
+from ...particle.lib.resampling import (
+    _effective_sample_size,
+    _systematic_resample,
+)
 from ...particle.lib.state import ParticleHistory, ParticleState
+from ...particle.lib.weighting import weight
 from ...pdr.lib.heading.device_orientation import estimate_device_orientation_mode
 from ...pdr.lib.heading.motion import resolve_motion_heading_correction
 from ...pdr.lib.heading.resolver import resolve_step_heading
@@ -98,21 +114,10 @@ from ...pdr.lib.step_length import (
     estimate_step_length_forward,
 )
 from .diagnostics import _build_step_diagnostics
-from .map_constraints import (
-    _evaluate_particle_transitions,
-    _normalize_floormap_gray,
-)
 from .models import (
     ParticleFilterStepDiagnostics,
     ParticlePathComparison,
     ParticleStepStages,
-)
-from .motion import (
-    _MOTION_FORWARD,
-    _motion_state_headings,
-    _motion_state_likelihoods,
-    _normalize_angle,
-    _sample_motion_states,
 )
 from .paths import (
     _reconstruct_particle_paths,
@@ -121,7 +126,6 @@ from .paths import (
     _unsupported_reversal_count,
 )
 from .recovery import _generate_recovery_candidates, _replay_from_checkpoint
-from .resampling import _effective_sample_size, _systematic_resample
 
 
 def _adaptive_heading_rejuvenation_sigma(
@@ -722,11 +726,12 @@ def run_particle_filter(
                     / stride_prior_sigma
                 )
             )
-        posterior_weights = (
-            weights_before
-            * valid_transition.astype(float)
-            * stride_observation_likelihood
-            * np.power(state_predictive_likelihoods, motion_predictive_weight_power)
+        posterior_weights = weight(
+            weights_before,
+            valid_transition,
+            stride_observation_likelihood,
+            state_predictive_likelihoods,
+            motion_predictive_weight_power,
         )
         posterior_weights_for_stages = (
             posterior_weights.copy() if stage_collector is not None else None
