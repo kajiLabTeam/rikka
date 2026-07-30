@@ -1,9 +1,9 @@
 """旧軌跡準備 import の互換 shim。"""
 
-from ...pdr.pipeline import (
+from ...pdr.lib.preparation import prepare_pdr_steps
+from ...pdr.lib.trajectory import (
     estimate_trajectory,
     estimate_trajectory_with_headings,
-    prepare_pdr_steps,
 )
 
 __all__ = [

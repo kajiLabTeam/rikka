@@ -10,7 +10,7 @@ import pytest
 
 from rikka.analyze import pdr
 from rikka.analyze.pdr.sensors import load_sensor_data
-from rikka.cli import commands
+from rikka.plot import pipeline as plot_pipeline
 
 ROOT = Path(__file__).parents[1]
 GOLDEN_PATH = ROOT / "tests/data/golden/refactor_golden.json"
@@ -39,7 +39,7 @@ def test_refactor_golden(
     """PDR/PF の軌跡・歩幅・採用方位が完全一致することを確認する。"""
     output_dir = tmp_path / ("pf" if use_particle_filter else "pdr")
     output_dir.mkdir()
-    monkeypatch.setattr(commands, "_create_output_dir", lambda: output_dir)
+    monkeypatch.setattr(plot_pipeline, "create_output_dir", lambda: output_dir)
     df_acc, df_gyro = load_sensor_data(ROOT / data_dir)
 
     trajectory = pdr.run(

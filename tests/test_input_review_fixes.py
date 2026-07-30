@@ -15,6 +15,7 @@ from rikka.analyze import sensor_plot
 from rikka.analyze.pdr.gyro_bias import estimate_gyro_bias
 from rikka.analyze.pdr.time_utils import _gyro_integration_dt, _time_values
 from rikka.cli import commands as pipeline
+from rikka.plot import pipeline as plot_pipeline
 
 
 @pytest.mark.parametrize(
@@ -77,7 +78,7 @@ def test_pipeline_rejects_non_finite_direction_before_output_creation(
         output_created = True
         raise AssertionError("output should not be created")
 
-    monkeypatch.setattr(pipeline, "_create_output_dir", fail_if_called)
+    monkeypatch.setattr(plot_pipeline, "create_output_dir", fail_if_called)
 
     with pytest.raises(ValueError, match="initial_direction.*有限"):
         pipeline.run(
@@ -99,7 +100,7 @@ def test_pipeline_rejects_invalid_pf_path_before_output_creation(
         output_created = True
         raise AssertionError("output should not be created")
 
-    monkeypatch.setattr(pipeline, "_create_output_dir", fail_if_called)
+    monkeypatch.setattr(plot_pipeline, "create_output_dir", fail_if_called)
 
     with pytest.raises(ValueError, match="pf_path_selection"):
         pipeline.run(
@@ -122,7 +123,7 @@ def test_particle_map_failure_happens_before_output_creation(
         output_created = True
         raise AssertionError("output should not be created")
 
-    monkeypatch.setattr(pipeline, "_create_output_dir", fail_if_called)
+    monkeypatch.setattr(plot_pipeline, "create_output_dir", fail_if_called)
     sensor = pd.DataFrame(
         {
             "t": [0.0],

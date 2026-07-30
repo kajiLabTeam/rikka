@@ -4,8 +4,8 @@
     生センサー、前処理済み信号、検出ステップ、歩幅、ステップごとの前後・左右加速度を
     グラフ化して解析結果の確認に使える画像を生成する。
 依存元:
-    ``config`` から既定値、互換 facade ``pdr`` から共有型・読み込み・前処理・
-    ステップ検出を取得し、NumPy、Pandas、Matplotlib を描画に利用する。
+    ``config`` から既定値、PDR部品からステップ検出、commonから共有型・
+    センサー処理を取得し、NumPy、Pandas、Matplotlib を描画に利用する。
 利用先:
     CLI の ``sensor`` が ``plot_sensor_data`` を呼び、``pdr.pipeline`` が通常実行後の
     歩幅・ステップベクトル診断図を作るため遅延 import する。
@@ -22,11 +22,11 @@ import pandas as pd
 from matplotlib.axes import Axes
 from numpy.typing import NDArray
 
-from ...analyze.pdr import detect_step_result
 from ...common.config import DATA_DIR, INITIAL_DIRECTION, SAMPLING_RATE
 from ...common.lib.models import StepHeading
 from ...common.lib.sensors import load_sensor_data, process_sensor_data
 from ...matplotlib_config import configure_japanese_font
+from ...pdr.lib.step_detection import detect_step_result
 
 StepAccelerationSamples = tuple[NDArray[np.float64], NDArray[np.float64]]
 

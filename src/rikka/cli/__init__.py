@@ -10,8 +10,8 @@
     CLI が解釈した設定を ``commands`` へ渡し、解析結果と成果物を生成する。
 """
 
-from .. import _click_cli
 from .commands import run
+from .options import cli as _click_cli
 
 # ``from rikka import cli`` の既存コードがこのサブパッケージを取得しても、
 # Click の Command として扱えるよう最小限の属性を転送する。
