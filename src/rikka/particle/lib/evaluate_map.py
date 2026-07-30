@@ -18,10 +18,9 @@ from ...particle.lib.proposal import (
 from ...particle.lib.recorder import (
     ParticleStepStages,
 )
-from ...particle.lib.recovery.local import (
-    _generate_recovery_candidates,
-    _replay_from_checkpoint,
-)
+from ...particle.lib.recovery.checkpoint import _replay_from_checkpoint
+from ...particle.lib.recovery.fallback import recover_fallback
+from ...particle.lib.recovery.local import _generate_recovery_candidates
 from ...particle.lib.resampling import (
     _systematic_resample,
 )
@@ -144,32 +143,7 @@ def evaluate_map(ctx: ParticleRuntime) -> None:
                 )
                 ctx.recovery_attempts += 1
             if ctx.replay_result is None:
-                ctx.fallback_recovery = _generate_recovery_candidates(
-                    ctx.particles_before,
-                    ctx.heading_correction_before,
-                    ctx.heading_drift_before,
-                    ctx.stride_scale_before,
-                    ctx.proposed_motion_state,
-                    ctx.weights_before,
-                    ctx.particle_base_headings,
-                    ctx.particle_step_lengths,
-                    ctx.sigma_sl_ratio,
-                    ctx.n_particles,
-                    ctx.map_gray,
-                    ctx.gx_mean,
-                    ctx.gz_mean,
-                    ctx.origin_px,
-                    ctx.scale,
-                    ctx.recovery_heading_sigma,
-                    ctx.recovery_max_attempts,
-                    ctx.rng,
-                    allow_turn_candidates=True,
-                    preserve_route_branches=ctx.preserve_recovery_branches,
-                    allow_stride_adaptation=ctx.adaptive_recovery_scale,
-                    stride_scale_min=ctx.effective_stride_scale_min,
-                    stride_scale_max=ctx.effective_stride_scale_max,
-                    capture_candidates=ctx.recorder.stages_enabled,
-                )
+                ctx.fallback_recovery = recover_fallback(ctx)
                 if ctx.fallback_recovery is None:
                     ctx.particles = ctx.particles_before
                     ctx.heading_correction = ctx.heading_correction_before

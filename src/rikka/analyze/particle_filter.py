@@ -22,10 +22,8 @@ from ..particle.lib.recorder import (
     ParticlePathComparison,
     ParticleStepStages,
 )
-from ..particle.lib.recovery.local import (
-    _generate_recovery_candidates,
-    _replay_from_checkpoint,
-)
+from ..particle.lib.recovery.checkpoint import _replay_from_checkpoint
+from ..particle.lib.recovery.local import _generate_recovery_candidates
 from ..particle.lib.resampling import _effective_sample_size, _systematic_resample
 from ..particle.lib.runner import run_particle_filter
 from ..plot.lib.animation import (
