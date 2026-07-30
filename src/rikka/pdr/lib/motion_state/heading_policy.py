@@ -64,6 +64,110 @@ def _heading_change_limit_for_movement_type(movement_type: str) -> float:
     return float(TRAJECTORY_HEADING_MAX_STEP_DELTA_RAD)
 
 
+def _forward_motion_heading(
+    step_heading: StepHeading,
+    previous_heading: float | None,
+    forward_heading_source: str,
+) -> tuple[float | None, str | None]:
+    """前進歩のbody/motion候補を選ぶ。"""
+    body_heading = (
+        step_heading.body_heading
+        if step_heading.body_heading is not None
+        else step_heading.gyro_heading
+    )
+    if forward_heading_source == "body":
+        return body_heading, "trajectory_body"
+    candidate = (
+        step_heading.motion_heading
+        if step_heading.motion_heading is not None
+        else body_heading
+    )
+    source = (
+        "trajectory_motion"
+        if step_heading.motion_heading is not None
+        else "trajectory_body_fallback"
+    )
+    if (
+        previous_heading is None
+        and step_heading.motion_heading is not None
+        and body_heading is not None
+        and abs(_normalize_angle(step_heading.motion_heading - body_heading))
+        > INITIAL_FORWARD_MOTION_BODY_CONSTRAINT_RAD
+    ):
+        return body_heading, "trajectory_initial_body_fallback"
+    return candidate, source
+
+
+def _sidestep_motion_heading(
+    step_heading: StepHeading,
+    movement_type: str,
+    previous_heading: float | None,
+    sidestep_heading_source: str,
+) -> tuple[float | None, str]:
+    """横歩きのmotion/body lateral候補を選ぶ。"""
+    body_heading = (
+        step_heading.body_heading
+        if step_heading.body_heading is not None
+        else step_heading.gyro_heading
+    )
+    body_lateral_heading = (
+        _sidestep_body_lateral_heading(body_heading, movement_type)
+        if body_heading is not None
+        else None
+    )
+    motion_heading = step_heading.motion_heading
+    if movement_type.startswith("turning_sidestep_"):
+        candidate = (
+            motion_heading
+            if motion_heading is not None
+            else previous_heading
+            if previous_heading is not None
+            else body_lateral_heading
+        )
+        source = (
+            "trajectory_turning_sidestep_motion"
+            if motion_heading is not None
+            else "trajectory_turning_sidestep_fallback"
+        )
+    elif sidestep_heading_source == "body_lateral":
+        candidate = (
+            body_lateral_heading if body_lateral_heading is not None else motion_heading
+        )
+        source = "trajectory_body_lateral"
+    elif sidestep_heading_source == "blend":
+        if (
+            motion_heading is not None
+            and body_lateral_heading is not None
+            and abs(_normalize_angle(motion_heading - body_lateral_heading))
+            <= SIDESTEP_MOTION_LATERAL_CONSTRAINT_RAD
+        ):
+            candidate = _circular_mean_angles([motion_heading, body_lateral_heading])
+            source = "trajectory_blend"
+        else:
+            candidate = (
+                previous_heading
+                if previous_heading is not None
+                else body_lateral_heading
+            )
+            source = "trajectory_sidestep_fallback"
+    else:
+        if motion_heading is not None and (
+            body_lateral_heading is None
+            or abs(_normalize_angle(motion_heading - body_lateral_heading))
+            <= SIDESTEP_MOTION_LATERAL_CONSTRAINT_RAD
+        ):
+            candidate = motion_heading
+            source = "trajectory_sidestep_motion"
+        else:
+            candidate = (
+                previous_heading
+                if previous_heading is not None
+                else body_lateral_heading
+            )
+            source = "trajectory_sidestep_fallback"
+    return candidate, source
+
+
 def _resolve_world_motion_heading(
     step_heading: StepHeading,
     movement_type: str,
@@ -72,110 +176,27 @@ def _resolve_world_motion_heading(
     forward_heading_source: str,
     sidestep_heading_source: str,
 ) -> tuple[float | None, str | None]:
-    """世界座標変換済み移動方位を主候補にして軌跡方位を返す。"""
-    body_heading = (
-        step_heading.body_heading
-        if step_heading.body_heading is not None
-        else step_heading.gyro_heading
-    )
-    candidate: float | None = None
-    source: str | None = None
-
-    # 移動状態ごとに、body heading / motion heading / body lateral の
-    # どれを使うか決める。
+    """移動状態に応じた世界座標方位を選び、連続時の変化量を制限する。"""
     if movement_type == "forward":
-        if forward_heading_source == "body":
-            candidate = body_heading
-            source = "trajectory_body"
-        else:
-            candidate = (
-                step_heading.motion_heading
-                if step_heading.motion_heading is not None
-                else body_heading
-            )
-            source = (
-                "trajectory_motion"
-                if step_heading.motion_heading is not None
-                else "trajectory_body_fallback"
-            )
-            if (
-                previous_heading is None
-                and step_heading.motion_heading is not None
-                and body_heading is not None
-                and abs(_normalize_angle(step_heading.motion_heading - body_heading))
-                > INITIAL_FORWARD_MOTION_BODY_CONSTRAINT_RAD
-            ):
-                candidate = body_heading
-                source = "trajectory_initial_body_fallback"
+        candidate, source = _forward_motion_heading(
+            step_heading,
+            previous_heading,
+            forward_heading_source,
+        )
     elif movement_type in {
         "sidestep_left",
         "sidestep_right",
         "turning_sidestep_left",
         "turning_sidestep_right",
     }:
-        body_lateral_heading = (
-            _sidestep_body_lateral_heading(body_heading, movement_type)
-            if body_heading is not None
-            else None
+        candidate, source = _sidestep_motion_heading(
+            step_heading,
+            movement_type,
+            previous_heading,
+            sidestep_heading_source,
         )
-        motion_heading = step_heading.motion_heading
-        if movement_type.startswith("turning_sidestep_"):
-            candidate = (
-                motion_heading
-                if motion_heading is not None
-                else previous_heading
-                if previous_heading is not None
-                else body_lateral_heading
-            )
-            source = (
-                "trajectory_turning_sidestep_motion"
-                if motion_heading is not None
-                else "trajectory_turning_sidestep_fallback"
-            )
-        elif sidestep_heading_source == "body_lateral":
-            candidate = (
-                body_lateral_heading
-                if body_lateral_heading is not None
-                else motion_heading
-            )
-            source = "trajectory_body_lateral"
-        elif sidestep_heading_source == "blend":
-            if (
-                motion_heading is not None
-                and body_lateral_heading is not None
-                and abs(_normalize_angle(motion_heading - body_lateral_heading))
-                <= SIDESTEP_MOTION_LATERAL_CONSTRAINT_RAD
-            ):
-                candidate = _circular_mean_angles(
-                    [motion_heading, body_lateral_heading]
-                )
-                source = "trajectory_blend"
-            else:
-                candidate = (
-                    previous_heading
-                    if previous_heading is not None
-                    else body_lateral_heading
-                )
-                source = "trajectory_sidestep_fallback"
-        else:
-            if motion_heading is not None and (
-                body_lateral_heading is None
-                or abs(_normalize_angle(motion_heading - body_lateral_heading))
-                <= SIDESTEP_MOTION_LATERAL_CONSTRAINT_RAD
-            ):
-                candidate = motion_heading
-                source = "trajectory_sidestep_motion"
-            else:
-                candidate = (
-                    previous_heading
-                    if previous_heading is not None
-                    else body_lateral_heading
-                )
-                source = "trajectory_sidestep_fallback"
     else:
         return None, None
-
-    # 同じ移動状態が続く場合は1歩ごとの急激な方位変化を制限する。
     if movement_type == previous_movement_type:
         limited = _limit_heading_change(
             candidate,

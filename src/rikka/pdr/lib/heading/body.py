@@ -150,11 +150,7 @@ def estimate_dynamic_body_headings(
     observations: Sequence[StepMotionObservation],
     motion_modes: Sequence[str],
 ) -> tuple[DynamicBodyHeadingEstimate, ...]:
-    """移動状態が安定した因果窓から端末―身体オフセットを推定する。
-
-    世界座標の移動方位は変更せず、端末 yaw から求める身体方位候補だけを返す。
-    未対応モード、状態境界、低信頼観測では直前のオフセットを保持する。
-    """
+    """安定した因果窓から端末―身体offsetと身体方位候補を推定する。"""
     if len(observations) != len(motion_modes):
         raise ValueError("observations and motion_modes must have the same length")
 

@@ -159,46 +159,20 @@ def _sidestep_direction_label(direction: int | None) -> str | None:
     return None
 
 
-def estimate_step_motion(
+def _resolve_motion_heading_and_scale(
     step_heading: StepHeading,
-    step_length: float,
-    previous_heading: float | None = None,
-    forward_heading_source: str = FORWARD_HEADING_SOURCE,
-    sidestep_heading_source: str = "motion",
-    sidestep_suspect_mode: str = SIDESTEP_SUSPECT_MODE,
-) -> StepMotion | None:
-    """状態別に1歩の移動方位と歩幅を決める。"""
-    selected_forward_heading_source = _validate_forward_heading_source(
-        forward_heading_source
-    )
-    selected_sidestep_heading_source = _validate_sidestep_heading_source(
-        sidestep_heading_source
-    )
-    selected_sidestep_suspect_mode = _validate_sidestep_suspect_mode(
-        sidestep_suspect_mode
-    )
-    body_heading = (
-        step_heading.body_heading
-        if step_heading.body_heading is not None
-        else step_heading.gyro_heading
-    )
-    fallback_heading = (
-        step_heading.selected_heading
-        if step_heading.selected_heading is not None
-        else body_heading
-    )
-    if fallback_heading is None:
-        return None
-
-    movement_type = (
-        step_heading.trajectory_movement_type
-        if step_heading.trajectory_movement_type is not None
-        else step_heading.movement_type
-    )
+    movement_type: str,
+    body_heading: float | None,
+    fallback_heading: float,
+    previous_heading: float | None,
+    forward_heading_source: str,
+    sidestep_heading_source: str,
+    sidestep_suspect_mode: str,
+) -> tuple[float, float, str]:
+    """移動状態ごとの方位、歩幅倍率、確定状態を返す。"""
     heading: float | None
-    # trajectory_movement_type を優先し、横歩き・旋回・後退ごとの歩幅補正を適用する。
     if movement_type == "forward":
-        if selected_forward_heading_source == "body":
+        if forward_heading_source == "body":
             heading = body_heading if body_heading is not None else fallback_heading
         else:
             heading = (
@@ -222,9 +196,9 @@ def estimate_step_motion(
         sidestep_source = (
             "body_lateral"
             if step_heading.trajectory_movement_type is None
-            else selected_sidestep_suspect_mode
+            else sidestep_suspect_mode
             if movement_type == "sidestep_suspect_left"
-            else selected_sidestep_heading_source
+            else sidestep_heading_source
         )
         heading = _resolve_sidestep_heading(
             step_heading,
@@ -247,9 +221,9 @@ def estimate_step_motion(
         sidestep_source = (
             "body_lateral"
             if step_heading.trajectory_movement_type is None
-            else selected_sidestep_suspect_mode
+            else sidestep_suspect_mode
             if movement_type == "sidestep_suspect_right"
-            else selected_sidestep_heading_source
+            else sidestep_heading_source
         )
         heading = _resolve_sidestep_heading(
             step_heading,
@@ -273,8 +247,55 @@ def estimate_step_motion(
         heading = fallback_heading
         scale = 1.0
         movement_type = "unknown" if movement_type == "backward" else movement_type
+    return (
+        heading if heading is not None else fallback_heading,
+        scale,
+        movement_type,
+    )
 
-    resolved_heading = heading if heading is not None else fallback_heading
+
+def estimate_step_motion(
+    step_heading: StepHeading,
+    step_length: float,
+    previous_heading: float | None = None,
+    forward_heading_source: str = FORWARD_HEADING_SOURCE,
+    sidestep_heading_source: str = "motion",
+    sidestep_suspect_mode: str = SIDESTEP_SUSPECT_MODE,
+) -> StepMotion | None:
+    """状態別に1歩の移動方位と歩幅を決める。"""
+    selected_forward_source = _validate_forward_heading_source(forward_heading_source)
+    selected_sidestep_source = _validate_sidestep_heading_source(
+        sidestep_heading_source
+    )
+    selected_suspect_mode = _validate_sidestep_suspect_mode(sidestep_suspect_mode)
+    body_heading = (
+        step_heading.body_heading
+        if step_heading.body_heading is not None
+        else step_heading.gyro_heading
+    )
+    fallback_heading = (
+        step_heading.selected_heading
+        if step_heading.selected_heading is not None
+        else body_heading
+    )
+    if fallback_heading is None:
+        return None
+    movement_type = (
+        step_heading.trajectory_movement_type
+        if step_heading.trajectory_movement_type is not None
+        else step_heading.movement_type
+    )
+    resolved_heading, scale, movement_type = _resolve_motion_heading_and_scale(
+        step_heading,
+        movement_type,
+        body_heading,
+        fallback_heading,
+        previous_heading,
+        selected_forward_source,
+        selected_sidestep_source,
+        selected_suspect_mode,
+    )
+
     return StepMotion(
         heading=_normalize_angle(float(resolved_heading)),
         length=float(step_length * scale),

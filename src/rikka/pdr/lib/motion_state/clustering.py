@@ -1,13 +1,7 @@
 """PDR の横歩きクラスタ判定と平滑化。
-
-役割:
-    横歩きクラスタ判定と平滑化を独立した部品として実装する。
-依存元:
-    common の設定・共有型・角度処理と同じ motion_state 領域の部品を利用する。
-利用先:
-    pdr pipeline と motion_state の後続処理から使用される。
-処理フロー:
-    隣接する evidence をクラスタ化し、確定した移動種別を各歩へ反映する。
+役割: 横歩きクラスタ判定と平滑化を実装する。依存元: common と同領域部品。
+利用先: PDR preparation と motion_state の後続処理から使用される。
+処理フロー: 隣接 evidence をクラスタ化し、確定移動種別を各歩へ反映する。
 """
 
 from ....common.config import (
@@ -18,8 +12,11 @@ from ....common.lib.models import (
 )
 from ....common.lib.pdr_math import (
     SIDESTEP_BODY_MOTION_RATIO_THRESHOLD,
-    _validate_sidestep_smoothing,
-    _validate_sidestep_suspect_mode,
+)
+from ....common.lib.validation import (
+    SIDESTEP_SMOOTHING_METHODS,
+    SIDESTEP_SUSPECT_MODES,
+    validate_choice,
 )
 from .evidence import (
     _circular_mean_angles,
@@ -193,82 +190,160 @@ def _is_confirmed_sidestep_cluster(
     )
 
 
-def _smooth_step_headings(
+def _smooth_isolated_headings(
     step_headings: list[StepHeading],
-    method: str = "none",
-    sidestep_suspect_mode: str = SIDESTEP_SUSPECT_MODE,
 ) -> list[StepHeading]:
-    """横歩き判定の軌跡反映を平滑化する。"""
-    selected_method = _validate_sidestep_smoothing(method)
-    selected_sidestep_suspect_mode = _validate_sidestep_suspect_mode(
-        sidestep_suspect_mode
-    )
-    if selected_method == "none":
+    """前進歩に挟まれた単独横歩きを抑制する。"""
+    if len(step_headings) < 3:
         return step_headings
-
     smoothed = list(step_headings)
-    if selected_method == "isolated":
-        if len(step_headings) < 3:
-            return step_headings
-        for i in range(1, len(step_headings) - 1):
-            current = step_headings[i]
-            prev_type = step_headings[i - 1].movement_type
-            next_type = step_headings[i + 1].movement_type
-            if (
-                _is_sidestep_movement(current.movement_type)
-                and prev_type == "forward"
-                and next_type == "forward"
-            ):
-                smoothed[i] = current._replace(
-                    trajectory_movement_type=(
-                        _movement_type_when_sidestep_is_suppressed(current)
-                    )
+    for index in range(1, len(step_headings) - 1):
+        current = step_headings[index]
+        if (
+            _is_sidestep_movement(current.movement_type)
+            and step_headings[index - 1].movement_type == "forward"
+            and step_headings[index + 1].movement_type == "forward"
+        ):
+            smoothed[index] = current._replace(
+                trajectory_movement_type=(
+                    _movement_type_when_sidestep_is_suppressed(current)
                 )
-        return smoothed
+            )
+    return smoothed
 
-    # 各歩の横歩きらしさを evidence 化し、同方向の連続区間だけを軌跡へ強く反映する。
+
+def _find_cluster_members(
+    step_headings: list[StepHeading],
+    evidences: list[_SidestepEvidence],
+    start: int,
+    direction: int,
+) -> tuple[list[int], list[int], int]:
+    """同方向evidenceと1歩のbridge gapからcluster候補を返す。"""
+    members = [start]
+    evidence_indexes = [start]
+    used_bridge = False
+    index = start + 1
+    while index < len(step_headings):
+        evidence = evidences[index]
+        if evidence.direction == direction:
+            members.append(index)
+            evidence_indexes.append(index)
+            used_bridge = False
+            index += 1
+            continue
+        if (
+            evidence.direction is None
+            and not used_bridge
+            and index + 1 < len(step_headings)
+            and evidences[index + 1].direction == direction
+            and _is_sidestep_bridge_gap(step_headings[index], direction)
+        ):
+            members.append(index)
+            used_bridge = True
+            index += 1
+            continue
+        break
+    return members, evidence_indexes, index
+
+
+def _apply_confirmed_cluster(
+    smoothed: list[StepHeading],
+    step_headings: list[StepHeading],
+    evidences: list[_SidestepEvidence],
+    members: list[int],
+    direction: int,
+    cluster_id: int,
+) -> None:
+    """確定clusterを横歩きとして軌跡へ反映する。"""
+    sidestep_type = "sidestep_left" if direction == 1 else "sidestep_right"
+    turning_type = (
+        "turning_sidestep_left" if direction == 1 else "turning_sidestep_right"
+    )
+    for index in members:
+        evidence = evidences[index]
+        movement_type = (
+            turning_type
+            if step_headings[index].movement_type.startswith("turning_sidestep_")
+            else sidestep_type
+        )
+        smoothed[index] = step_headings[index]._replace(
+            trajectory_movement_type=movement_type,
+            body_motion_angle_diff=evidence.angle_diff,
+            sidestep_evidence_direction=_sidestep_direction_label(direction),
+            sidestep_evidence_reason=(
+                evidence.reason if evidence.reason is not None else "bridge_gap"
+            ),
+            sidestep_cluster_id=cluster_id,
+        )
+
+
+def _apply_suspect_cluster(
+    smoothed: list[StepHeading],
+    step_headings: list[StepHeading],
+    evidences: list[_SidestepEvidence],
+    evidence_indexes: list[int],
+    direction: int,
+    suspect_mode: str,
+) -> None:
+    """未確定clusterをsuspect設定に従って反映または抑制する。"""
+    for index in evidence_indexes:
+        evidence = evidences[index]
+        suspect = evidence.strong and not _has_adjacent_opposite_evidence(
+            evidences,
+            index,
+            direction,
+        )
+        suspect = suspect and suspect_mode != "forward"
+        suspect_type = (
+            "sidestep_suspect_left" if direction == 1 else "sidestep_suspect_right"
+        )
+        suspect_heading = (
+            step_headings[index].motion_heading
+            if suspect_mode in {"motion", "blend"}
+            else None
+        )
+        smoothed[index] = step_headings[index]._replace(
+            selected_heading=(
+                suspect_heading if suspect else step_headings[index].selected_heading
+            ),
+            trajectory_movement_type=(
+                suspect_type
+                if suspect
+                else _movement_type_when_sidestep_is_suppressed(step_headings[index])
+            ),
+            body_motion_angle_diff=evidence.angle_diff,
+            sidestep_evidence_direction=_sidestep_direction_label(direction),
+            sidestep_evidence_reason=evidence.reason,
+            sidestep_cluster_id=None,
+        )
+
+
+def _smooth_clustered_headings(
+    step_headings: list[StepHeading],
+    suspect_mode: str,
+) -> list[StepHeading]:
+    """連続する同方向横歩きevidenceだけをclusterとして確定する。"""
+    smoothed = list(step_headings)
     evidences = [_sidestep_evidence(heading) for heading in step_headings]
     cluster_id = 0
-    i = 0
-    while i < len(step_headings):
-        evidence = evidences[i]
-        direction = evidence.direction
+    index = 0
+    while index < len(step_headings):
+        direction = evidences[index].direction
         if direction is None:
-            smoothed[i] = step_headings[i]._replace(
-                body_motion_angle_diff=evidence.angle_diff,
+            smoothed[index] = step_headings[index]._replace(
+                body_motion_angle_diff=evidences[index].angle_diff,
                 sidestep_evidence_direction=None,
                 sidestep_evidence_reason=None,
                 sidestep_cluster_id=None,
             )
-            i += 1
+            index += 1
             continue
-
-        members = [i]
-        evidence_indexes = [i]
-        used_bridge = False
-        j = i + 1
-        while j < len(step_headings):
-            next_evidence = evidences[j]
-            if next_evidence.direction == direction:
-                members.append(j)
-                evidence_indexes.append(j)
-                used_bridge = False
-                j += 1
-                continue
-            if (
-                next_evidence.direction is None
-                and not used_bridge
-                and j + 1 < len(step_headings)
-                and evidences[j + 1].direction == direction
-                and _is_sidestep_bridge_gap(step_headings[j], direction)
-            ):
-                members.append(j)
-                used_bridge = True
-                j += 1
-                continue
-            break
-
-        # 2歩以上かつ横方向変位が十分な cluster だけを確定横歩きとして扱う。
+        members, evidence_indexes, next_index = _find_cluster_members(
+            step_headings,
+            evidences,
+            index,
+            direction,
+        )
         confirmed = len(evidence_indexes) >= 2
         confirmed = confirmed and _sidestep_cluster_has_lateral_strength(
             step_headings,
@@ -278,70 +353,48 @@ def _smooth_step_headings(
 
         if confirmed:
             cluster_id += 1
-            sidestep_type = "sidestep_left" if direction == 1 else "sidestep_right"
-            turning_sidestep_type = (
-                "turning_sidestep_left" if direction == 1 else "turning_sidestep_right"
+            _apply_confirmed_cluster(
+                smoothed,
+                step_headings,
+                evidences,
+                members,
+                direction,
+                cluster_id,
             )
-            for member_index in members:
-                member_evidence = evidences[member_index]
-                movement_type = (
-                    turning_sidestep_type
-                    if step_headings[member_index].movement_type.startswith(
-                        "turning_sidestep_"
-                    )
-                    else sidestep_type
-                )
-                smoothed[member_index] = step_headings[member_index]._replace(
-                    trajectory_movement_type=movement_type,
-                    body_motion_angle_diff=member_evidence.angle_diff,
-                    sidestep_evidence_direction=_sidestep_direction_label(direction),
-                    sidestep_evidence_reason=member_evidence.reason
-                    if member_evidence.reason is not None
-                    else "bridge_gap",
-                    sidestep_cluster_id=cluster_id,
-                )
         else:
-            for evidence_index in evidence_indexes:
-                member_evidence = evidences[evidence_index]
-                suspect = (
-                    member_evidence.strong
-                    and not _has_adjacent_opposite_evidence(
-                        evidences,
-                        evidence_index,
-                        direction,
-                    )
-                )
-                suspect_type = (
-                    "sidestep_suspect_left"
-                    if direction == 1
-                    else "sidestep_suspect_right"
-                )
-                suspect = suspect and selected_sidestep_suspect_mode != "forward"
-                suspect_heading = (
-                    step_headings[evidence_index].motion_heading
-                    if selected_sidestep_suspect_mode in {"motion", "blend"}
-                    else None
-                )
-                smoothed[evidence_index] = step_headings[evidence_index]._replace(
-                    selected_heading=suspect_heading
-                    if suspect
-                    else step_headings[evidence_index].selected_heading,
-                    trajectory_movement_type=(
-                        suspect_type
-                        if suspect
-                        else _movement_type_when_sidestep_is_suppressed(
-                            step_headings[evidence_index]
-                        )
-                    ),
-                    body_motion_angle_diff=member_evidence.angle_diff,
-                    sidestep_evidence_direction=_sidestep_direction_label(direction),
-                    sidestep_evidence_reason=member_evidence.reason,
-                    sidestep_cluster_id=None,
-                )
-
-        i = j
-
+            _apply_suspect_cluster(
+                smoothed,
+                step_headings,
+                evidences,
+                evidence_indexes,
+                direction,
+                suspect_mode,
+            )
+        index = next_index
     return smoothed
+
+
+def _smooth_step_headings(
+    step_headings: list[StepHeading],
+    method: str = "none",
+    sidestep_suspect_mode: str = SIDESTEP_SUSPECT_MODE,
+) -> list[StepHeading]:
+    """横歩き判定の軌跡反映を平滑化する。"""
+    selected_method = validate_choice(
+        "sidestep_smoothing",
+        method,
+        SIDESTEP_SMOOTHING_METHODS,
+    )
+    selected_suspect_mode = validate_choice(
+        "sidestep_suspect_mode",
+        sidestep_suspect_mode,
+        SIDESTEP_SUSPECT_MODES,
+    )
+    if selected_method == "none":
+        return step_headings
+    if selected_method == "isolated":
+        return _smooth_isolated_headings(step_headings)
+    return _smooth_clustered_headings(step_headings, selected_suspect_mode)
 
 
 smooth_step_headings = _smooth_step_headings
