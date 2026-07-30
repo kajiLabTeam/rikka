@@ -15,16 +15,12 @@ import numpy as np
 from ...particle.lib.proposal import (
     _normalize_angle,
 )
-from ...particle.lib.recorder import (
-    ParticleStepStages,
-)
 from ...particle.lib.recovery.checkpoint import _replay_from_checkpoint
 from ...particle.lib.recovery.fallback import recover_fallback
 from ...particle.lib.recovery.local import _generate_recovery_candidates
 from ...particle.lib.resampling import (
     _systematic_resample,
 )
-from .diagnostics import _build_step_diagnostics
 from .state import ParticleRuntime
 
 
@@ -252,163 +248,7 @@ def evaluate_map(ctx: ParticleRuntime) -> None:
                             ctx.recovery.parent_indices
                         ].copy()
                     )
-                if ctx.recorder.diagnostics_enabled:
-                    ctx.replay_weights = np.full(ctx.n_particles, 1.0 / ctx.n_particles)
-                    for replay_offset in range(ctx.replay_depth - 1):
-                        ctx.replay_offset = replay_offset
-                        ctx.history_step = ctx.checkpoint_step + ctx.replay_offset + 1
-                        ctx.replay_parent_indices = (
-                            ctx.recovery.parent_indices
-                            if ctx.replay_offset == 0
-                            else np.arange(ctx.n_particles, dtype=int)
-                        )
-                        ctx.replay_motion_state_before = (
-                            ctx.motion_state_history[ctx.checkpoint_step]
-                            if ctx.replay_offset == 0
-                            else ctx.recovery.motion_state
-                        )
-                        ctx.replay_previous_positions = (
-                            ctx.position_history[ctx.checkpoint_step][
-                                ctx.recovery.parent_indices
-                            ]
-                            if ctx.replay_offset == 0
-                            else ctx.replay_result.replay_positions[
-                                ctx.replay_offset - 1
-                            ]
-                        )
-                        ctx.replay_effective_lengths = np.linalg.norm(
-                            ctx.replay_result.replay_positions[ctx.replay_offset]
-                            - ctx.replay_previous_positions,
-                            axis=1,
-                        )
-                        ctx.collector_index = (
-                            ctx.diagnostics_start_index + ctx.history_step - 1
-                        )
-                        ctx.recorder.diagnostics[ctx.collector_index] = (
-                            _build_step_diagnostics(
-                                step_number=ctx.history_step,
-                                step_time=ctx.t_at_steps[ctx.history_step - 1],
-                                valid_count=ctx.n_particles,
-                                n_particles=ctx.n_particles,
-                                valid_weight_count=ctx.n_particles,
-                                valid_weight_mass=1.0,
-                                ess_before_observation=float(ctx.n_particles),
-                                ess_after_observation=float(ctx.n_particles),
-                                ess_after_resampling=float(ctx.n_particles),
-                                weights=ctx.replay_weights,
-                                particles=ctx.replay_result.replay_positions[
-                                    ctx.replay_offset
-                                ],
-                                heading_drift=ctx.recovery.heading_drift,
-                                heading_correction=ctx.recovery.heading_correction,
-                                stride_scale=ctx.recovery.stride_scale,
-                                effective_step_lengths=ctx.replay_effective_lengths,
-                                parent_indices=ctx.replay_parent_indices,
-                                resampled=ctx.replay_offset == 0,
-                                motion_state=ctx.recovery.motion_state,
-                                motion_state_before=ctx.replay_motion_state_before,
-                                motion_evidence=ctx.motion_evidences[
-                                    ctx.history_step - 1
-                                ],
-                                recovery_attempted=True,
-                                recovery_mode="checkpoint_replayed",
-                                recovery_valid_count=ctx.recovery.valid_count,
-                                recovery_attempts=ctx.recovery_attempts,
-                                recovery_heading_delta_deg=ctx.recovery.heading_delta_deg,
-                                recovery_step_scale=ctx.recovery.step_scale,
-                                recovery_cost=ctx.recovery.mean_cost,
-                                recovery_checkpoint_step=ctx.checkpoint_step,
-                                recovery_replay_steps=ctx.replay_depth,
-                                recovery_candidate_branch_count=int(
-                                    np.unique(ctx.recovery.route_branch_ids).size
-                                ),
-                                recovery_selected_branch_count=int(
-                                    np.unique(ctx.recovery.route_branch_ids).size
-                                ),
-                            )
-                        )
-                if ctx.recorder.stages_enabled:
-                    ctx.replay_weights = np.full(ctx.n_particles, 1.0 / ctx.n_particles)
-                    ctx.replay_offsets = _normalize_angle(
-                        ctx.recovery.heading_correction + ctx.recovery.heading_drift
-                    )
-                    for replay_offset in range(ctx.replay_depth - 1):
-                        ctx.replay_offset = replay_offset
-                        ctx.history_step = ctx.checkpoint_step + ctx.replay_offset + 1
-                        ctx.replay_heading = ctx.step_headings[ctx.history_step - 1]
-                        ctx.replay_parent_indices = (
-                            ctx.recovery.parent_indices
-                            if ctx.replay_offset == 0
-                            else np.arange(ctx.n_particles, dtype=int)
-                        )
-                        ctx.replay_before_positions = (
-                            ctx.position_history[ctx.checkpoint_step][
-                                ctx.recovery.parent_indices
-                            ]
-                            if ctx.replay_offset == 0
-                            else ctx.replay_result.replay_positions[
-                                ctx.replay_offset - 1
-                            ]
-                        )
-                        ctx.replay_after_positions = ctx.replay_result.replay_positions[
-                            ctx.replay_offset
-                        ]
-                        ctx.replay_step_lengths = np.linalg.norm(
-                            ctx.replay_after_positions - ctx.replay_before_positions,
-                            axis=1,
-                        )
-                        ctx.replay_sensor_heading = ctx.replay_heading.selected_heading
-                        ctx.replay_proposed_headings = (
-                            np.full(
-                                ctx.n_particles, float(ctx.replay_sensor_heading or 0.0)
-                            )
-                            + ctx.replay_offsets
-                        )
-                        ctx.collector_index = (
-                            ctx.stages_start_index + ctx.history_step - 1
-                        )
-                        ctx.recorder.stages[ctx.collector_index] = ParticleStepStages(
-                            step=ctx.history_step,
-                            timestamp_s=ctx.t_at_steps[ctx.history_step - 1],
-                            sensor_heading=ctx.replay_sensor_heading,
-                            sensor_yaw_delta=ctx.replay_heading.yaw_delta,
-                            movement_type=ctx.replay_heading.trajectory_movement_type
-                            or ctx.replay_heading.movement_type,
-                            deterministic_step_length_m=ctx.step_lengths[
-                                ctx.history_step - 1
-                            ],
-                            before_positions=ctx.replay_before_positions.copy(),
-                            before_offsets=ctx.replay_offsets.copy(),
-                            before_weights=ctx.replay_weights.copy(),
-                            before_motion_state=ctx.recovery.motion_state.copy(),
-                            proposed_positions=ctx.replay_after_positions.copy(),
-                            proposed_headings=ctx.replay_proposed_headings.copy(),
-                            proposed_step_lengths=ctx.replay_step_lengths.copy(),
-                            proposed_motion_state=ctx.recovery.motion_state.copy(),
-                            valid_transition=np.ones(ctx.n_particles, dtype=bool),
-                            posterior_weights=ctx.replay_weights.copy(),
-                            ess_before_observation=float(ctx.n_particles),
-                            ess_after_observation=float(ctx.n_particles),
-                            parent_indices=ctx.replay_parent_indices.copy(),
-                            resampled=ctx.replay_offset == 0,
-                            recovery_mode="checkpoint_replayed",
-                            recovery_candidate_headings=ctx.recovery.candidate_headings.copy()
-                            if ctx.replay_offset == 0
-                            and ctx.recovery.candidate_headings is not None
-                            else None,
-                            recovery_candidate_valid=ctx.recovery.candidate_valid.copy()
-                            if ctx.replay_offset == 0
-                            and ctx.recovery.candidate_valid is not None
-                            else None,
-                            recovery_selected_index=ctx.recovery.selected_candidate_indices.copy()
-                            if ctx.replay_offset == 0
-                            and ctx.recovery.selected_candidate_indices is not None
-                            else None,
-                            after_positions=ctx.replay_after_positions.copy(),
-                            after_offsets=ctx.replay_offsets.copy(),
-                            after_weights=ctx.replay_weights.copy(),
-                            after_motion_state=ctx.recovery.motion_state.copy(),
-                        )
+                ctx.recorder.record_checkpoint_replay(ctx)
                 ctx.particles = ctx.recovery.particles
                 ctx.heading_correction = ctx.recovery.heading_correction
                 ctx.heading_drift = ctx.recovery.heading_drift
