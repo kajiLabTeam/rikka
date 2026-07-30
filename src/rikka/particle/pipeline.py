@@ -10,12 +10,6 @@
     診断収集器を用意し、準備済み歩列をrunnerへ渡して共有結果型へまとめる。
 """
 
-from ..analyze.particle.models import (
-    ParticleFilterStepDiagnostics,
-    ParticlePathComparison,
-    ParticleStepStages,
-)
-from ..analyze.particle.runner import run_particle_filter
 from ..common.lib.models import (
     FloorMap,
     ParticleFilterResult,
@@ -23,6 +17,12 @@ from ..common.lib.models import (
     TrajectoryResult,
 )
 from ..common.settings import ParticleSettings
+from .lib.engine import _run_particle_steps
+from .lib.recorder import (
+    ParticleFilterStepDiagnostics,
+    ParticlePathComparison,
+    ParticleStepStages,
+)
 
 
 def run_particle(
@@ -34,7 +34,7 @@ def run_particle(
     diagnostics: list[ParticleFilterStepDiagnostics] = []
     stages: list[ParticleStepStages] = []
     path_comparisons: list[ParticlePathComparison] = []
-    trajectory, lengths, times, all_particles, headings = run_particle_filter(
+    trajectory, lengths, times, all_particles, headings = _run_particle_steps(
         prepared.step_detection.peaks,
         prepared.df_gyro,
         prepared.df_acc,
