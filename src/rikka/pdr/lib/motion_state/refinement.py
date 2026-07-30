@@ -18,9 +18,10 @@ import numpy as np
 
 from ....common.lib.models import StepHeading
 from ..heading.body import estimate_dynamic_body_headings
-from ..heading.resolver import classify_movement_type
+from ..heading.device_orientation import classify_movement_type
+from .clustering import smooth_step_headings
 from .decoder import MotionDecodeResult, decode_step_motion_segments
-from .step_motion import build_step_motion_observations, smooth_step_headings
+from .evidence import build_step_motion_observations
 
 _MIN_TRUSTED_CALIBRATION = 0.45
 

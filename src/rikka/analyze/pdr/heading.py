@@ -1,46 +1,21 @@
 """旧方位推定 import の互換 shim。"""
-# ruff: noqa: F401
 
-import sys
-from typing import TYPE_CHECKING
+from typing import Any
 
-from ...pdr.lib.heading import resolver as _implementation
+from ...pdr.lib.heading import (
+    accel,
+    device_orientation,
+    gyro,
+    motion,
+    resolver,
+)
 
-__all__ = [
-    "_AccelHeadingResult",
-    "_apply_device_orientation_to_horizontal",
-    "_classify_movement_type",
-    "_dataframe_times_or_sample_index",
-    "_estimate_accel_headings",
-    "_estimate_device_orientation_mode",
-    "_estimate_motion_heading_correction",
-    "_estimate_motion_heading_from_horizontal_accel",
-    "_integrate_motion_with_zero_velocity",
-    "_MotionHeadingResult",
-    "_resolve_motion_heading_correction",
-    "_rotate_vector",
-    "_select_two_accel_peaks",
-    "_step_segment_bounds",
-    "resolve_step_heading",
-]
+_MODULES = (device_orientation, gyro, accel, motion, resolver)
 
-if TYPE_CHECKING:
-    from ...pdr.lib.heading.resolver import (
-        _AccelHeadingResult,
-        _apply_device_orientation_to_horizontal,
-        _classify_movement_type,
-        _dataframe_times_or_sample_index,
-        _estimate_accel_headings,
-        _estimate_device_orientation_mode,
-        _estimate_motion_heading_correction,
-        _estimate_motion_heading_from_horizontal_accel,
-        _integrate_motion_with_zero_velocity,
-        _MotionHeadingResult,
-        _resolve_motion_heading_correction,
-        _rotate_vector,
-        _select_two_accel_peaks,
-        _step_segment_bounds,
-        resolve_step_heading,
-    )
-else:
-    sys.modules[__name__] = _implementation
+
+def __getattr__(name: str) -> Any:
+    """分割後の所有モジュールから互換シンボルを取得する。"""
+    for module in _MODULES:
+        if hasattr(module, name):
+            return getattr(module, name)
+    raise AttributeError(name)

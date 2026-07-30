@@ -36,27 +36,33 @@ from ...pdr.lib.heading.body import (
     DynamicBodyHeadingEstimate,
     estimate_dynamic_body_headings,
 )
-from ...pdr.lib.heading.resolver import (
+from ...pdr.lib.heading.device_orientation import (
     _apply_device_orientation_to_horizontal,
     _classify_movement_type,
     _estimate_device_orientation_mode,
+)
+from ...pdr.lib.heading.motion import (
     _estimate_motion_heading_correction,
     _resolve_motion_heading_correction,
+)
+from ...pdr.lib.heading.resolver import (
     resolve_step_heading,
 )
+from ...pdr.lib.motion_state.clustering import _smooth_step_headings
 from ...pdr.lib.motion_state.decoder import (
     DecodedMotionSegment,
     MotionDecodeResult,
     decode_step_motion_modes,
     decode_step_motion_segments,
 )
+from ...pdr.lib.motion_state.heading_policy import (
+    _limit_heading_change,
+    _stabilize_trajectory_headings,
+)
 from ...pdr.lib.motion_state.refinement import refine_step_headings_with_motion_model
 from ...pdr.lib.motion_state.step_motion import (
     _is_sidestep_suspect_movement,
     _is_trajectory_sidestep_movement,
-    _limit_heading_change,
-    _smooth_step_headings,
-    _stabilize_trajectory_headings,
     estimate_step_motion,
 )
 from ...pdr.lib.step_detection import detect_step_result, detect_steps

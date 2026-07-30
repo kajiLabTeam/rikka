@@ -35,6 +35,18 @@ def score_ratio(value: float, target: float) -> float:
     return float(np.clip(value / target, 0.0, 1.0))
 
 
+def circular_mean_angles(angles: list[float]) -> float | None:
+    """有限な角度の円平均を返す。"""
+    finite_angles = [angle for angle in angles if np.isfinite(angle)]
+    if not finite_angles:
+        return None
+    sin_sum = float(np.sum(np.sin(finite_angles)))
+    cos_sum = float(np.sum(np.cos(finite_angles)))
+    if np.hypot(sin_sum, cos_sum) <= 1e-12:
+        return None
+    return normalize_angle(float(np.arctan2(sin_sum, cos_sum)))
+
+
 _normalize_angle = normalize_angle
 _abs_angle_diff = abs_angle_diff
 _score_ratio = score_ratio
