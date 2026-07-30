@@ -26,25 +26,14 @@ from ...common.lib.models import (
     StepMotionPosterior,
     StepSegment,
 )
-from ...common.lib.pdr_math import (
-    _validate_forward_heading_source as validate_forward_heading_source,
-)
-from ...common.lib.pdr_math import (
-    _validate_motion_heading_correction as validate_motion_heading_correction,
-)
-from ...common.lib.pdr_math import (
-    _validate_sidestep_heading_source as validate_sidestep_heading_source,
-)
-from ...common.lib.pdr_math import (
-    _validate_sidestep_smoothing as validate_sidestep_smoothing,
-)
-from ...common.lib.pdr_math import (
-    _validate_sidestep_suspect_mode as validate_sidestep_suspect_mode,
-)
-from ...common.lib.time_utils import _step_output_time as step_output_time
 from ...common.lib.validation import (
+    validate_forward_heading_source,
+    validate_motion_heading_correction,
     validate_non_negative_parameter,
     validate_positive_parameter,
+    validate_sidestep_heading_source,
+    validate_sidestep_smoothing,
+    validate_sidestep_suspect_mode,
 )
 from ...config import (
     FLOORMAP_ORIGIN_PX,
@@ -76,7 +65,6 @@ from ...config import (
     SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
     SIDESTEP_SMOOTHING_METHOD,
     SIDESTEP_SUSPECT_MODE,
-    STEP_LENGTH_METHOD,
     TURNING_LENGTH_SCALE,
     WEINBERG_K,
 )
@@ -107,21 +95,6 @@ from ...particle.lib.resampling import (
 )
 from ...particle.lib.state import ParticleHistory, ParticleState
 from ...particle.lib.weighting import weight
-from ...pdr.lib.heading.device_orientation import estimate_device_orientation_mode
-from ...pdr.lib.heading.motion import resolve_motion_heading_correction
-from ...pdr.lib.heading.resolver import resolve_step_heading
-from ...pdr.lib.motion_state.clustering import smooth_step_headings
-from ...pdr.lib.motion_state.evidence import (
-    build_particle_motion_headings,
-    build_step_motion_evidences,
-)
-from ...pdr.lib.motion_state.heading_policy import stabilize_trajectory_headings
-from ...pdr.lib.motion_state.step_motion import estimate_step_motion
-from ...pdr.lib.step_length import (
-    estimate_initial_forward_angle,
-    estimate_step_length,
-    estimate_step_length_forward,
-)
 from .diagnostics import _build_step_diagnostics
 from .paths import (
     _reconstruct_particle_paths,
@@ -264,19 +237,11 @@ def _run_particle_steps(
         "sidestep_min_lateral_displacement",
         sidestep_min_lateral_displacement,
     )
-    selected_motion_heading_correction = validate_motion_heading_correction(
-        motion_heading_correction
-    )
-    selected_sidestep_smoothing = validate_sidestep_smoothing(sidestep_smoothing)
-    selected_forward_heading_source = validate_forward_heading_source(
-        forward_heading_source
-    )
-    selected_sidestep_heading_source = validate_sidestep_heading_source(
-        sidestep_heading_source
-    )
-    selected_sidestep_suspect_mode = validate_sidestep_suspect_mode(
-        sidestep_suspect_mode
-    )
+    validate_motion_heading_correction(motion_heading_correction)
+    validate_sidestep_smoothing(sidestep_smoothing)
+    validate_forward_heading_source(forward_heading_source)
+    validate_sidestep_heading_source(sidestep_heading_source)
+    validate_sidestep_suspect_mode(sidestep_suspect_mode)
     scale = validate_positive_parameter("scale", scale)
     if n_particles <= 0:
         raise ValueError("n_particles は正の整数を指定してください")
@@ -421,138 +386,48 @@ def _run_particle_steps(
     )
     diagnostics_start_index = len(recorder.diagnostics)
     stages_start_index = len(recorder.stages)
-    using_prepared_steps = (
-        prepared_step_headings is not None
-        and prepared_step_lengths is not None
-        and prepared_step_times is not None
-    )
-    if not using_prepared_steps and (
-        prepared_step_headings is not None
-        or prepared_step_lengths is not None
-        or prepared_step_times is not None
+
+    if (
+        prepared_step_headings is None
+        or prepared_step_lengths is None
+        or prepared_step_times is None
     ):
         raise ValueError(
             "prepared_step_headings, prepared_step_lengths, "
-            "prepared_step_times はすべて同時に指定してください"
+            "prepared_step_times は必須です"
         )
-    if prepared_motion_evidences is not None and not using_prepared_steps:
+    if prepared_motion_evidences is None:
+        raise ValueError("prepared_motion_evidences は必須です")
+    if prepared_particle_motion_headings is None:
+        raise ValueError("prepared_particle_motion_headings は必須です")
+    if not (
+        len(prepared_step_headings)
+        == len(prepared_step_lengths)
+        == len(prepared_step_times)
+    ):
         raise ValueError(
-            "prepared_motion_evidences は prepared step 一式と同時に指定してください"
+            "prepared_step_headings, prepared_step_lengths, "
+            "prepared_step_times の長さが一致しません"
         )
-    if prepared_motion_posteriors is not None and not using_prepared_steps:
+    stabilized_step_headings = prepared_step_headings
+    raw_step_lengths = prepared_step_lengths
+    raw_step_times = prepared_step_times
+    motion_evidences = prepared_motion_evidences
+    particle_motion_headings = prepared_particle_motion_headings
+    if len(motion_evidences) != len(stabilized_step_headings):
         raise ValueError(
-            "prepared_motion_posteriors は prepared step 一式と同時に指定してください"
+            "prepared_motion_evidences と prepared_step_headings の長さが一致しません"
         )
-    if not using_prepared_steps:
-        device_orientation_mode = estimate_device_orientation_mode(
-            df_acc,
-            df_gyro,
-            peaks,
-            initial_direction,
-            step_segments=step_segments,
-        )
-        motion_heading_correction_rad = resolve_motion_heading_correction(
-            df_acc,
-            df_gyro,
-            peaks,
-            initial_direction,
-            step_segments,
-            selected_motion_heading_correction,
-            device_orientation_mode,
-        )
-
-        phi_0 = (
-            estimate_initial_forward_angle(df_acc, df_gyro, peaks)
-            if STEP_LENGTH_METHOD == "forward"
-            else 0.0
-        )
-        raw_step_headings: list[StepHeading] = []
-        raw_step_lengths: list[float] = []
-        raw_step_times: list[float] = []
-        for i, p in enumerate(peaks):
-            if p >= len(df_acc):
-                continue
-            if STEP_LENGTH_METHOD == "forward" and i + 1 >= len(peaks):
-                continue
-
-            step_heading = resolve_step_heading(
-                peaks,
-                df_gyro,
-                df_acc,
-                i,
-                initial_direction=initial_direction,
-                heading_method=heading_method,
-                step_segments=step_segments,
-                motion_heading_correction=motion_heading_correction_rad,
-                sidestep_lateral_ratio=sidestep_lateral_ratio,
-                sidestep_min_lateral_displacement=sidestep_min_lateral_displacement,
-                device_orientation_mode=device_orientation_mode,
-            )
-            if step_heading.selected_heading is None:
-                continue
-
-            if STEP_LENGTH_METHOD == "forward":
-                sl_det = estimate_step_length_forward(df_acc, df_gyro, peaks, i, phi_0)
-            else:
-                sl_det = estimate_step_length(df_acc, int(p), k=weinberg_k)
-            raw_step_headings.append(step_heading)
-            raw_step_lengths.append(sl_det)
-            raw_step_times.append(
-                step_output_time(df_acc, peaks, i, STEP_LENGTH_METHOD)
-            )
-
-        smoothed_step_headings = smooth_step_headings(
-            raw_step_headings,
-            selected_sidestep_smoothing,
-            selected_sidestep_suspect_mode,
-        )
-        stabilized_step_headings = stabilize_trajectory_headings(
-            smoothed_step_headings,
-            selected_forward_heading_source,
-            selected_sidestep_heading_source,
-        )
-        motion_evidences = build_step_motion_evidences(stabilized_step_headings)
-    else:
-        assert prepared_step_headings is not None
-        assert prepared_step_lengths is not None
-        assert prepared_step_times is not None
-        if not (
-            len(prepared_step_headings)
-            == len(prepared_step_lengths)
-            == len(prepared_step_times)
-        ):
-            raise ValueError(
-                "prepared_step_headings, prepared_step_lengths, "
-                "prepared_step_times の長さが一致しません"
-            )
-        stabilized_step_headings = prepared_step_headings
-        raw_step_lengths = prepared_step_lengths
-        raw_step_times = prepared_step_times
-        motion_evidences = (
-            build_step_motion_evidences(stabilized_step_headings)
-            if prepared_motion_evidences is None
-            else prepared_motion_evidences
-        )
-        if len(motion_evidences) != len(stabilized_step_headings):
-            raise ValueError(
-                "prepared_motion_evidences と prepared_step_headings の"
-                "長さが一致しません"
-            )
-        if prepared_motion_posteriors is not None:
-            if len(prepared_motion_posteriors) != len(stabilized_step_headings):
-                raise ValueError(
-                    "prepared_motion_posteriors と prepared_step_headings の"
-                    "長さが一致しません"
-                )
-    particle_motion_headings = (
-        build_particle_motion_headings(stabilized_step_headings)
-        if prepared_particle_motion_headings is None
-        else prepared_particle_motion_headings
-    )
     if len(particle_motion_headings) != len(stabilized_step_headings):
         raise ValueError(
             "prepared_particle_motion_headings と prepared_step_headings の"
             "長さが一致しません"
+        )
+    if prepared_motion_posteriors is not None and len(
+        prepared_motion_posteriors
+    ) != len(stabilized_step_headings):
+        raise ValueError(
+            "prepared_motion_posteriors と prepared_step_headings の長さが一致しません"
         )
     recording_motion_reliability = (
         float(np.median([evidence.motion_reliability for evidence in motion_evidences]))
@@ -563,8 +438,6 @@ def _run_particle_steps(
         rejuvenation_sigma_heading,
         recording_motion_reliability,
     )
-
-    previous_heading: float | None = None
 
     for step_number, (
         step_heading,
@@ -590,36 +463,10 @@ def _run_particle_steps(
         )
         if particle_heading is None:
             continue
-        angle_det = particle_heading
         step_heading = step_heading._replace(
             selected_heading=particle_heading,
             source="particle_evidence_motion",
         )
-        if using_prepared_steps:
-            pass
-        else:
-            step_motion = estimate_step_motion(
-                step_heading,
-                sl_det,
-                previous_heading,
-                selected_forward_heading_source,
-                selected_sidestep_heading_source,
-                selected_sidestep_suspect_mode,
-            )
-            if step_motion is None:
-                continue
-            angle_det = step_motion.heading
-            sl_det = step_motion.length
-            step_heading = step_heading._replace(
-                selected_heading=step_motion.heading,
-                source=step_heading.source
-                if step_heading.source.startswith("trajectory_")
-                else "state_motion",
-                step_length_scale=step_motion.length_scale,
-                trajectory_movement_type=step_motion.movement_type,
-                forward_heading_source=selected_forward_heading_source,
-            )
-
         particles_before = particles.copy()
         heading_correction_before = heading_correction.copy()
         heading_drift_before = heading_drift.copy()
@@ -1287,8 +1134,6 @@ def _run_particle_steps(
         step_lengths.append(sl_det)
         t_at_steps.append(step_time)
         step_headings.append(step_heading)
-        previous_heading = angle_det
-
         parent_history.append(parent_indices)
         all_particles_list.append(particles.copy())
         if (recovery_mode == "none" and valid_weight_count > 0) or (

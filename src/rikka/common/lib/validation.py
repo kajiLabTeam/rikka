@@ -52,3 +52,36 @@ def validate_non_negative_parameter(name: str, value: float) -> float:
     if not np.isfinite(value) or value < 0:
         raise ValueError(f"{name} は有限な0以上の値を指定してください。")
     return value
+
+
+def validate_motion_heading_correction(value: str) -> str:
+    """移動方位補正方式を検証する。"""
+    return validate_choice(
+        "motion_heading_correction",
+        value,
+        MOTION_HEADING_CORRECTION_METHODS,
+    )
+
+
+def validate_sidestep_smoothing(value: str) -> str:
+    """横歩き平滑化方式を検証する。"""
+    return validate_choice("sidestep_smoothing", value, SIDESTEP_SMOOTHING_METHODS)
+
+
+def validate_forward_heading_source(value: str) -> str:
+    """前進方位ソースを検証する。"""
+    return validate_choice("forward_heading_source", value, FORWARD_HEADING_SOURCES)
+
+
+def validate_sidestep_heading_source(value: str) -> str:
+    """横歩き方位ソースを検証する。"""
+    return validate_choice(
+        "sidestep_heading_source",
+        value,
+        SIDESTEP_HEADING_SOURCES,
+    )
+
+
+def validate_sidestep_suspect_mode(value: str) -> str:
+    """横歩き疑いの処理方式を検証する。"""
+    return validate_choice("sidestep_suspect_mode", value, SIDESTEP_SUSPECT_MODES)

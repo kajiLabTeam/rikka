@@ -22,7 +22,9 @@ from rikka.analyze.particle_filter import (
     _select_reachable_mean_path,
     _snap_trajectory_to_walkable_pixels,
     _systematic_resample,
-    run_particle_filter,
+)
+from rikka.analyze.particle_filter import (
+    run_particle_filter as _run_particle_filter,
 )
 from rikka.analyze.pdr.adaptive_estimator import estimate_adaptive_pdr
 from rikka.analyze.pdr.body_heading import estimate_dynamic_body_headings
@@ -33,9 +35,25 @@ from rikka.analyze.pdr.motion_refinement import (
 from rikka.analyze.sensor_plot import _project_acceleration_to_step_axes
 from rikka.cli import commands as pdr_commands
 from rikka.pdr.lib.motion_state.evidence import (
+    build_particle_motion_headings,
     build_step_motion_evidences,
     build_step_motion_observations,
 )
+
+
+def run_particle_filter(*args, **kwargs):
+    """確定済みPDR歩列をPF内部回帰テストへ渡す。"""
+    headings = kwargs.get("prepared_step_headings")
+    if headings is not None:
+        kwargs.setdefault(
+            "prepared_motion_evidences",
+            build_step_motion_evidences(headings),
+        )
+        kwargs.setdefault(
+            "prepared_particle_motion_headings",
+            build_particle_motion_headings(headings),
+        )
+    return _run_particle_filter(*args, **kwargs)
 
 
 def _forward_step_heading(
