@@ -13,14 +13,12 @@
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 
 from ...common.config import (
     FLOORMAP_ORIGIN_PX,
     FLOORMAP_PATH,
     FLOORMAP_SCALE,
     FORWARD_HEADING_SOURCE,
-    INITIAL_DIRECTION,
     PF_HEADING_DRIFT_RETENTION,
     PF_MOTION_PREDICTIVE_WEIGHT_POWER,
     PF_NUM_PARTICLES,
@@ -44,13 +42,11 @@ from ...common.config import (
     SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
     SIDESTEP_SMOOTHING_METHOD,
     SIDESTEP_SUSPECT_MODE,
-    WEINBERG_K,
 )
 from ...common.lib.models import (
     StepHeading,
     StepMotionEvidence,
     StepMotionPosterior,
-    StepSegment,
 )
 from .evaluate_map import resolve_map_constraints
 from .finalize import finalize
@@ -76,15 +72,11 @@ ParticleStepsResult = tuple[
 
 
 def run_particle_steps(
-    peaks: np.ndarray,
-    df_gyro: pd.DataFrame,
-    df_acc: pd.DataFrame,
     gx_mean: float,
     gz_mean: float,
     floormap_path: str | Path = FLOORMAP_PATH,
     origin_px: tuple[int, int] = FLOORMAP_ORIGIN_PX,
     scale: float = FLOORMAP_SCALE,
-    initial_direction: float = INITIAL_DIRECTION,
     n_particles: int = PF_NUM_PARTICLES,
     sigma_init_heading: float = PF_SIGMA_INIT_HEADING,
     sigma_heading: float = PF_SIGMA_HEADING,
@@ -96,9 +88,6 @@ def run_particle_steps(
     stride_scale_rejuvenation_sigma: float = PF_STRIDE_SCALE_REJUVENATION_SIGMA,
     stride_scale_min: float = PF_STRIDE_SCALE_MIN,
     stride_scale_max: float = PF_STRIDE_SCALE_MAX,
-    weinberg_k: float = WEINBERG_K,
-    heading_method: str = "gyro",
-    step_segments: tuple[StepSegment, ...] = (),
     sidestep_lateral_ratio: float = SIDESTEP_LATERAL_RATIO,
     sidestep_min_lateral_displacement: float = SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
     motion_heading_correction: str = "auto",
@@ -132,11 +121,7 @@ def run_particle_steps(
     motion_predictive_weight_power: float = PF_MOTION_PREDICTIVE_WEIGHT_POWER,
     path_selection: str = PF_PATH_SELECTION,
 ) -> ParticleStepsResult:
-    """準備済み歩列を受け、元と同じ順序でPF段階を実行する。
-
-    ``peaks``、センサーDataFrame、旧PDR設定7引数は ``run_particle_filter`` の
-    位置引数互換のため受け取るが、準備済み歩列を使う現在の実装では参照しない。
-    """
+    """準備済み歩列を受け、元と同じ順序でPF段階を実行する。"""
     ctx = ParticleRuntime(
         gx_mean=gx_mean,
         gz_mean=gz_mean,
@@ -181,8 +166,6 @@ def run_particle_steps(
         motion_predictive_weight_power=motion_predictive_weight_power,
         path_selection=path_selection,
     )
-    del peaks, df_gyro, df_acc, initial_direction, weinberg_k, heading_method
-    del step_segments
     setup(ctx)
     initialize(ctx)
     for step_number, (
