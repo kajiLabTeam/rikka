@@ -39,8 +39,9 @@ def aggregate_trajectory_grid(
 ) -> list[StayCell]:
     """滞在判定済みtrajectoryを非ゼロのセル訪問回数へ集計する。"""
     require_columns(dataframe, (*REQUIRED_COLUMNS, "is_stay"))
-    if not is_bool_dtype(dataframe["is_stay"].dtype):
-        raise ValueError("is_stay must be boolean")
+    is_stay = dataframe["is_stay"]
+    if not is_bool_dtype(is_stay.dtype) or is_stay.isna().any():
+        raise ValueError("is_stay must contain only boolean values")
     scale = validate_floor(
         map_width_px=map_width_px,
         map_height_px=map_height_px,

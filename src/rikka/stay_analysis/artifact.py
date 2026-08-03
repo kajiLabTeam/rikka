@@ -24,6 +24,9 @@ from rikka.stay_analysis.validation import validate_floor, validate_parameter
 
 def _normalize_trajectories(
     trajectories: list[TrajectoryCells],
+    *,
+    column_count: int,
+    row_count: int,
 ) -> list[TrajectoryCells]:
     normalized: list[TrajectoryCells] = []
     seen_ids: set[str] = set()
@@ -44,7 +47,12 @@ def _normalize_trajectories(
                 for value in values
             ):
                 raise ValueError("cell values must be integers")
-            if column < 0 or row < 0 or count <= 0 or (column, row) in seen_cells:
+            if (
+                not 0 <= column < column_count
+                or not 0 <= row < row_count
+                or count <= 0
+                or (column, row) in seen_cells
+            ):
                 raise ValueError("cell values are invalid or duplicated")
             seen_cells.add((column, row))
             cells.append(cell)
@@ -87,7 +95,13 @@ def assemble_heatmap_artifact(
         map_height_px=map_height_px,
         floor_scale=floor_scale,
     )
-    normalized = _normalize_trajectories(trajectories)
+    column_count = math.ceil(map_width_px * scale / grid_size)
+    row_count = math.ceil(map_height_px * scale / grid_size)
+    normalized = _normalize_trajectories(
+        trajectories,
+        column_count=column_count,
+        row_count=row_count,
+    )
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -103,8 +117,8 @@ def assemble_heatmap_artifact(
         },
         "grid": {
             "size_m": grid_size,
-            "column_count": math.ceil(map_width_px * scale / grid_size),
-            "row_count": math.ceil(map_height_px * scale / grid_size),
+            "column_count": column_count,
+            "row_count": row_count,
         },
         "input_trajectory_count": len(normalized),
         "trajectories": normalized,
