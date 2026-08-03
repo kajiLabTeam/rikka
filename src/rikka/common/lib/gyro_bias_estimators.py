@@ -1,7 +1,7 @@
 """ジャイロバイアス推定の基礎部品。
 
 役割:
-    候補型、方式検証、時間マスク、ロバスト統計、quietest 推定を実装する。
+    候補型、時間マスク、ロバスト統計、quietest 推定を実装する。
 依存元:
     common の設定・共有型・時刻処理と NumPy、Pandas を利用する。
 利用先:
@@ -23,7 +23,6 @@ from ..config import (
 )
 from .models import GyroBiasResult
 from .time_utils import _time_values
-from .validation import GYRO_BIAS_METHODS, validate_choice
 
 
 def _guard_gyro_bias_result(result: GyroBiasResult) -> GyroBiasResult:
@@ -52,11 +51,6 @@ class _GyroBiasStaticCandidate(NamedTuple):
     gyro_std: float
     accel_p95: float
     accel_max: float
-
-
-def _validate_gyro_bias_method(method: str) -> str:
-    """ジャイロバイアス推定手法名を検証する。"""
-    return validate_choice("gyro_bias_method", method, GYRO_BIAS_METHODS)
 
 
 def _time_mask(df: pd.DataFrame, start_s: float, end_s: float) -> np.ndarray:

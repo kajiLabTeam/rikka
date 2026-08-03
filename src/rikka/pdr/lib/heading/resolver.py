@@ -24,9 +24,6 @@ from ....common.lib.models import StepHeading, StepSegment
 from ....common.lib.pdr_math import (
     _abs_angle_diff,
     _normalize_angle,
-    _validate_heading_method,
-    _validate_non_negative_parameter,
-    _validate_positive_parameter,
 )
 from ....common.lib.time_utils import (
     _sample_gyro_angle,
@@ -123,15 +120,6 @@ def resolve_step_heading(
     device_orientation_mode: str = "normal",
 ) -> StepHeading:
     """指定ステップのジャイロ/加速度/移動方向方位を解決する。"""
-    selected_method = _validate_heading_method(heading_method)
-    sidestep_lateral_ratio = _validate_positive_parameter(
-        "sidestep_lateral_ratio",
-        sidestep_lateral_ratio,
-    )
-    sidestep_min_lateral_displacement = _validate_non_negative_parameter(
-        "sidestep_min_lateral_displacement",
-        sidestep_min_lateral_displacement,
-    )
     direction_offset = float(np.deg2rad(initial_direction))
     mid_idx = _step_mid_index(peaks, i)
     mid_time = _step_mid_time(df_acc, peaks, i)
@@ -157,7 +145,7 @@ def resolve_step_heading(
     )
 
     selected_heading, source = _select_heading_candidate(
-        selected_method,
+        heading_method,
         gyro_heading,
         accel_heading,
         motion_heading,

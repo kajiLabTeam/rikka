@@ -21,15 +21,13 @@ from ....common.config import (
     TURNING_YAW_DELTA_THRESHOLD_DEG,
 )
 from ....common.lib.models import StepSegment
-from ....common.lib.pdr_math import (
-    DEVICE_ORIENTATION_MODES,
-    _normalize_angle,
-)
+from ....common.lib.pdr_math import _normalize_angle
 from ....common.lib.time_utils import (
     _sample_gyro_angle,
     _step_mid_index,
     _step_mid_time,
 )
+from ....common.lib.validation import DEVICE_ORIENTATION_MODES
 
 
 def _rotate_vector(

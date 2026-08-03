@@ -14,11 +14,6 @@ from ....common.lib.models import (
 from ....common.lib.pdr_math import (
     SIDESTEP_BODY_MOTION_RATIO_THRESHOLD,
 )
-from ....common.lib.validation import (
-    SIDESTEP_SMOOTHING_METHODS,
-    SIDESTEP_SUSPECT_MODES,
-    validate_choice,
-)
 from .evidence import (
     _mean_finite,
     _sidestep_evidence,
@@ -380,21 +375,11 @@ def _smooth_step_headings(
     sidestep_suspect_mode: str = SIDESTEP_SUSPECT_MODE,
 ) -> list[StepHeading]:
     """横歩き判定の軌跡反映を平滑化する。"""
-    selected_method = validate_choice(
-        "sidestep_smoothing",
-        method,
-        SIDESTEP_SMOOTHING_METHODS,
-    )
-    selected_suspect_mode = validate_choice(
-        "sidestep_suspect_mode",
-        sidestep_suspect_mode,
-        SIDESTEP_SUSPECT_MODES,
-    )
-    if selected_method == "none":
+    if method == "none":
         return step_headings
-    if selected_method == "isolated":
+    if method == "isolated":
         return _smooth_isolated_headings(step_headings)
-    return _smooth_clustered_headings(step_headings, selected_suspect_mode)
+    return _smooth_clustered_headings(step_headings, sidestep_suspect_mode)
 
 
 smooth_step_headings = _smooth_step_headings

@@ -14,7 +14,12 @@ from rikka import cli
 from rikka.cli import commands as pipeline
 from rikka.common.lib.gyro_bias import estimate_gyro_bias
 from rikka.common.lib.time_utils import _gyro_integration_dt, _time_values
-from rikka.common.settings import SensorSettings, StepSettings
+from rikka.common.settings import (
+    HeadingSettings,
+    MotionStateSettings,
+    SensorSettings,
+    StepSettings,
+)
 from rikka.plot import pipeline as plot_pipeline
 from rikka.plot.lib import sensor as sensor_plot
 
@@ -189,10 +194,36 @@ def test_particle_map_validation_reports_shape_independently(
     [
         (StepSettings, {"detection_method": "invalid"}, "step_detection_method"),
         (SensorSettings, {"gyro_bias_method": "invalid"}, "gyro_bias_method"),
+        (HeadingSettings, {"method": "invalid"}, "heading_method"),
+        (
+            MotionStateSettings,
+            {"motion_heading_correction": "invalid"},
+            "motion_heading_correction",
+        ),
+        (
+            MotionStateSettings,
+            {"forward_heading_source": "invalid"},
+            "forward_heading_source",
+        ),
+        (
+            MotionStateSettings,
+            {"sidestep_heading_source": "invalid"},
+            "sidestep_heading_source",
+        ),
+        (
+            MotionStateSettings,
+            {"sidestep_suspect_mode": "invalid"},
+            "sidestep_suspect_mode",
+        ),
     ],
 )
 def test_settings_reject_invalid_method_during_construction(
-    settings_type: type[StepSettings] | type[SensorSettings],
+    settings_type: (
+        type[StepSettings]
+        | type[SensorSettings]
+        | type[HeadingSettings]
+        | type[MotionStateSettings]
+    ),
     kwargs: dict[str, str],
     option_name: str,
 ) -> None:
