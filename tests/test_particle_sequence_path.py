@@ -16,6 +16,16 @@ from rikka.pdr.lib.motion_state.evidence import (
 
 def run_particle_filter(*args, **kwargs):
     """確定済みPDR歩列をPF内部回帰テストへ渡す。"""
+    for unused_name in (
+        "peaks",
+        "df_gyro",
+        "df_acc",
+        "initial_direction",
+        "weinberg_k",
+        "heading_method",
+        "step_segments",
+    ):
+        kwargs.pop(unused_name, None)
     headings = kwargs.get("prepared_step_headings")
     if headings is not None:
         kwargs.setdefault(
@@ -26,7 +36,7 @@ def run_particle_filter(*args, **kwargs):
             "prepared_particle_motion_headings",
             build_particle_motion_headings(headings),
         )
-    return _run_particle_filter(*args, **kwargs)
+    return _run_particle_filter(*args[3:], **kwargs)
 
 
 def _select(

@@ -35,9 +35,6 @@ def run_particle(
     stages: list[ParticleStepStages] = []
     path_comparisons: list[ParticlePathComparison] = []
     trajectory, lengths, times, all_particles, headings = run_particle_steps(
-        prepared.step_detection.peaks,
-        prepared.df_gyro,
-        prepared.df_acc,
         prepared.gx_mean,
         prepared.gz_mean,
         floormap_path=floormap.path,
