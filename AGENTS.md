@@ -28,10 +28,9 @@
 詳しい入力形式、データフロー、設定、出力は `README.md` を参照してください。
 
 - `src/rikka/cli/` は Click ベースの CLI を定義します。
-- `src/rikka/common/config/` の既定値は CLI のデフォルトにも使われ、`rikka.config` は互換 shim です。
+- `src/rikka/common/config/` の既定値は CLI のデフォルトにも使われます。
 - `src/rikka/pdr/` は通常 PDR、`src/rikka/particle/` は地図拘束付き PF の実装です。
 - `src/rikka/plot/` は CSV・図・アニメーションの書き出しを担当します。
-- `rikka.analyze.pdr` / `rikka.analyze.particle_filter` は既存利用者向けの互換 shim です。
 - 通常 PDR と particle filter は `prepare_pdr_steps()` のステップ情報を共有します。
 - `particle.pipeline.run_particle()` は `common.lib.models.PreparedPdrSteps` を境界として受け取ります。
 - `agent/agent_*.py` はエージェントの診断・検証用で、通常のライブラリ API ではありません。
@@ -68,7 +67,7 @@ Git hook を利用する場合は `git config core.hooksPath .githooks` を設�
 - Python 実装: 関連テストと `uv run ruff check`
 - heading、sidestep、step detection、step length、trajectory: `tests/test_pdr_regressions.py` と必要に応じた代表データ実行
 - particle filter: 固定 seed の回帰テストと複数 seed 評価
-- CLI、`config.py` の既定値: `tests/test_smoke.py` と該当コマンドの `--help`
+- CLI、`common/config/` の既定値: `tests/test_smoke.py` と該当コマンドの `--help`
 - CI、依存関係、ビルド設定: `uv run pre-commit run --all-files` と `uv build`
 - ドキュメントのみ: 原則テスト不要。ただし記載コマンドと現在の実装を照合する
 
@@ -108,8 +107,8 @@ CI やバッチ確認では `--no-plot` または `plot=False` を使ってく�
 - `pyproject.toml` の Ruff 設定は行長 88、ダブルクォート、スペースインデントです。
 - Mypy は strict 設定ですが、`disallow_untyped_defs = false` です。既存コードの型付け方針に合わせてください。
 - `common/config/` の既定値は CLI のデフォルトにも使われます。設定変更は CLI 挙動にも影響します。
-- `pdr.pipeline.run_pdr()` と `particle.pipeline.run_particle()` が解析の入口です。`analyze/` は互換 shim なので実装を追加しないでください。
-- `pdr.run()` は `df_acc` と `df_gyro` を両方渡すか、両方省略する必要があります。片方だけ渡すと `ValueError` になります。
+- `pdr.pipeline.run_pdr()` と `particle.pipeline.run_particle()` が解析の入口です。
+- `cli.commands.run()` は `df_acc` と `df_gyro` を両方渡すか、両方省略する必要があります。片方だけ渡すと `ValueError` になります。
 - 通常 PDR と particle filter で共有するステップ情報は `prepare_pdr_steps()` が作ります。particle 側で同じ heading / step length 推定を重複実装しないでください。
 - 新しい領域間の受け渡しには `common/lib/models.py` の共有型を使い、他領域の `lib/` や private helper への依存を増やさないでください。
 - `agent/agent_*.py` はエージェント検証用です。恒常的な機能として扱わず、必要な検証目的・入力データ・出力先が分かる名前と docstring を保ってください。
