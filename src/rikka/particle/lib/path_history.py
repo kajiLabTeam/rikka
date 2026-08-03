@@ -16,33 +16,6 @@ import numpy as np
 from .map_constraints import _evaluate_particle_transitions
 
 
-def _reconstruct_resampled_paths(
-    position_history: list[np.ndarray],
-    resample_history: list[np.ndarray],
-) -> np.ndarray:
-    """リサンプリング祖先をたどって最終粒子群の経路を復元する。"""
-    if not position_history:
-        return np.empty((0, 0, 2), dtype=float)
-
-    n_particles = position_history[0].shape[0]
-    n_steps = len(position_history) - 1
-    if len(resample_history) != n_steps:
-        raise ValueError("position_history と resample_history の長さが一致しません")
-
-    paths = np.empty((n_particles, n_steps + 1, 2), dtype=float)
-    if n_steps == 0:
-        paths[:, 0, :] = position_history[0]
-        return paths
-
-    lineage = resample_history[-1].astype(int, copy=True)
-    paths[:, n_steps, :] = position_history[n_steps][lineage]
-    for step in range(n_steps - 1, 0, -1):
-        lineage = resample_history[step - 1][lineage]
-        paths[:, step, :] = position_history[step][lineage]
-    paths[:, 0, :] = position_history[0][lineage]
-    return paths
-
-
 def _reconstruct_particle_paths(
     position_history: list[np.ndarray],
     parent_history: list[np.ndarray],
