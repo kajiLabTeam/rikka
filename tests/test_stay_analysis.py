@@ -59,6 +59,20 @@ def test_enrich_calculates_incoming_speed_and_row_wise_stay() -> None:
         (lambda frame: frame.drop(columns="x"), "missing required columns"),
         (lambda frame: frame.assign(step_index=[0, 1, 3, 4, 5]), "step_index"),
         (
+            lambda frame: frame.assign(rikka_timestamp_s=[0.0, 0.0, 1.0, 1.5, 2.0]),
+            "first rikka_timestamp_s",
+        ),
+        (
+            lambda frame: frame.assign(rikka_timestamp_s=[None, 0.1, 1.0, 1.5, 2.0]),
+            "second rikka_timestamp_s",
+        ),
+        (
+            lambda frame: frame.assign(
+                rikka_timestamp_s=[None, 0.0, 1.0, float("nan"), 2.0]
+            ),
+            "invalid value",
+        ),
+        (
             lambda frame: frame.assign(rikka_timestamp_s=[None, 0.0, 1.0, 1.0, 2.0]),
             "strictly increasing",
         ),
@@ -163,13 +177,28 @@ def test_grid_keeps_boundary_point_and_rejects_invalid_settings() -> None:
         )
 
 
+def test_grid_rejects_nullable_stay_flag_with_missing_value() -> None:
+    dataframe = trajectory()
+    dataframe["is_stay"] = pd.Series([False, False, True, pd.NA, True], dtype="boolean")
+
+    with pytest.raises(ValueError, match="only boolean values"):
+        aggregate_trajectory_grid(
+            dataframe,
+            map_width_px=100,
+            map_height_px=100,
+            floor_scale=1,
+            start_x_px=0,
+            start_y_px=0,
+        )
+
+
 def test_assemble_artifact_preserves_trajectory_order_and_sorts_cells() -> None:
     artifact = assemble_heatmap_artifact(
         [
             {
                 "trajectory_id": "second-in-sort-but-first-in-request",
                 "cells": [
-                    {"grid_column": 2, "grid_row": 1, "stay_cell_visit_count": 1},
+                    {"grid_column": 1, "grid_row": 1, "stay_cell_visit_count": 1},
                     {"grid_column": 1, "grid_row": 0, "stay_cell_visit_count": 2},
                 ],
             },
@@ -209,6 +238,28 @@ def test_assemble_artifact_rejects_duplicate_cells_and_trajectories() -> None:
                 {"trajectory_id": "a", "cells": []},
                 {"trajectory_id": "a", "cells": []},
             ],
+            map_width_px=100,
+            map_height_px=100,
+            floor_scale=0.01,
+        )
+
+
+def test_assemble_artifact_rejects_cell_outside_grid() -> None:
+    with pytest.raises(ValueError, match="invalid"):
+        assemble_heatmap_artifact(
+            [
+                {
+                    "trajectory_id": "a",
+                    "cells": [
+                        {
+                            "grid_column": 1,
+                            "grid_row": 0,
+                            "stay_cell_visit_count": 1,
+                        }
+                    ],
+                }
+            ],
+            grid_size_m=1,
             map_width_px=100,
             map_height_px=100,
             floor_scale=0.01,
