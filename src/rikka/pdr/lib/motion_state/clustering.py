@@ -7,6 +7,7 @@
 from ....common.config import (
     SIDESTEP_SUSPECT_MODE,
 )
+from ....common.lib.angles import circular_mean_angles
 from ....common.lib.models import (
     StepHeading,
 )
@@ -19,7 +20,6 @@ from ....common.lib.validation import (
     validate_choice,
 )
 from .evidence import (
-    _circular_mean_angles,
     _mean_finite,
     _sidestep_evidence,
     _SidestepEvidence,
@@ -143,7 +143,7 @@ def _sidestep_cluster_motion_heading(
         for heading in step_headings[start:end]
         if heading.motion_heading is not None
     ]
-    return _circular_mean_angles(motion_headings)
+    return circular_mean_angles(motion_headings)
 
 
 def _sidestep_cluster_motion_heading_for_indexes(
@@ -156,7 +156,7 @@ def _sidestep_cluster_motion_heading_for_indexes(
         motion_heading = step_headings[index].motion_heading
         if motion_heading is not None:
             motion_headings.append(motion_heading)
-    return _circular_mean_angles(motion_headings)
+    return circular_mean_angles(motion_headings)
 
 
 def _is_confirmed_sidestep_cluster(

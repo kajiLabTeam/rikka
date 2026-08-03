@@ -11,10 +11,10 @@
 """
 
 from dataclasses import replace
-from typing import Any
 
 import numpy as np
 
+from ...common.lib.models import StepHeading
 from ...particle.lib.recorder import (
     ParticlePathComparison,
 )
@@ -27,29 +27,37 @@ from .sequence_path import (
 from .state import ParticleRuntime
 
 
-def finalize(ctx: ParticleRuntime) -> Any:
+def finalize(
+    ctx: ParticleRuntime,
+) -> tuple[
+    list[list[float]],
+    list[float],
+    list[float],
+    np.ndarray,
+    list[StepHeading],
+]:
     ctx.all_particles = np.stack(ctx.all_particles_list)
     ctx.particle_paths = _reconstruct_particle_paths(
         ctx.position_history, ctx.parent_history
     )
     if ctx.path_selection == "sequence" or ctx.recorder.paths_enabled:
         ctx.sensor_headings = np.asarray(
-            [ctx.heading.selected_heading for ctx.heading in ctx.step_headings],
+            [heading.selected_heading for heading in ctx.step_headings],
             dtype=float,
         )
         ctx.turning_evidence = np.asarray(
             [
-                ctx.heading.trajectory_movement_type == "turning"
-                or ctx.heading.movement_type == "turning"
+                heading.trajectory_movement_type == "turning"
+                or heading.movement_type == "turning"
                 or (
                     ctx.prepared_motion_posteriors is not None
-                    and ctx.index < len(ctx.prepared_motion_posteriors)
+                    and index < len(ctx.prepared_motion_posteriors)
                     and (
-                        ctx.prepared_motion_posteriors[ctx.index].turning_probability
+                        ctx.prepared_motion_posteriors[index].turning_probability
                         >= 0.25
                     )
                 )
-                for ctx.index, ctx.heading in enumerate(ctx.step_headings)
+                for index, heading in enumerate(ctx.step_headings)
             ],
             dtype=bool,
         )

@@ -1,6 +1,6 @@
 """旧ジャイロバイアス import の互換 shim。"""
 
-from ...pdr.lib.gyro_bias import (
+from ...common.lib.gyro_bias import (
     GYRO_BIAS_METHODS,
     _estimate_gyro_bias_initial_robust,
     _estimate_gyro_bias_prewalk_robust,
@@ -10,7 +10,7 @@ from ...pdr.lib.gyro_bias import (
     _startup_static_search_range,
     estimate_gyro_bias,
 )
-from ...pdr.lib.gyro_bias_estimators import (
+from ...common.lib.gyro_bias_estimators import (
     _estimate_gyro_bias_quietest,
     _guard_gyro_bias_result,
     _GyroBiasStaticCandidate,

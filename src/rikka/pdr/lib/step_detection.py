@@ -27,18 +27,19 @@ from ...common.config import (
     STEP_VERTICAL_THRESHOLD_PERCENTILE,
 )
 from ...common.lib.models import StepDetectionResult, StepSegment
-
-STEP_DETECTION_METHODS = ("peak", "paper_vertical_threshold")
+from ...common.lib.validation import (
+    STEP_DETECTION_METHODS as STEP_DETECTION_METHODS,
+)
+from ...common.lib.validation import validate_choice
 
 
 def _validate_step_detection_method(method: str) -> str:
     """ステップ検出手法名を検証する。"""
-    if method not in STEP_DETECTION_METHODS:
-        allowed = ", ".join(STEP_DETECTION_METHODS)
-        raise ValueError(
-            f"step_detection_method は {allowed} のいずれかを指定してください。"
-        )
-    return method
+    return validate_choice(
+        "step_detection_method",
+        method,
+        STEP_DETECTION_METHODS,
+    )
 
 
 def _detect_steps_by_peak(df_acc: pd.DataFrame) -> StepDetectionResult:

@@ -23,6 +23,25 @@ SIDESTEP_SMOOTHING_METHODS = ("none", "isolated", "clustered")
 FORWARD_HEADING_SOURCES = ("body", "motion")
 SIDESTEP_HEADING_SOURCES = ("motion", "body_lateral", "blend")
 SIDESTEP_SUSPECT_MODES = ("motion", "body_lateral", "blend", "forward")
+DEVICE_ORIENTATION_MODES = (
+    "normal",
+    "front_back_inverted",
+    "left_right_inverted",
+    "rotated_180",
+)
+MOTION_ESTIMATION_METHODS = ("legacy", "adaptive", "robust")
+SMOOTHING_MODES = ("causal", "offline")
+PF_PATH_SELECTION_METHODS = ("current", "sequence")
+STEP_LENGTH_METHODS = ("weinberg", "forward")
+STEP_DETECTION_METHODS = ("peak", "paper_vertical_threshold")
+GYRO_BIAS_METHODS = (
+    "prewalk_guarded",
+    "zero",
+    "prewalk_robust",
+    "initial_robust",
+    "quietest",
+    "manual",
+)
 
 
 def validate_scale(scale: float) -> float:

@@ -16,9 +16,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from ..common.config import SAMPLING_RATE
 from ..common.lib.models import TrajectoryResult
 from ..common.settings import OutputSettings, ParticleSettings, PdrSettings
-from ..config import SAMPLING_RATE
 from ..particle.lib.recorder import ParticleFilterStepDiagnostics
 from .lib.animation import plot_particle_filter_trajectory, save_particle_animation
 from .lib.console import print_trajectory_summary
@@ -256,19 +256,6 @@ def _render_particle_artifacts(
             scale=settings.scale,
             output_path=output_dir / "particle_filter.mp4",
         )
-
-
-def publish(
-    result: TrajectoryResult,
-    pdr_settings: PdrSettings,
-    particle_settings: ParticleSettings,
-    output_settings: OutputSettings,
-) -> pd.DataFrame:
-    """CSVと要求された図を1つの出力ディレクトリへ保存する。"""
-    output_dir = create_output_dir()
-    dataframe = write_outputs(result, output_dir)
-    render(result, pdr_settings, particle_settings, output_settings, output_dir)
-    return dataframe
 
 
 def render_sensor(

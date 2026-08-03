@@ -8,8 +8,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from rikka.analyze import pdr
-from rikka.analyze.pdr.sensors import load_sensor_data
+from rikka.cli.commands import run
+from rikka.common.lib.sensors import load_sensor_data
 from rikka.plot import pipeline as plot_pipeline
 
 ROOT = Path(__file__).parents[1]
@@ -42,7 +42,7 @@ def test_refactor_golden(
     monkeypatch.setattr(plot_pipeline, "create_output_dir", lambda: output_dir)
     df_acc, df_gyro = load_sensor_data(ROOT / data_dir)
 
-    trajectory = pdr.run(
+    trajectory = run(
         df_acc=df_acc,
         df_gyro=df_gyro,
         plot=False,

@@ -24,9 +24,10 @@ from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize
 
 from ...common.config import FLOORMAP_ORIGIN_PX, FLOORMAP_PATH, FLOORMAP_SCALE
+from ...common.lib.floormap import compute_pixel_coords
 from ...common.lib.models import StepHeading
 from ...matplotlib_config import configure_japanese_font
-from .floormap import compute_pixel_coords, plot_heading_overlay
+from .trajectory import _plot_heading_overlay as plot_heading_overlay
 
 
 def plot_particle_filter_trajectory(

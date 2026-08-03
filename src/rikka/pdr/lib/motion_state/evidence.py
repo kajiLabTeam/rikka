@@ -291,18 +291,6 @@ def _mean_finite(values: list[float]) -> float | None:
     return float(np.mean(finite_values))
 
 
-def _circular_mean_angles(angles: list[float]) -> float | None:
-    """角度リストの円平均を返す。有限な角度がなければ None。"""
-    finite_angles = [angle for angle in angles if np.isfinite(angle)]
-    if not finite_angles:
-        return None
-    sin_sum = float(np.sum(np.sin(finite_angles)))
-    cos_sum = float(np.sum(np.cos(finite_angles)))
-    if np.hypot(sin_sum, cos_sum) <= 1e-12:
-        return None
-    return _normalize_angle(float(np.arctan2(sin_sum, cos_sum)))
-
-
 def _body_motion_angle_diff(step_heading: StepHeading) -> float | None:
     """端末方位と移動方位の絶対角度差を返す。"""
     if step_heading.body_heading is None or step_heading.motion_heading is None:

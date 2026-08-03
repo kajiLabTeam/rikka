@@ -13,20 +13,9 @@
 from pathlib import Path
 
 import matplotlib.image as mpimg
-import numpy as np
 import pandas as pd
 
-from ..common.lib.models import FloorMap, GyroBiasResult, PreparedPdrSteps
-from ..common.settings import (
-    HeadingSettings,
-    MotionStateSettings,
-    OutputSettings,
-    ParticleSettings,
-    PdrSettings,
-    SensorSettings,
-    StepSettings,
-)
-from ..config import (
+from ..common.config import (
     FLOORMAP_ORIGIN_PX,
     FLOORMAP_PATH,
     FLOORMAP_SCALE,
@@ -46,9 +35,23 @@ from ..config import (
     SIDESTEP_SUSPECT_MODE,
     SMOOTHING_MODE,
     STEP_DETECTION_METHOD,
+    STEP_LENGTH_METHOD,
     USER_HEIGHT_M,
 )
-from ..particle.lib.map_constraints import _normalize_floormap_gray
+from ..common.lib.models import FloorMap, GyroBiasResult, PreparedPdrSteps
+from ..common.settings import (
+    HeadingSettings,
+    MotionStateSettings,
+    OutputSettings,
+    ParticleSettings,
+    PdrSettings,
+    SensorSettings,
+    StepSettings,
+)
+from ..particle.lib.map_constraints import (
+    _normalize_floormap_gray,
+    _validate_floormap_origin,
+)
 from ..particle.pipeline import run_particle
 from ..pdr.pipeline import run_pdr
 from ..plot import pipeline as plot_pipeline
@@ -72,15 +75,7 @@ def _validate_particle_floormap(
     map_gray = _normalize_floormap_gray(map_raw)
     if map_gray.ndim != 2 or map_gray.size == 0:
         raise ValueError(f"フロアマップ画像の形状が不正です: {path}")
-    origin_x, origin_y = origin_px
-    map_height, map_width = map_gray.shape
-    if not (
-        0 <= origin_x < map_width
-        and 0 <= origin_y < map_height
-        and np.isfinite(map_gray[origin_y, origin_x])
-        and map_gray[origin_y, origin_x] > 128
-    ):
-        raise ValueError("origin_px は歩行可能なマップ内画素を指定してください")
+    _validate_floormap_origin(map_gray, origin_px)
 
 
 def run(
@@ -100,6 +95,7 @@ def run(
     initial_direction: float = INITIAL_DIRECTION,
     height_m: float = USER_HEIGHT_M,
     step_detection_method: str | None = None,
+    step_length_method: str = STEP_LENGTH_METHOD,
     heading_method: str | None = None,
     gyro_bias_method: str | None = None,
     gyro_bias: float | None = None,
@@ -133,6 +129,7 @@ def run(
                 if step_detection_method is None
                 else step_detection_method
             ),
+            length_method=step_length_method,
             height_m=height_m,
         ),
         heading=HeadingSettings(

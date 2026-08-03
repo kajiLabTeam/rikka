@@ -53,11 +53,12 @@ def _collect_raw_steps(
     motion: MotionStateSettings,
     device_orientation_mode: str,
     motion_heading_correction_rad: float,
+    step_length_method: str,
 ) -> tuple[list[StepHeading], list[float], list[float]]:
     """各ピークから方位候補、生の歩幅、出力時刻を同じ順序で集める。"""
     phi_0 = (
         _estimate_initial_forward_angle(df_acc, df_gyro, peaks)
-        if STEP_LENGTH_METHOD == "forward"
+        if step_length_method == "forward"
         else 0.0
     )
     headings: list[StepHeading] = []
@@ -66,7 +67,7 @@ def _collect_raw_steps(
     for index, peak in enumerate(peaks):
         if peak >= len(df_acc):
             continue
-        if STEP_LENGTH_METHOD == "forward" and index + 1 >= len(peaks):
+        if step_length_method == "forward" and index + 1 >= len(peaks):
             continue
         heading = resolve_step_heading(
             peaks,
@@ -87,7 +88,7 @@ def _collect_raw_steps(
             continue
         length = (
             estimate_step_length_forward(df_acc, df_gyro, peaks, index, phi_0)
-            if STEP_LENGTH_METHOD == "forward"
+            if step_length_method == "forward"
             else estimate_step_length(df_acc, int(peak), k=weinberg_k)
         )
         headings.append(heading)
@@ -102,7 +103,7 @@ def _resolve_motion_steps(
     raw_times: list[float],
     motion: MotionStateSettings,
     motion_refinement: bool,
-) -> tuple[list[list[float]], list[float], list[float], list[StepHeading]]:
+) -> tuple[list[float], list[float], list[StepHeading]]:
     """運動状態を平滑化して歩ごとの移動方位と実効歩幅を確定する。"""
     smoothed = (
         refine_step_headings_with_motion_model(
@@ -157,15 +158,10 @@ def _resolve_motion_steps(
         step_times.append(step_time)
         step_headings.append(heading)
         previous_heading = step_motion.heading
-    return (
-        integrate_steps(step_headings, step_lengths),
-        step_lengths,
-        step_times,
-        step_headings,
-    )
+    return step_lengths, step_times, step_headings
 
 
-def estimate_trajectory_with_headings(
+def prepare_trajectory_steps(
     peaks: np.ndarray,
     df_gyro: pd.DataFrame,
     df_acc: pd.DataFrame,
@@ -181,8 +177,9 @@ def estimate_trajectory_with_headings(
     sidestep_heading_source: str = "motion",
     sidestep_suspect_mode: str = SIDESTEP_SUSPECT_MODE,
     motion_refinement: bool = True,
-) -> tuple[list[list[float]], list[float], list[float], list[StepHeading]]:
-    """ステップピークから状態補正済みの2次元軌跡を推定する。"""
+    step_length_method: str = STEP_LENGTH_METHOD,
+) -> tuple[list[float], list[float], list[StepHeading]]:
+    """ステップピークから状態補正済みの歩幅・時刻・方位を準備する。"""
     motion = MotionStateSettings(
         sidestep_lateral_ratio=sidestep_lateral_ratio,
         sidestep_min_lateral_displacement=sidestep_min_lateral_displacement,
@@ -219,8 +216,54 @@ def estimate_trajectory_with_headings(
         motion,
         device_mode,
         correction_rad,
+        step_length_method,
     )
     return _resolve_motion_steps(*raw, motion, motion_refinement)
+
+
+def estimate_trajectory_with_headings(
+    peaks: np.ndarray,
+    df_gyro: pd.DataFrame,
+    df_acc: pd.DataFrame,
+    initial_direction: float = INITIAL_DIRECTION,
+    weinberg_k: float = WEINBERG_K,
+    heading_method: str = HEADING_METHOD,
+    step_segments: tuple[StepSegment, ...] = (),
+    sidestep_lateral_ratio: float = SIDESTEP_LATERAL_RATIO,
+    sidestep_min_lateral_displacement: float = SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
+    motion_heading_correction: str = "auto",
+    sidestep_smoothing: str = SIDESTEP_SMOOTHING_METHOD,
+    forward_heading_source: str = FORWARD_HEADING_SOURCE,
+    sidestep_heading_source: str = "motion",
+    sidestep_suspect_mode: str = SIDESTEP_SUSPECT_MODE,
+    motion_refinement: bool = True,
+    step_length_method: str = STEP_LENGTH_METHOD,
+) -> tuple[list[list[float]], list[float], list[float], list[StepHeading]]:
+    """ステップピークから状態補正済みの2次元軌跡を推定する。"""
+    step_lengths, step_times, step_headings = prepare_trajectory_steps(
+        peaks,
+        df_gyro,
+        df_acc,
+        initial_direction,
+        weinberg_k,
+        heading_method,
+        step_segments,
+        sidestep_lateral_ratio,
+        sidestep_min_lateral_displacement,
+        motion_heading_correction,
+        sidestep_smoothing,
+        forward_heading_source,
+        sidestep_heading_source,
+        sidestep_suspect_mode,
+        motion_refinement,
+        step_length_method,
+    )
+    return (
+        integrate_steps(step_headings, step_lengths),
+        step_lengths,
+        step_times,
+        step_headings,
+    )
 
 
 def estimate_trajectory(
@@ -238,5 +281,6 @@ def estimate_trajectory(
         initial_direction=initial_direction,
         weinberg_k=weinberg_k,
         heading_method="gyro",
+        step_length_method=STEP_LENGTH_METHOD,
     )
     return points, step_lengths, t_at_steps

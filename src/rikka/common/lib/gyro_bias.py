@@ -4,10 +4,10 @@
     無補正、記録開始時、歩行直前、全期間の静穏窓、または手動値からジャイロの
     定常偏差を決定し、推定値と校正区間を ``GyroBiasResult`` として返す。
 依存元:
-    ``config`` から検出閾値、``models`` から結果型、``time_utils`` から時刻変換を
+    ``common.config`` から検出閾値、``models`` から結果型、``time_utils`` から時刻変換を
     取得し、NumPy、Pandas、SciPy でロバスト統計と歩行開始検出を行う。
 利用先:
-    ``sensors.process_sensor_data`` が角速度積分前の補正に使用し、``trajectory`` と
+    ``common.lib.sensors.process_sensor_data`` が角速度積分前の補正に使用し、PDRと
     facade は検証関数・推定 API を利用する。
 処理フロー:
     手法を検証し、候補となる静止区間を探索して外れ値を除いた代表値を計算し、
@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 from scipy.signal import find_peaks
 
-from ...common.config import (
+from ..config import (
     GYRO_BIAS_METHOD,
     GYRO_BIAS_MIN_CALIBRATION_SECONDS,
     GYRO_BIAS_STATIC_ACCEL_P95_WEIGHT,
@@ -36,8 +36,6 @@ from ...common.config import (
     PEAK_HEIGHT,
     SAMPLING_RATE,
 )
-from ...common.lib.models import GyroBiasResult
-from ...common.lib.time_utils import _time_at_index, _time_values
 from .gyro_bias_estimators import (
     _estimate_gyro_bias_quietest,
     _guard_gyro_bias_result,
@@ -46,15 +44,9 @@ from .gyro_bias_estimators import (
     _time_mask,
     _validate_gyro_bias_method,
 )
-
-GYRO_BIAS_METHODS = (
-    "prewalk_guarded",
-    "zero",
-    "prewalk_robust",
-    "initial_robust",
-    "quietest",
-    "manual",
-)
+from .models import GyroBiasResult
+from .time_utils import _time_at_index, _time_values
+from .validation import GYRO_BIAS_METHODS as GYRO_BIAS_METHODS
 
 
 def _estimate_gyro_bias_initial_robust(

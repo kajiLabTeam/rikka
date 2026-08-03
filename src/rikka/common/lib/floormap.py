@@ -13,6 +13,13 @@
 import numpy as np
 
 
+def pixel_y_sign(gx_mean: float, gz_mean: float) -> int:
+    """端末姿勢に応じたフロアマップ画素Y軸の符号を返す。"""
+    if abs(gx_mean) > abs(gz_mean):
+        return -1 if gx_mean > 0 else 1
+    return -1 if gz_mean < 0 else 1
+
+
 def compute_pixel_coords(
     xs: np.ndarray,
     ys: np.ndarray,
@@ -22,10 +29,7 @@ def compute_pixel_coords(
     scale: float,
 ) -> tuple[np.ndarray, np.ndarray]:
     """メートル座標をフロアマップのピクセル座標に変換する。"""
-    if abs(gx_mean) > abs(gz_mean):
-        y_sign = -1 if gx_mean > 0 else 1
-    else:
-        y_sign = -1 if gz_mean < 0 else 1
+    y_sign = pixel_y_sign(gx_mean, gz_mean)
     return origin_px[0] + xs / scale, origin_px[1] + y_sign * ys / scale
 
 
@@ -37,14 +41,7 @@ def pixel_vector_from_heading(
     scale: float,
 ) -> tuple[float, float]:
     """メートル座標の方位ベクトルをピクセル座標の差分に変換する。"""
-    y_sign = (
-        -1
-        if (
-            (abs(gx_mean) > abs(gz_mean) and gx_mean > 0)
-            or (abs(gz_mean) >= abs(gx_mean) and gz_mean < 0)
-        )
-        else 1
-    )
+    y_sign = pixel_y_sign(gx_mean, gz_mean)
     return (
         length_m * float(np.cos(heading)) / scale,
         y_sign * length_m * float(np.sin(heading)) / scale,

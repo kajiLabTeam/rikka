@@ -23,13 +23,13 @@ from matplotlib.axes import Axes
 from matplotlib.colors import to_rgba_array
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
+from ...common.lib.floormap import compute_pixel_coords, pixel_vector_from_heading
 from ...matplotlib_config import configure_japanese_font
 from ...particle.lib.recorder import (
     ParticleFilterStepDiagnostics,
     ParticlePathComparison,
     ParticleStepStages,
 )
-from .floormap import compute_pixel_coords, pixel_vector_from_heading
 
 _MOTION_COLORS = np.asarray(["#2563eb", "#f59e0b", "#16a34a", "#9333ea"])
 _DISPLAY_NAMES = {

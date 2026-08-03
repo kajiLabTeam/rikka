@@ -35,15 +35,22 @@ from .config import (
     SIDESTEP_SUSPECT_MODE,
     SMOOTHING_MODE,
     STEP_DETECTION_METHOD,
+    STEP_LENGTH_METHOD,
     USER_HEIGHT_M,
 )
 from .lib.validation import (
     FORWARD_HEADING_SOURCES,
+    GYRO_BIAS_METHODS,
     HEADING_METHODS,
+    MOTION_ESTIMATION_METHODS,
     MOTION_HEADING_CORRECTION_METHODS,
+    PF_PATH_SELECTION_METHODS,
     SIDESTEP_HEADING_SOURCES,
     SIDESTEP_SMOOTHING_METHODS,
     SIDESTEP_SUSPECT_MODES,
+    SMOOTHING_MODES,
+    STEP_DETECTION_METHODS,
+    STEP_LENGTH_METHODS,
     validate_choice,
     validate_non_negative_parameter,
     validate_positive_parameter,
@@ -59,6 +66,7 @@ class SensorSettings:
     gyro_bias: float | None = None
 
     def __post_init__(self) -> None:
+        validate_choice("gyro_bias_method", self.gyro_bias_method, GYRO_BIAS_METHODS)
         if self.gyro_bias is not None and not np.isfinite(self.gyro_bias):
             raise ValueError("gyro_bias は有限な値を指定してください。")
 
@@ -68,9 +76,16 @@ class StepSettings:
     """歩検出と歩幅推定の設定。"""
 
     detection_method: str = STEP_DETECTION_METHOD
+    length_method: str = STEP_LENGTH_METHOD
     height_m: float = USER_HEIGHT_M
 
     def __post_init__(self) -> None:
+        validate_choice(
+            "step_detection_method",
+            self.detection_method,
+            STEP_DETECTION_METHODS,
+        )
+        validate_choice("step_length_method", self.length_method, STEP_LENGTH_METHODS)
         validate_positive_parameter("height_m", self.height_m)
 
 
@@ -138,12 +153,12 @@ class MotionStateSettings:
         validate_choice(
             "motion_estimation",
             self.motion_estimation,
-            ("legacy", "adaptive", "robust"),
+            MOTION_ESTIMATION_METHODS,
         )
         validate_choice(
             "smoothing_mode",
             self.smoothing_mode,
-            ("causal", "offline"),
+            SMOOTHING_MODES,
         )
 
 
@@ -170,7 +185,7 @@ class ParticleSettings:
         validate_choice(
             "pf_path_selection",
             self.path_selection,
-            ("current", "sequence"),
+            PF_PATH_SELECTION_METHODS,
         )
 
 

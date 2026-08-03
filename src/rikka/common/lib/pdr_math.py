@@ -13,19 +13,48 @@
 
 import numpy as np
 
-HEADING_METHODS = (
-    "gyro",
-    "accel_method1",
-    "accel_method2",
-    "gyro_accel_motion",
+from .angles import abs_angle_diff, normalize_angle, score_ratio
+from .validation import (
+    DEVICE_ORIENTATION_MODES,
+    FORWARD_HEADING_SOURCES,
+    HEADING_METHODS,
+    MOTION_HEADING_CORRECTION_METHODS,
+    SIDESTEP_HEADING_SOURCES,
+    SIDESTEP_SMOOTHING_METHODS,
+    SIDESTEP_SUSPECT_MODES,
+    validate_choice,
+    validate_non_negative_parameter,
+    validate_positive_parameter,
+    validate_scale,
 )
 
-# CLI や config から渡される文字列モードは、ここで許可値を一元管理する。
-MOTION_HEADING_CORRECTION_METHODS = ("auto", "none")
-SIDESTEP_SMOOTHING_METHODS = ("none", "isolated", "clustered")
-FORWARD_HEADING_SOURCES = ("body", "motion")
-SIDESTEP_HEADING_SOURCES = ("motion", "body_lateral", "blend")
-SIDESTEP_SUSPECT_MODES = ("motion", "body_lateral", "blend", "forward")
+_normalize_angle = normalize_angle
+_abs_angle_diff = abs_angle_diff
+_score_ratio = score_ratio
+
+__all__ = [
+    "DEVICE_ORIENTATION_MODES",
+    "INITIAL_FORWARD_MOTION_BODY_CONSTRAINT_RAD",
+    "SIDESTEP_BODY_MOTION_ANGLE_THRESHOLD_RAD",
+    "SIDESTEP_BODY_MOTION_RATIO_THRESHOLD",
+    "SIDESTEP_HEADING_MAX_STEP_DELTA_RAD",
+    "SIDESTEP_MOTION_LATERAL_CONSTRAINT_RAD",
+    "SIDESTEP_STRONG_ANGLE_THRESHOLD_RAD",
+    "TRAJECTORY_HEADING_MAX_STEP_DELTA_RAD",
+    "TURNING_SIDESTEP_HEADING_MAX_STEP_DELTA_RAD",
+    "_abs_angle_diff",
+    "_normalize_angle",
+    "_score_ratio",
+    "_validate_forward_heading_source",
+    "_validate_heading_method",
+    "_validate_motion_heading_correction",
+    "_validate_non_negative_parameter",
+    "_validate_positive_parameter",
+    "_validate_scale",
+    "_validate_sidestep_heading_source",
+    "_validate_sidestep_smoothing",
+    "_validate_sidestep_suspect_mode",
+]
 
 # 横歩き判定と軌跡安定化のための幾何的な閾値。
 SIDESTEP_BODY_MOTION_ANGLE_THRESHOLD_RAD = np.deg2rad(45.0)
@@ -36,106 +65,52 @@ TRAJECTORY_HEADING_MAX_STEP_DELTA_RAD = np.deg2rad(25.0)
 SIDESTEP_HEADING_MAX_STEP_DELTA_RAD = np.deg2rad(45.0)
 TURNING_SIDESTEP_HEADING_MAX_STEP_DELTA_RAD = np.deg2rad(90.0)
 INITIAL_FORWARD_MOTION_BODY_CONSTRAINT_RAD = np.deg2rad(45.0)
-DEVICE_ORIENTATION_MODES = (
-    "normal",
-    "front_back_inverted",
-    "left_right_inverted",
-    "rotated_180",
-)
 
 
 def _validate_scale(scale: float) -> None:
     """フロアマップ縮尺が正の値であることを確認する。"""
-    if not np.isfinite(scale) or scale <= 0:
-        raise ValueError("scale は有限な正の値を指定してください。")
+    validate_scale(scale)
 
 
 def _validate_heading_method(method: str) -> str:
     """方位推定手法名を検証する。"""
-    if method not in HEADING_METHODS:
-        allowed = ", ".join(HEADING_METHODS)
-        raise ValueError(f"heading_method は {allowed} のいずれかを指定してください。")
-    return method
-
-
-def _normalize_angle(angle: float) -> float:
-    """角度を [-pi, pi) に正規化する。"""
-    return float((angle + np.pi) % (2 * np.pi) - np.pi)
-
-
-def _abs_angle_diff(angle_a: float | None, angle_b: float | None) -> float | None:
-    """2つの角度差の絶対値を返す。どちらかが None なら None。"""
-    if angle_a is None or angle_b is None:
-        return None
-    return abs(_normalize_angle(angle_a - angle_b))
-
-
-def _score_ratio(value: float, target: float) -> float:
-    """target 以上を 1.0 とする 0..1 スコアを返す。"""
-    if target <= 0:
-        return 1.0
-    return float(np.clip(value / target, 0.0, 1.0))
+    return validate_choice("heading_method", method, HEADING_METHODS)
 
 
 def _validate_positive_parameter(name: str, value: float) -> float:
     """正の解析パラメータであることを確認する。"""
-    if not np.isfinite(value) or value <= 0:
-        raise ValueError(f"{name} は有限な正の値を指定してください。")
-    return value
+    return validate_positive_parameter(name, value)
 
 
 def _validate_non_negative_parameter(name: str, value: float) -> float:
     """0以上の解析パラメータであることを確認する。"""
-    if not np.isfinite(value) or value < 0:
-        raise ValueError(f"{name} は有限な0以上の値を指定してください。")
-    return value
+    return validate_non_negative_parameter(name, value)
 
 
 def _validate_motion_heading_correction(method: str) -> str:
     """水平加速度移動方向の固定ずれ補正モードを検証する。"""
-    if method not in MOTION_HEADING_CORRECTION_METHODS:
-        allowed = ", ".join(MOTION_HEADING_CORRECTION_METHODS)
-        raise ValueError(
-            f"motion_heading_correction は {allowed} のいずれかを指定してください。"
-        )
-    return method
+    return validate_choice(
+        "motion_heading_correction",
+        method,
+        MOTION_HEADING_CORRECTION_METHODS,
+    )
 
 
 def _validate_sidestep_smoothing(method: str) -> str:
     """横歩き判定の平滑化モードを検証する。"""
-    if method not in SIDESTEP_SMOOTHING_METHODS:
-        allowed = ", ".join(SIDESTEP_SMOOTHING_METHODS)
-        raise ValueError(
-            f"sidestep_smoothing は {allowed} のいずれかを指定してください。"
-        )
-    return method
+    return validate_choice("sidestep_smoothing", method, SIDESTEP_SMOOTHING_METHODS)
 
 
 def _validate_forward_heading_source(source: str) -> str:
     """forward 判定ステップに使う方位ソースを検証する。"""
-    if source not in FORWARD_HEADING_SOURCES:
-        allowed = ", ".join(FORWARD_HEADING_SOURCES)
-        raise ValueError(
-            f"forward_heading_source は {allowed} のいずれかを指定してください。"
-        )
-    return source
+    return validate_choice("forward_heading_source", source, FORWARD_HEADING_SOURCES)
 
 
 def _validate_sidestep_heading_source(source: str) -> str:
     """横歩き確定ステップに使う方位ソースを検証する。"""
-    if source not in SIDESTEP_HEADING_SOURCES:
-        allowed = ", ".join(SIDESTEP_HEADING_SOURCES)
-        raise ValueError(
-            f"sidestep_heading_source は {allowed} のいずれかを指定してください。"
-        )
-    return source
+    return validate_choice("sidestep_heading_source", source, SIDESTEP_HEADING_SOURCES)
 
 
 def _validate_sidestep_suspect_mode(mode: str) -> str:
     """横歩き疑いステップの軌跡反映モードを検証する。"""
-    if mode not in SIDESTEP_SUSPECT_MODES:
-        allowed = ", ".join(SIDESTEP_SUSPECT_MODES)
-        raise ValueError(
-            f"sidestep_suspect_mode は {allowed} のいずれかを指定してください。"
-        )
-    return mode
+    return validate_choice("sidestep_suspect_mode", mode, SIDESTEP_SUSPECT_MODES)
