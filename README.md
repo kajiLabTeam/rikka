@@ -287,7 +287,7 @@ uv run rikka particle --motion-estimation adaptive \
   --pf-path-selection sequence --pf-particles 500 --pf-seed 42
 ```
 
-粒子数の既定値は `config.py` の `PF_NUM_PARTICLES` で設定します。実行単位で
+粒子数の既定値は `rikka.common.config` の `PF_NUM_PARTICLES` で設定します。実行単位で
 変更する場合はCLIの `--pf-particles`、Python APIの `particle_count` を使います。
 
 `robust` は移動軸の180度方向曖昧性を区間で解決する実験方式である。5反復計測では
@@ -389,7 +389,6 @@ uv run rikka run \
 ## コード構成
 
 実装は `common / pdr / particle / plot` の4領域に分割されています。
-`rikka.analyze.*` からの既存 import は薄い互換 shim として維持しています。
 
 | ファイル | 役割 |
 |---|---|
@@ -404,13 +403,13 @@ uv run rikka run \
 
 新しい `particle.pipeline.run_particle()` は `prepare_pdr_steps()` が作った
 `PreparedPdrSteps` を境界として受け取り、フロアマップ制約で軌跡を補正します。
-従来の `run_particle_filter()` は互換 shim から同じ数値実装へ転送されます。
+低水準のPF段階実行は `particle.lib.runner.run_particle_filter()` が担当します。
 
 ## Python から使う
 
 ```python
 import pandas as pd
-from rikka.analyze.pdr import run
+from rikka.cli.commands import run
 
 df_acc = pd.DataFrame(...)   # 列: t, x, y, z
 df_gyro = pd.DataFrame(...)  # 列: t, x, y, z

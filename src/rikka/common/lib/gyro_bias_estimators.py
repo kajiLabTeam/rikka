@@ -5,7 +5,7 @@
 依存元:
     common の設定・共有型・時刻処理と NumPy、Pandas を利用する。
 利用先:
-    common.lib.gyro_bias の各推定方式と互換 shim から使用される。
+    ``common.lib.gyro_bias`` の各推定方式から使用される。
 処理フロー:
     対象区間を抽出し、外れ値を除いた候補を GyroBiasResult として返す。
 """

@@ -1,11 +1,11 @@
 """PDR CLI コマンドの実行処理。
 
 役割:
-    互換 API の引数を検証済み設定へ変換し、PDR、任意のPF、出力pipelineを呼ぶ。
+    Python API と CLI の引数を検証済み設定へ変換し、各pipelineを呼ぶ。
 依存元:
     ``common.settings``、PDR/PF/plot の各 pipeline を使用する。
 利用先:
-    Click CLI と ``rikka.analyze.pdr`` の互換 API から呼ばれる。
+    Click CLI とPythonコードからPDRまたはparticle filterを実行するために使われる。
 処理フロー:
     設定構築、通常PDR、任意のPF、コンソール要約、成果物保存の順に実行する。
 """

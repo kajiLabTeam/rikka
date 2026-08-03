@@ -5,7 +5,7 @@
 依存元:
     共通設定・モデル、PDR の検出・軌跡・融合部品を利用する。
 利用先:
-    PDR pipeline と従来互換の ``prepare_pdr_steps`` API から使用される。
+    PDR pipeline と検証コードの ``prepare_pdr_steps`` API から使用される。
 処理フロー:
     設定検証、センサー処理、歩列生成、運動推定、PF共有値構築の順に処理する。
 """

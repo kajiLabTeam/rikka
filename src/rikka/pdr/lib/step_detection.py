@@ -8,7 +8,7 @@
     NumPy、Pandas、SciPy のピーク検出を利用する。
 利用先:
     ``trajectory.prepare_pdr_steps`` と ``sensor_plot`` がステップ列を作るために使い、
-    互換 facade から従来の ``detect_steps`` も公開される。
+    検証コードから ``detect_steps`` を直接利用できる。
 処理フロー:
     検証済みの指定方式に応じて候補イベントを抽出し、近接重複や不正区間を除く。
 """
