@@ -1,18 +1,19 @@
-"""particle filter のpropose。
+"""particle filter の提案・観測重み計算。
 
 役割:
-    proposeを独立した段階として実装する。
+    1歩の粒子状態を提案し、地図遷移と観測尤度から事後重みを計算する。
 依存元:
     common の共有型・設定と particle/lib の部品、ParticleRuntime を利用する。
 利用先:
     particle/lib/runner が元の実行順序どおりに呼び出す。
 処理フロー:
-    歩の観測と乱数を使い提案状態を生成する。
+    歩の観測と乱数を使い提案状態を生成し、遷移の歩行可否、運動状態尤度、
+    歩幅尤度を統合してrecovery判定まで行う。
 """
 
 import numpy as np
 
-from ...config import (
+from ...common.config import (
     SIDESTEP_LENGTH_SCALE,
     TURNING_LENGTH_SCALE,
 )
@@ -33,6 +34,7 @@ from .state import ParticleRuntime
 
 
 def propose(ctx: ParticleRuntime) -> None:
+    assert ctx.particle_heading is not None
     ctx.motion_posterior = (
         ctx.prepared_motion_posteriors[ctx.step_number - 1]
         if ctx.prepared_motion_posteriors is not None

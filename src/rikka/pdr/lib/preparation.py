@@ -23,6 +23,7 @@ from ...common.config import (
     SIDESTEP_SMOOTHING_METHOD,
     SIDESTEP_SUSPECT_MODE,
     SMOOTHING_MODE,
+    STEP_LENGTH_METHOD,
     USER_HEIGHT_M,
     compute_weinberg_k,
 )
@@ -44,7 +45,7 @@ from .motion_state.evidence import (
 )
 from .step_detection import detect_step_result
 from .step_length import build_step_length_observation
-from .trajectory import estimate_trajectory_with_headings
+from .trajectory import prepare_trajectory_steps
 
 
 def prepare_pdr_steps(
@@ -66,6 +67,7 @@ def prepare_pdr_steps(
     motion_refinement: bool = True,
     motion_estimation: str = MOTION_ESTIMATION,
     smoothing_mode: str = SMOOTHING_MODE,
+    step_length_method: str = STEP_LENGTH_METHOD,
     direction_fixed_lag: int = 5,
 ) -> PreparedPdrSteps:
     """通常PDRとPFが共用するステップ単位の推定結果を作る。"""
@@ -78,6 +80,7 @@ def prepare_pdr_steps(
         ),
         step=StepSettings(
             detection_method=step_detection_method or StepSettings().detection_method,
+            length_method=step_length_method,
             height_m=height_m,
         ),
         heading=HeadingSettings(
@@ -126,7 +129,7 @@ def prepare_pdr_steps_with_settings(
     )
     step_detection = detect_step_result(processed_acc, step.detection_method)
     weinberg_k = compute_weinberg_k(step.height_m)
-    trajectory, step_lengths, times, step_headings = estimate_trajectory_with_headings(
+    step_lengths, times, step_headings = prepare_trajectory_steps(
         step_detection.peaks,
         processed_gyro,
         processed_acc,
@@ -142,6 +145,7 @@ def prepare_pdr_steps_with_settings(
         sidestep_heading_source=motion.sidestep_heading_source,
         sidestep_suspect_mode=motion.sidestep_suspect_mode,
         motion_refinement=motion_refinement,
+        step_length_method=step.length_method,
     )
     motion_evidences = build_step_motion_evidences(step_headings)
     length_observations = tuple(

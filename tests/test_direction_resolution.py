@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from rikka.analyze.pdr.direction_resolver import resolve_step_directions
-from rikka.analyze.pdr.models import StepHeading, StepMotionObservation
+from rikka.common.lib.models import StepHeading, StepMotionObservation
+from rikka.pdr.lib.fusion.robust import resolve_step_directions
 
 
 def _heading(

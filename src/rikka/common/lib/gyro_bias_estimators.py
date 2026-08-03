@@ -5,7 +5,7 @@
 依存元:
     common の設定・共有型・時刻処理と NumPy、Pandas を利用する。
 利用先:
-    gyro_bias の各推定方式と互換 shim から使用される。
+    common.lib.gyro_bias の各推定方式と互換 shim から使用される。
 処理フロー:
     対象区間を抽出し、外れ値を除いた候補を GyroBiasResult として返す。
 """
@@ -15,23 +15,15 @@ from typing import NamedTuple
 import numpy as np
 import pandas as pd
 
-from ...common.config import (
+from ..config import (
     GYRO_BIAS_GUARD_MAX_ABS_RAD_S,
     GYRO_BIAS_OUTLIER_MAD_SCALE,
     SAMPLING_RATE,
     WINDOW_GYRO,
 )
-from ...common.lib.models import GyroBiasResult
-from ...common.lib.time_utils import _time_values
-
-GYRO_BIAS_METHODS = (
-    "prewalk_guarded",
-    "zero",
-    "prewalk_robust",
-    "initial_robust",
-    "quietest",
-    "manual",
-)
+from .models import GyroBiasResult
+from .time_utils import _time_values
+from .validation import GYRO_BIAS_METHODS, validate_choice
 
 
 def _guard_gyro_bias_result(result: GyroBiasResult) -> GyroBiasResult:
@@ -64,12 +56,7 @@ class _GyroBiasStaticCandidate(NamedTuple):
 
 def _validate_gyro_bias_method(method: str) -> str:
     """ジャイロバイアス推定手法名を検証する。"""
-    if method not in GYRO_BIAS_METHODS:
-        allowed = ", ".join(GYRO_BIAS_METHODS)
-        raise ValueError(
-            f"gyro_bias_method は {allowed} のいずれかを指定してください。"
-        )
-    return method
+    return validate_choice("gyro_bias_method", method, GYRO_BIAS_METHODS)
 
 
 def _time_mask(df: pd.DataFrame, start_s: float, end_s: float) -> np.ndarray:

@@ -19,7 +19,7 @@ from math import isfinite
 
 import click
 
-from ..config import (
+from ..common.config import (
     DATA_DIR,
     FLOORMAP_ORIGIN_PX,
     FLOORMAP_PATH,
@@ -40,11 +40,23 @@ from ..config import (
     SIDESTEP_SUSPECT_MODE,
     SMOOTHING_MODE,
     STEP_DETECTION_METHOD,
+    STEP_LENGTH_METHOD,
     USER_HEIGHT_M,
 )
-from ..matplotlib_config import configure_matplotlib_cache
-
-configure_matplotlib_cache()
+from ..common.lib.validation import (
+    FORWARD_HEADING_SOURCES,
+    GYRO_BIAS_METHODS,
+    HEADING_METHODS,
+    MOTION_ESTIMATION_METHODS,
+    MOTION_HEADING_CORRECTION_METHODS,
+    PF_PATH_SELECTION_METHODS,
+    SIDESTEP_HEADING_SOURCES,
+    SIDESTEP_SMOOTHING_METHODS,
+    SIDESTEP_SUSPECT_MODES,
+    SMOOTHING_MODES,
+    STEP_DETECTION_METHODS,
+    STEP_LENGTH_METHODS,
+)
 
 _DATA_DIR_DEFAULT = DATA_DIR
 _FLOORMAP_DEFAULT = FLOORMAP_PATH
@@ -53,43 +65,33 @@ _SCALE_DEFAULT = FLOORMAP_SCALE
 _DIRECTION_DEFAULT = INITIAL_DIRECTION
 _HEIGHT_DEFAULT = USER_HEIGHT_M
 _STEP_DETECTION_DEFAULT = STEP_DETECTION_METHOD
-_STEP_DETECTION_CHOICES = ("peak", "paper_vertical_threshold")
+_STEP_DETECTION_CHOICES = STEP_DETECTION_METHODS
+_STEP_LENGTH_DEFAULT = STEP_LENGTH_METHOD
+_STEP_LENGTH_CHOICES = STEP_LENGTH_METHODS
 _HEADING_METHOD_DEFAULT = HEADING_METHOD
-_HEADING_METHOD_CHOICES = (
-    "gyro",
-    "accel_method1",
-    "accel_method2",
-    "gyro_accel_motion",
-)
+_HEADING_METHOD_CHOICES = HEADING_METHODS
 _GYRO_BIAS_METHOD_DEFAULT = GYRO_BIAS_METHOD
-_GYRO_BIAS_METHOD_CHOICES = (
-    "prewalk_guarded",
-    "zero",
-    "prewalk_robust",
-    "initial_robust",
-    "quietest",
-    "manual",
-)
+_GYRO_BIAS_METHOD_CHOICES = GYRO_BIAS_METHODS
 _SIDESTEP_LATERAL_RATIO_DEFAULT = SIDESTEP_LATERAL_RATIO
 _SIDESTEP_MIN_LATERAL_DISPLACEMENT_DEFAULT = SIDESTEP_MIN_LATERAL_DISPLACEMENT_M
 _MOTION_HEADING_CORRECTION_DEFAULT = "auto"
-_MOTION_HEADING_CORRECTION_CHOICES = ("auto", "none")
+_MOTION_HEADING_CORRECTION_CHOICES = MOTION_HEADING_CORRECTION_METHODS
 _SIDESTEP_SMOOTHING_DEFAULT = SIDESTEP_SMOOTHING_METHOD
-_SIDESTEP_SMOOTHING_CHOICES = ("none", "isolated", "clustered")
+_SIDESTEP_SMOOTHING_CHOICES = SIDESTEP_SMOOTHING_METHODS
 _FORWARD_HEADING_SOURCE_DEFAULT = FORWARD_HEADING_SOURCE
-_FORWARD_HEADING_SOURCE_CHOICES = ("body", "motion")
+_FORWARD_HEADING_SOURCE_CHOICES = FORWARD_HEADING_SOURCES
 _SIDESTEP_HEADING_SOURCE_DEFAULT = "motion"
-_SIDESTEP_HEADING_SOURCE_CHOICES = ("motion", "body_lateral", "blend")
+_SIDESTEP_HEADING_SOURCE_CHOICES = SIDESTEP_HEADING_SOURCES
 _SIDESTEP_SUSPECT_MODE_DEFAULT = SIDESTEP_SUSPECT_MODE
-_SIDESTEP_SUSPECT_MODE_CHOICES = ("motion", "body_lateral", "blend", "forward")
+_SIDESTEP_SUSPECT_MODE_CHOICES = SIDESTEP_SUSPECT_MODES
 _MOTION_ESTIMATION_DEFAULT = MOTION_ESTIMATION
-_MOTION_ESTIMATION_CHOICES = ("legacy", "adaptive", "robust")
+_MOTION_ESTIMATION_CHOICES = MOTION_ESTIMATION_METHODS
 _SMOOTHING_MODE_DEFAULT = SMOOTHING_MODE
-_SMOOTHING_MODE_CHOICES = ("causal", "offline")
+_SMOOTHING_MODE_CHOICES = SMOOTHING_MODES
 _PF_MOTION_PREDICTIVE_WEIGHT_POWER_DEFAULT = PF_MOTION_PREDICTIVE_WEIGHT_POWER
 _PF_NUM_PARTICLES_DEFAULT = PF_NUM_PARTICLES
 _PF_PATH_SELECTION_DEFAULT = PF_PATH_SELECTION
-_PF_PATH_SELECTION_CHOICES = ("current", "sequence")
+_PF_PATH_SELECTION_CHOICES = PF_PATH_SELECTION_METHODS
 _PF_STEP_FRAMES_ARROWS_DEFAULT = PF_STEP_FRAMES_ARROWS
 _PF_STEP_FRAMES_DPI_DEFAULT = PF_STEP_FRAMES_DPI
 
@@ -239,6 +241,13 @@ def _common_options(f: click.decorators.FC) -> click.decorators.FC:
         help="横歩き判定に使う 横方向/前方向 の最小比率",
     )(f)
     f = click.option(
+        "--step-length-method",
+        type=click.Choice(_STEP_LENGTH_CHOICES),
+        default=_STEP_LENGTH_DEFAULT,
+        show_default=True,
+        help="歩幅推定手法",
+    )(f)
+    f = click.option(
         "--step-detection",
         type=click.Choice(_STEP_DETECTION_CHOICES),
         default=_STEP_DETECTION_DEFAULT,
@@ -334,6 +343,7 @@ def _run_pdr(
     direction: float,
     height_m: float,
     step_detection: str,
+    step_length_method: str,
     heading_method: str,
     gyro_bias_method: str,
     gyro_bias: float | None,
@@ -364,6 +374,7 @@ def _run_pdr(
         initial_direction=direction,
         height_m=height_m,
         step_detection_method=step_detection,
+        step_length_method=step_length_method,
         heading_method=heading_method,
         gyro_bias_method=gyro_bias_method,
         gyro_bias=gyro_bias,
@@ -389,6 +400,7 @@ def run(
     direction: float,
     height_m: float,
     step_detection: str,
+    step_length_method: str,
     heading_method: str,
     gyro_bias_method: str,
     gyro_bias: float | None,
@@ -412,6 +424,7 @@ def run(
         direction,
         height_m,
         step_detection,
+        step_length_method,
         heading_method,
         gyro_bias_method,
         gyro_bias,
@@ -428,53 +441,7 @@ def run(
     )
 
 
-@cli.command()
-@_common_options
-def pdr(
-    data_dir: str,
-    floormap: str,
-    origin_px: tuple[int, int],
-    scale: float,
-    direction: float,
-    height_m: float,
-    step_detection: str,
-    heading_method: str,
-    gyro_bias_method: str,
-    gyro_bias: float | None,
-    sidestep_lateral_ratio: float,
-    sidestep_min_lateral_displacement: float,
-    motion_heading_correction: str,
-    sidestep_smoothing: str,
-    forward_heading_source: str,
-    sidestep_heading_source: str,
-    sidestep_suspect_mode: str,
-    motion_estimation: str,
-    smoothing_mode: str,
-    no_plot: bool,
-) -> None:
-    """決定論的 PDR で歩行軌跡を推定する（run の別名）。"""
-    _run_pdr(
-        data_dir,
-        floormap,
-        origin_px,
-        scale,
-        direction,
-        height_m,
-        step_detection,
-        heading_method,
-        gyro_bias_method,
-        gyro_bias,
-        sidestep_lateral_ratio,
-        sidestep_min_lateral_displacement,
-        motion_heading_correction,
-        sidestep_smoothing,
-        forward_heading_source,
-        sidestep_heading_source,
-        sidestep_suspect_mode,
-        motion_estimation,
-        smoothing_mode,
-        no_plot,
-    )
+cli.add_command(run, name="pdr")
 
 
 @cli.command()
@@ -556,6 +523,7 @@ def particle(
     direction: float,
     height_m: float,
     step_detection: str,
+    step_length_method: str,
     heading_method: str,
     gyro_bias_method: str,
     gyro_bias: float | None,
@@ -603,6 +571,7 @@ def particle(
         initial_direction=direction,
         height_m=height_m,
         step_detection_method=step_detection,
+        step_length_method=step_length_method,
         heading_method=heading_method,
         gyro_bias_method=gyro_bias_method,
         gyro_bias=gyro_bias,

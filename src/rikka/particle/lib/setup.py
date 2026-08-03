@@ -103,8 +103,8 @@ def setup(ctx: ParticleRuntime) -> None:
     ctx.adaptive_stride_state = bool(
         ctx.prepared_motion_posteriors is not None
         and any(
-            ctx.posterior.length_std_m / max(ctx.posterior.length_mean_m, 1e-06) >= 0.18
-            for ctx.posterior in ctx.prepared_motion_posteriors
+            posterior.length_std_m / max(posterior.length_mean_m, 1e-06) >= 0.18
+            for posterior in ctx.prepared_motion_posteriors
         )
     )
     ctx.effective_stride_scale_min = (

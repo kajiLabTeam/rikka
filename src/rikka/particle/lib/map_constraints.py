@@ -14,7 +14,7 @@
 import numpy as np
 from scipy.ndimage import distance_transform_edt
 
-from ...common.lib.floormap import compute_pixel_coords
+from ...common.lib.floormap import compute_pixel_coords, pixel_y_sign
 
 
 def _normalize_floormap_gray(map_raw: np.ndarray) -> np.ndarray:
@@ -29,13 +29,6 @@ def _normalize_floormap_gray(map_raw: np.ndarray) -> np.ndarray:
     return np.asarray(np.clip(map_arr, 0.0, 255.0), dtype=float)
 
 
-def _pixel_y_sign(gx_mean: float, gz_mean: float) -> int:
-    """メートル座標とピクセル座標のY軸向きを返す。"""
-    if abs(gx_mean) > abs(gz_mean):
-        return -1 if gx_mean > 0 else 1
-    return -1 if gz_mean < 0 else 1
-
-
 def _compute_meter_coords(
     px: np.ndarray,
     py: np.ndarray,
@@ -45,7 +38,7 @@ def _compute_meter_coords(
     scale: float,
 ) -> tuple[np.ndarray, np.ndarray]:
     """フロアマップのピクセル座標をメートル座標へ戻す。"""
-    y_sign = _pixel_y_sign(gx_mean, gz_mean)
+    y_sign = pixel_y_sign(gx_mean, gz_mean)
     xs = (px - origin_px[0]) * scale
     ys = (py - origin_px[1]) * scale / y_sign
     return xs, ys
@@ -55,6 +48,22 @@ def _is_walkable_cell(map_gray: np.ndarray, x: int, y: int) -> bool:
     """指定画素がマップ内の歩行可能画素かを返す。"""
     map_h, map_w = map_gray.shape
     return 0 <= x < map_w and 0 <= y < map_h and bool(map_gray[y, x] > 128)
+
+
+def _validate_floormap_origin(
+    map_gray: np.ndarray,
+    origin_px: tuple[int, int],
+) -> None:
+    """起点が検証済み2次元マップ内の歩行可能画素であることを検証する。"""
+    origin_x, origin_y = origin_px
+    if not _is_walkable_cell(map_gray, origin_x, origin_y):
+        raise ValueError("origin_px は歩行可能なマップ内画素を指定してください")
+
+
+def _validate_floormap_shape(map_gray: np.ndarray) -> None:
+    """フロアマップが空でない2次元配列であることを検証する。"""
+    if map_gray.ndim != 2 or map_gray.size == 0:
+        raise ValueError("フロアマップは空でない2次元画像を指定してください")
 
 
 def _segment_crosses_only_walkable_cells(

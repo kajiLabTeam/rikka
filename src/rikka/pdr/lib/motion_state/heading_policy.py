@@ -15,6 +15,7 @@ import numpy as np
 from ....common.config import (
     FORWARD_HEADING_SOURCE,
 )
+from ....common.lib.angles import circular_mean_angles
 from ....common.lib.models import (
     StepHeading,
 )
@@ -28,7 +29,6 @@ from ....common.lib.pdr_math import (
     _validate_forward_heading_source,
     _validate_sidestep_heading_source,
 )
-from .evidence import _circular_mean_angles
 from .step_motion import _sidestep_body_lateral_heading
 
 
@@ -141,7 +141,7 @@ def _sidestep_motion_heading(
             and abs(_normalize_angle(motion_heading - body_lateral_heading))
             <= SIDESTEP_MOTION_LATERAL_CONSTRAINT_RAD
         ):
-            candidate = _circular_mean_angles([motion_heading, body_lateral_heading])
+            candidate = circular_mean_angles([motion_heading, body_lateral_heading])
             source = "trajectory_blend"
         else:
             candidate = (

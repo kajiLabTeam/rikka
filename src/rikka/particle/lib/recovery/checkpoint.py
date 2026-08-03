@@ -10,14 +10,25 @@
     方位差と歩幅倍率を展開し、全再生歩が有効な候補を重み付き抽出する。
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 
+from ..diagnostics import _build_step_diagnostics
 from ..map_constraints import _evaluate_particle_transitions
 from ..proposal import _normalize_angle
-from .local import _RecoveryResult
+from ..recorder import ParticleStepStages
+from .local import (
+    _LOCAL_OFFSET_DEGREES,
+    _recovery_length_factors,
+    _RecoveryResult,
+)
+
+if TYPE_CHECKING:
+    from ..state import ParticleRuntime
 
 
 @dataclass(frozen=True)
@@ -28,85 +39,184 @@ class _CheckpointReplayResult:
     replay_positions: np.ndarray
 
 
-_REPLAY_PARAMETERS = (
-    "checkpoint_particles",
-    "checkpoint_heading_correction",
-    "checkpoint_heading_drift",
-    "checkpoint_stride_scale",
-    "checkpoint_weights",
-    "angles",
-    "step_lengths",
-    "n_particles",
-    "map_gray",
-    "gx_mean",
-    "gz_mean",
-    "origin_px",
-    "scale",
-    "heading_sigma",
-    "rng",
-    "checkpoint_motion_state",
-    "allow_stride_adaptation",
-    "stride_scale_min",
-    "stride_scale_max",
-    "capture_candidates",
-)
-_REPLAY_DEFAULTS = {
-    "checkpoint_motion_state": None,
-    "allow_stride_adaptation": False,
-    "stride_scale_min": 0.5,
-    "stride_scale_max": 1.6,
-    "capture_candidates": False,
-}
+def record_checkpoint_replay(ctx: ParticleRuntime) -> None:
+    """checkpoint 再生で置換された診断と段階状態を書き戻す。"""
+    assert ctx.checkpoint_step is not None
+    assert ctx.replay_result is not None
+    assert ctx.recovery is not None
+    recorder = ctx.recorder
+
+    if recorder.diagnostics_enabled:
+        replay_weights = np.full(ctx.n_particles, 1.0 / ctx.n_particles)
+        for replay_offset in range(ctx.replay_depth - 1):
+            history_step = ctx.checkpoint_step + replay_offset + 1
+            replay_parent_indices = (
+                ctx.recovery.parent_indices
+                if replay_offset == 0
+                else np.arange(ctx.n_particles, dtype=int)
+            )
+            replay_motion_state_before = (
+                ctx.motion_state_history[ctx.checkpoint_step]
+                if replay_offset == 0
+                else ctx.recovery.motion_state
+            )
+            replay_previous_positions = (
+                ctx.position_history[ctx.checkpoint_step][ctx.recovery.parent_indices]
+                if replay_offset == 0
+                else ctx.replay_result.replay_positions[replay_offset - 1]
+            )
+            replay_effective_lengths = np.linalg.norm(
+                ctx.replay_result.replay_positions[replay_offset]
+                - replay_previous_positions,
+                axis=1,
+            )
+            collector_index = ctx.diagnostics_start_index + history_step - 1
+            recorder.diagnostics[collector_index] = _build_step_diagnostics(
+                step_number=history_step,
+                step_time=ctx.t_at_steps[history_step - 1],
+                valid_count=ctx.n_particles,
+                n_particles=ctx.n_particles,
+                valid_weight_count=ctx.n_particles,
+                valid_weight_mass=1.0,
+                ess_before_observation=float(ctx.n_particles),
+                ess_after_observation=float(ctx.n_particles),
+                ess_after_resampling=float(ctx.n_particles),
+                weights=replay_weights,
+                particles=ctx.replay_result.replay_positions[replay_offset],
+                heading_drift=ctx.recovery.heading_drift,
+                heading_correction=ctx.recovery.heading_correction,
+                stride_scale=ctx.recovery.stride_scale,
+                effective_step_lengths=replay_effective_lengths,
+                parent_indices=replay_parent_indices,
+                resampled=replay_offset == 0,
+                motion_state=ctx.recovery.motion_state,
+                motion_state_before=replay_motion_state_before,
+                motion_evidence=ctx.motion_evidences[history_step - 1],
+                recovery_attempted=True,
+                recovery_mode="checkpoint_replayed",
+                recovery_valid_count=ctx.recovery.valid_count,
+                recovery_attempts=ctx.recovery_attempts,
+                recovery_heading_delta_deg=ctx.recovery.heading_delta_deg,
+                recovery_step_scale=ctx.recovery.step_scale,
+                recovery_cost=ctx.recovery.mean_cost,
+                recovery_checkpoint_step=ctx.checkpoint_step,
+                recovery_replay_steps=ctx.replay_depth,
+                recovery_candidate_branch_count=int(
+                    np.unique(ctx.recovery.route_branch_ids).size
+                ),
+                recovery_selected_branch_count=int(
+                    np.unique(ctx.recovery.route_branch_ids).size
+                ),
+            )
+
+    if recorder.stages_enabled:
+        replay_weights = np.full(ctx.n_particles, 1.0 / ctx.n_particles)
+        replay_offsets = _normalize_angle(
+            ctx.recovery.heading_correction + ctx.recovery.heading_drift
+        )
+        for replay_offset in range(ctx.replay_depth - 1):
+            history_step = ctx.checkpoint_step + replay_offset + 1
+            replay_heading = ctx.step_headings[history_step - 1]
+            replay_parent_indices = (
+                ctx.recovery.parent_indices
+                if replay_offset == 0
+                else np.arange(ctx.n_particles, dtype=int)
+            )
+            replay_before_positions = (
+                ctx.position_history[ctx.checkpoint_step][ctx.recovery.parent_indices]
+                if replay_offset == 0
+                else ctx.replay_result.replay_positions[replay_offset - 1]
+            )
+            replay_after_positions = ctx.replay_result.replay_positions[replay_offset]
+            replay_step_lengths = np.linalg.norm(
+                replay_after_positions - replay_before_positions,
+                axis=1,
+            )
+            replay_sensor_heading = replay_heading.selected_heading
+            replay_proposed_headings = (
+                np.full(
+                    ctx.n_particles,
+                    float(replay_sensor_heading or 0.0),
+                )
+                + replay_offsets
+            )
+            collector_index = ctx.stages_start_index + history_step - 1
+            recorder.stages[collector_index] = ParticleStepStages(
+                step=history_step,
+                timestamp_s=ctx.t_at_steps[history_step - 1],
+                sensor_heading=replay_sensor_heading,
+                sensor_yaw_delta=replay_heading.yaw_delta,
+                movement_type=replay_heading.trajectory_movement_type
+                or replay_heading.movement_type,
+                deterministic_step_length_m=ctx.step_lengths[history_step - 1],
+                before_positions=replay_before_positions.copy(),
+                before_offsets=replay_offsets.copy(),
+                before_weights=replay_weights.copy(),
+                before_motion_state=ctx.recovery.motion_state.copy(),
+                proposed_positions=replay_after_positions.copy(),
+                proposed_headings=replay_proposed_headings.copy(),
+                proposed_step_lengths=replay_step_lengths.copy(),
+                proposed_motion_state=ctx.recovery.motion_state.copy(),
+                valid_transition=np.ones(ctx.n_particles, dtype=bool),
+                posterior_weights=replay_weights.copy(),
+                ess_before_observation=float(ctx.n_particles),
+                ess_after_observation=float(ctx.n_particles),
+                parent_indices=replay_parent_indices.copy(),
+                resampled=replay_offset == 0,
+                recovery_mode="checkpoint_replayed",
+                recovery_candidate_headings=(
+                    ctx.recovery.candidate_headings.copy()
+                    if replay_offset == 0
+                    and ctx.recovery.candidate_headings is not None
+                    else None
+                ),
+                recovery_candidate_valid=(
+                    ctx.recovery.candidate_valid.copy()
+                    if replay_offset == 0
+                    and ctx.recovery.candidate_valid is not None
+                    else None
+                ),
+                recovery_selected_index=(
+                    ctx.recovery.selected_candidate_indices.copy()
+                    if replay_offset == 0
+                    and ctx.recovery.selected_candidate_indices is not None
+                    else None
+                ),
+                after_positions=replay_after_positions.copy(),
+                after_offsets=replay_offsets.copy(),
+                after_weights=replay_weights.copy(),
+                after_motion_state=ctx.recovery.motion_state.copy(),
+            )
 
 
 def _replay_from_checkpoint(
-    *args: Any,
-    **kwargs: Any,
+    checkpoint_particles: np.ndarray,
+    checkpoint_heading_correction: np.ndarray,
+    checkpoint_heading_drift: np.ndarray,
+    checkpoint_stride_scale: np.ndarray,
+    checkpoint_weights: np.ndarray,
+    angles: np.ndarray,
+    step_lengths: np.ndarray,
+    n_particles: int,
+    map_gray: np.ndarray,
+    gx_mean: float,
+    gz_mean: float,
+    origin_px: tuple[int, int],
+    scale: float,
+    heading_sigma: float,
+    rng: np.random.Generator,
+    *,
+    checkpoint_motion_state: np.ndarray | None = None,
+    allow_stride_adaptation: bool = False,
+    stride_scale_min: float = 0.5,
+    stride_scale_max: float = 1.6,
+    capture_candidates: bool = False,
 ) -> _CheckpointReplayResult | None:
     """同じ小方位差で最大3歩を再生し、壁非交差経路を返す。"""
-    values = dict(zip(_REPLAY_PARAMETERS, args, strict=False))
-    duplicated = set(values) & set(kwargs)
-    if duplicated:
-        raise TypeError(f"{sorted(duplicated)[0]} が重複指定されています")
-    values.update(kwargs)
-    for name, default in _REPLAY_DEFAULTS.items():
-        values.setdefault(name, default)
-    missing = [name for name in _REPLAY_PARAMETERS if name not in values]
-    if missing:
-        raise TypeError(f"必須引数が不足しています: {', '.join(missing)}")
-    if len(args) > len(_REPLAY_PARAMETERS):
-        raise TypeError("位置引数が多すぎます")
-
-    checkpoint_particles = values["checkpoint_particles"]
-    checkpoint_heading_correction = values["checkpoint_heading_correction"]
-    checkpoint_heading_drift = values["checkpoint_heading_drift"]
-    checkpoint_stride_scale = values["checkpoint_stride_scale"]
-    checkpoint_weights = values["checkpoint_weights"]
-    angles = values["angles"]
-    step_lengths = values["step_lengths"]
-    n_particles = values["n_particles"]
-    map_gray = values["map_gray"]
-    gx_mean = values["gx_mean"]
-    gz_mean = values["gz_mean"]
-    origin_px = values["origin_px"]
-    scale = values["scale"]
-    heading_sigma = values["heading_sigma"]
-    rng = values["rng"]
-    checkpoint_motion_state = values["checkpoint_motion_state"]
-    allow_stride_adaptation = values["allow_stride_adaptation"]
-    stride_scale_min = values["stride_scale_min"]
-    stride_scale_max = values["stride_scale_max"]
-    capture_candidates = values["capture_candidates"]
     if len(angles) == 0 or len(angles) != len(step_lengths):
         return None
-    offset_degrees = np.array(
-        [0.0, 5.0, -5.0, 10.0, -10.0, 20.0, -20.0, 30.0, -30.0, 45.0, -45.0]
-    )
-    length_factors = (
-        np.array([1.0, 0.85, 0.7, 1.15, 1.3])
-        if allow_stride_adaptation
-        else np.array([1.0, 0.9, 1.1])
-    )
+    offset_degrees = _LOCAL_OFFSET_DEGREES
+    length_factors = _recovery_length_factors(allow_stride_adaptation)
     combinations = np.array(
         [(offset, factor) for offset in offset_degrees for factor in length_factors]
     )

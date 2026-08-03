@@ -12,7 +12,6 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol
 
 from ....common.lib.models import (
     StepDirectionPosterior,
@@ -38,22 +37,6 @@ class MotionEstimationResult:
     motion_evidences: tuple[StepMotionEvidence, ...]
     motion_posteriors: tuple[StepMotionPosterior, ...] = ()
     direction_posteriors: tuple[StepDirectionPosterior, ...] = ()
-
-
-class MotionEstimator(Protocol):
-    """運動状態推定実装が満たす callable 契約。"""
-
-    def __call__(
-        self,
-        step_headings: list[StepHeading],
-        step_lengths: list[float],
-        length_observations: tuple[StepLengthObservation, ...],
-        motion_evidences: tuple[StepMotionEvidence, ...],
-        smoothing_mode: str,
-        direction_fixed_lag: int,
-    ) -> MotionEstimationResult:
-        """入力された歩観測を推定結果へ変換する。"""
-        ...
 
 
 def _estimate_legacy(

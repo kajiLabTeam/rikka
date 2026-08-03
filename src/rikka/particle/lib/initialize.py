@@ -16,8 +16,9 @@ import matplotlib.image as mpimg
 import numpy as np
 
 from ...particle.lib.map_constraints import (
-    _evaluate_particle_transitions,
     _normalize_floormap_gray,
+    _validate_floormap_origin,
+    _validate_floormap_shape,
 )
 from ...particle.lib.proposal import (
     _MOTION_FORWARD,
@@ -25,7 +26,6 @@ from ...particle.lib.proposal import (
 from ...particle.lib.recorder import (
     ParticleRecorder,
 )
-from ...particle.lib.state import ParticleHistory, ParticleState
 from .state import ParticleRuntime
 
 
@@ -53,21 +53,9 @@ def _adaptive_heading_rejuvenation_sigma(
 
 def initialize(ctx: ParticleRuntime) -> None:
     ctx.map_gray = _normalize_floormap_gray(mpimg.imread(Path(ctx.floormap_path)))
-    if ctx.map_gray.ndim != 2 or ctx.map_gray.size == 0:
-        raise ValueError("フロアマップは空でない2次元画像を指定してください")
+    _validate_floormap_shape(ctx.map_gray)
+    _validate_floormap_origin(ctx.map_gray, ctx.origin_px)
     ctx.particles = np.zeros((ctx.n_particles, 2))
-    if not bool(
-        _evaluate_particle_transitions(
-            ctx.particles[:1],
-            ctx.particles[:1],
-            ctx.map_gray,
-            ctx.gx_mean,
-            ctx.gz_mean,
-            ctx.origin_px,
-            ctx.scale,
-        )[0]
-    ):
-        raise ValueError("origin_px は歩行可能なマップ内画素を指定してください")
     ctx.heading_correction = np.zeros(ctx.n_particles, dtype=float)
     ctx.heading_drift = ctx.rng.normal(0, ctx.sigma_init_heading, ctx.n_particles)
     ctx.motion_state = np.full(ctx.n_particles, _MOTION_FORWARD, dtype=np.int8)
@@ -78,26 +66,16 @@ def initialize(ctx: ParticleRuntime) -> None:
         ctx.effective_stride_scale_max,
     )
     ctx.weights = np.ones(ctx.n_particles) / ctx.n_particles
-    ctx.initial_state = ParticleState(
-        ctx.particles,
-        ctx.heading_correction,
-        ctx.heading_drift,
-        ctx.motion_state,
-        ctx.stride_scale,
-        ctx.weights,
-    )
     ctx.step_lengths = []
     ctx.t_at_steps = []
-    ctx.history = ParticleHistory()
-    ctx.history.append(ctx.initial_state, np.zeros(ctx.n_particles, dtype=float))
-    ctx.position_history = ctx.history.positions
-    ctx.heading_correction_history = ctx.history.heading_corrections
-    ctx.heading_drift_history = ctx.history.heading_drifts
-    ctx.motion_state_history = ctx.history.motion_states
-    ctx.stride_scale_history = ctx.history.stride_scales
-    ctx.weight_history = ctx.history.weights
-    ctx.path_log_score_history = ctx.history.path_log_scores
-    ctx.parent_history = ctx.history.parents
+    ctx.position_history = [ctx.particles.copy()]
+    ctx.heading_correction_history = [ctx.heading_correction.copy()]
+    ctx.heading_drift_history = [ctx.heading_drift.copy()]
+    ctx.motion_state_history = [ctx.motion_state.copy()]
+    ctx.stride_scale_history = [ctx.stride_scale.copy()]
+    ctx.weight_history = [ctx.weights.copy()]
+    ctx.path_log_score_history = [np.zeros(ctx.n_particles, dtype=float)]
+    ctx.parent_history = []
     ctx.all_particles_list = [ctx.particles.copy()]
     ctx.step_headings = []
     ctx.healthy_checkpoint_steps = [0]
@@ -151,10 +129,7 @@ def initialize(ctx: ParticleRuntime) -> None:
     ctx.recording_motion_reliability = (
         float(
             np.median(
-                [
-                    ctx.evidence.motion_reliability
-                    for ctx.evidence in ctx.motion_evidences
-                ]
+                [evidence.motion_reliability for evidence in ctx.motion_evidences]
             )
         )
         if ctx.motion_evidences

@@ -1,5 +1,0 @@
-"""フロアマップに関する設定定数。"""
-
-from . import FLOORMAP_ORIGIN_PX, FLOORMAP_PATH, FLOORMAP_SCALE
-
-__all__ = ["FLOORMAP_ORIGIN_PX", "FLOORMAP_PATH", "FLOORMAP_SCALE"]

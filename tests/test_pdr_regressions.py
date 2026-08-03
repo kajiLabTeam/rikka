@@ -6,39 +6,45 @@ import numpy as np
 import pandas as pd
 
 from rikka.analyze import pdr
-from rikka.analyze.particle_branches import branch_preserving_resample
-from rikka.analyze.particle_filter import (
-    ParticleFilterStepDiagnostics,
-    _effective_sample_size,
+from rikka.particle.lib.branches import branch_preserving_resample
+from rikka.particle.lib.map_constraints import (
     _evaluate_particle_transitions,
-    _generate_recovery_candidates,
-    _motion_state_headings,
     _normalize_floormap_gray,
+    _snap_trajectory_to_walkable_pixels,
+)
+from rikka.particle.lib.path_history import (
     _reconstruct_particle_paths,
     _reconstruct_resampled_paths,
-    _replay_from_checkpoint,
-    _sample_motion_states,
+)
+from rikka.particle.lib.path_selection import (
     _select_reachable_cluster_path,
     _select_reachable_mean_path,
-    _snap_trajectory_to_walkable_pixels,
+)
+from rikka.particle.lib.proposal import (
+    _motion_state_headings,
+    _sample_motion_states,
+)
+from rikka.particle.lib.recorder import ParticleFilterStepDiagnostics
+from rikka.particle.lib.recovery.checkpoint import _replay_from_checkpoint
+from rikka.particle.lib.recovery.local import _generate_recovery_candidates
+from rikka.particle.lib.resampling import (
+    _effective_sample_size,
     _systematic_resample,
 )
-from rikka.analyze.particle_filter import (
-    run_particle_filter as _run_particle_filter,
-)
-from rikka.analyze.pdr.adaptive_estimator import estimate_adaptive_pdr
-from rikka.analyze.pdr.body_heading import estimate_dynamic_body_headings
-from rikka.analyze.pdr.motion_decoder import decode_step_motion_segments
-from rikka.analyze.pdr.motion_refinement import (
-    refine_step_headings_with_motion_model,
-)
-from rikka.analyze.sensor_plot import _project_acceleration_to_step_axes
+from rikka.particle.lib.runner import run_particle_filter as _run_particle_filter
+from rikka.pdr.lib.fusion.adaptive import estimate_adaptive_pdr
+from rikka.pdr.lib.heading.body import estimate_dynamic_body_headings
+from rikka.pdr.lib.motion_state.decoder import decode_step_motion_segments
 from rikka.pdr.lib.motion_state.evidence import (
     build_particle_motion_headings,
     build_step_motion_evidences,
     build_step_motion_observations,
 )
+from rikka.pdr.lib.motion_state.refinement import (
+    refine_step_headings_with_motion_model,
+)
 from rikka.plot import pipeline as plot_pipeline
+from rikka.plot.lib.sensor import _project_acceleration_to_step_axes
 
 
 def run_particle_filter(*args, **kwargs):
