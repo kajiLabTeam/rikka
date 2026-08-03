@@ -5,12 +5,21 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from rikka.analyze import pdr
+from rikka.cli.commands import run as run_pdr
+from rikka.common.config import SIDESTEP_LENGTH_SCALE, TURNING_LENGTH_SCALE
+from rikka.common.lib.gyro_bias import estimate_gyro_bias
+from rikka.common.lib.models import (
+    StepHeading,
+    StepLengthObservation,
+    StepMotionEvidence,
+    StepSegment,
+)
 from rikka.common.lib.pdr_math import (
     _validate_non_negative_parameter,
     _validate_positive_parameter,
     _validate_scale,
 )
+from rikka.common.lib.sensors import process_sensor_data
 from rikka.common.lib.time_utils import _sample_gyro_angle
 from rikka.particle.lib.branches import branch_preserving_resample
 from rikka.particle.lib.map_constraints import (
@@ -43,6 +52,7 @@ from rikka.pdr.lib.heading.motion import (
     _estimate_motion_heading_correction,
     _resolve_motion_heading_correction,
 )
+from rikka.pdr.lib.heading.resolver import resolve_step_heading
 from rikka.pdr.lib.motion_state.clustering import _smooth_step_headings
 from rikka.pdr.lib.motion_state.decoder import decode_step_motion_segments
 from rikka.pdr.lib.motion_state.evidence import (
@@ -57,7 +67,10 @@ from rikka.pdr.lib.motion_state.refinement import (
 from rikka.pdr.lib.motion_state.step_motion import (
     _is_sidestep_suspect_movement,
     _is_trajectory_sidestep_movement,
+    estimate_step_motion,
 )
+from rikka.pdr.lib.preparation import prepare_pdr_steps
+from rikka.pdr.lib.step_detection import detect_step_result, detect_steps
 from rikka.plot import pipeline as plot_pipeline
 from rikka.plot.lib.outputs import _build_trajectory_dataframe, _create_output_dir
 from rikka.plot.lib.sensor import _project_acceleration_to_step_axes
@@ -91,9 +104,9 @@ def run_particle_filter(*args, **kwargs):
 def _forward_step_heading(
     step_index: int = 1,
     heading: float = 0.0,
-) -> pdr.StepHeading:
+) -> StepHeading:
     """PF回帰テスト用の確定済み前進ステップを返す。"""
-    return pdr.StepHeading(
+    return StepHeading(
         step_index=step_index,
         timestamp_s=float(step_index - 1),
         gyro_heading=heading,
@@ -139,7 +152,7 @@ def test_process_sensor_data_resets_index_and_uses_time_delta_for_gyro() -> None
         index=[100, 101, 102],
     )
 
-    processed_acc, processed_gyro = pdr.process_sensor_data(
+    processed_acc, processed_gyro = process_sensor_data(
         df_acc,
         df_gyro,
         gyro_bias_method="quietest",
@@ -174,7 +187,7 @@ def test_estimate_gyro_bias_prewalk_robust_selects_static_subwindow() -> None:
         }
     )
 
-    result = pdr.estimate_gyro_bias(
+    result = estimate_gyro_bias(
         df_acc,
         df_gyro,
         method="prewalk_robust",
@@ -211,7 +224,7 @@ def test_estimate_gyro_bias_static_window_rejects_high_acceleration() -> None:
         }
     )
 
-    result = pdr.estimate_gyro_bias(
+    result = estimate_gyro_bias(
         df_acc,
         df_gyro,
         method="prewalk_robust",
@@ -227,7 +240,7 @@ def test_estimate_gyro_bias_manual_requires_and_uses_value() -> None:
     df_acc = pd.DataFrame({"low_lin_norm": [0.0]})
     df_gyro = pd.DataFrame({"x": [1.0]})
 
-    result = pdr.estimate_gyro_bias(
+    result = estimate_gyro_bias(
         df_acc,
         df_gyro,
         method="manual",
@@ -237,7 +250,7 @@ def test_estimate_gyro_bias_manual_requires_and_uses_value() -> None:
     assert result.method == "manual"
     assert result.bias_rad_s == 0.123
     try:
-        pdr.estimate_gyro_bias(df_acc, df_gyro, method="manual")
+        estimate_gyro_bias(df_acc, df_gyro, method="manual")
     except ValueError as exc:
         assert "gyro_bias" in str(exc)
     else:
@@ -248,7 +261,7 @@ def test_estimate_gyro_bias_zero_does_not_use_sensor_rotation() -> None:
     df_acc = pd.DataFrame({"low_lin_norm": [0.0, 0.0]})
     df_gyro = pd.DataFrame({"x": [0.25, -0.5]})
 
-    result = pdr.estimate_gyro_bias(df_acc, df_gyro, method="zero")
+    result = estimate_gyro_bias(df_acc, df_gyro, method="zero")
 
     assert result.method == "zero"
     assert result.bias_rad_s == 0.0
@@ -264,7 +277,7 @@ def test_estimate_gyro_bias_prewalk_guarded_rejects_large_rotation() -> None:
     df_acc = pd.DataFrame({"t": times, "low_lin_norm": low_lin_norm})
     df_gyro = pd.DataFrame({"t": times, "x": np.full(n_samples, 0.02)})
 
-    result = pdr.estimate_gyro_bias(
+    result = estimate_gyro_bias(
         df_acc,
         df_gyro,
         method="prewalk_guarded",
@@ -295,7 +308,7 @@ def test_estimate_gyro_bias_prewalk_falls_back_to_initial_robust() -> None:
         }
     )
 
-    result = pdr.estimate_gyro_bias(
+    result = estimate_gyro_bias(
         df_acc,
         df_gyro,
         method="prewalk_robust",
@@ -318,7 +331,7 @@ def test_estimate_gyro_bias_quietest_keeps_legacy_window_behavior() -> None:
     )
     df_gyro = pd.DataFrame({"x": gyro_x})
 
-    result = pdr.estimate_gyro_bias(
+    result = estimate_gyro_bias(
         df_acc,
         df_gyro,
         method="quietest",
@@ -419,7 +432,7 @@ def test_run_does_not_create_output_dir_when_sensor_pair_is_incomplete(
     monkeypatch.setattr(plot_pipeline, "create_output_dir", fake_create_output_dir)
 
     try:
-        pdr.run(df_acc=pd.DataFrame(), df_gyro=None, plot=False)
+        run_pdr(df_acc=pd.DataFrame(), df_gyro=None, plot=False)
     except ValueError as exc:
         assert "df_acc と df_gyro" in str(exc)
     else:
@@ -454,9 +467,8 @@ def test_run_returns_and_saves_timestamped_trajectory_without_steps(
         return output_dir
 
     monkeypatch.setattr(plot_pipeline, "create_output_dir", fake_create_output_dir)
-    monkeypatch.setattr(pdr, "detect_steps", lambda _df_acc: np.array([], dtype=int))
 
-    df_trajectory = pdr.run(df_acc=df_acc, df_gyro=df_gyro, plot=False)
+    df_trajectory = run_pdr(df_acc=df_acc, df_gyro=df_gyro, plot=False)
 
     assert df_trajectory.columns.tolist() == ["timestamp_s", "x", "y"]
     assert df_trajectory.empty
@@ -508,29 +520,6 @@ def test_run_particle_filter_seed_makes_particles_deterministic(tmp_path) -> Non
 
     np.testing.assert_allclose(np.asarray(first[0]), np.asarray(second[0]))
     np.testing.assert_allclose(first[3], second[3])
-
-
-def test_particle_filter_compatibility_facade_exports_existing_symbols() -> None:
-    from rikka.analyze import particle_filter
-
-    expected_symbols = (
-        "ParticleFilterStepDiagnostics",
-        "_effective_sample_size",
-        "_evaluate_particle_transitions",
-        "_generate_recovery_candidates",
-        "_motion_state_headings",
-        "_normalize_floormap_gray",
-        "_reconstruct_particle_paths",
-        "_replay_from_checkpoint",
-        "_sample_motion_states",
-        "_snap_trajectory_to_walkable_pixels",
-        "_systematic_resample",
-        "plot_particle_filter_trajectory",
-        "run_particle_filter",
-        "save_particle_animation",
-    )
-
-    assert all(hasattr(particle_filter, name) for name in expected_symbols)
 
 
 def test_particle_filter_diagnostics_field_order_is_stable() -> None:
@@ -1255,12 +1244,12 @@ def test_adaptive_pdr_exposes_normalized_state_and_length_uncertainty() -> None:
         ),
     ]
     observations = (
-        pdr.StepLengthObservation(1, 1.0, 1.0, 0.65, 2.0, 1.0, 1.0, 0.1, None),
-        pdr.StepLengthObservation(2, 1.0, 0.7, 0.65, 1.0, 1.0, 0.9, 0.12, None),
+        StepLengthObservation(1, 1.0, 1.0, 0.65, 2.0, 1.0, 1.0, 0.1, None),
+        StepLengthObservation(2, 1.0, 0.7, 0.65, 1.0, 1.0, 0.9, 0.12, None),
     )
     evidences = (
-        pdr.StepMotionEvidence(0.95, 0.02, 0.02, 0.01, 1.0, 1.0),
-        pdr.StepMotionEvidence(0.05, 0.9, 0.02, 0.03, 1.0, 1.0),
+        StepMotionEvidence(0.95, 0.02, 0.02, 0.01, 1.0, 1.0),
+        StepMotionEvidence(0.05, 0.9, 0.02, 0.03, 1.0, 1.0),
     )
 
     result = estimate_adaptive_pdr(
@@ -1427,7 +1416,7 @@ def test_prepare_pdr_steps_returns_shared_step_result_without_steps() -> None:
         }
     )
 
-    prepared = pdr.prepare_pdr_steps(df_acc, df_gyro, gyro_bias_method="quietest")
+    prepared = prepare_pdr_steps(df_acc, df_gyro, gyro_bias_method="quietest")
 
     assert prepared.step_detection.peaks.tolist() == []
     assert prepared.trajectory == [[0.0, 0.0]]
@@ -1444,16 +1433,16 @@ def test_paper_vertical_threshold_detects_step_segments() -> None:
     signal[[10, 70, 130, 190]] = [4.0, 5.0, 4.5, 5.5]
     df_acc = pd.DataFrame({"v_acc": signal, "low_lin_norm": np.zeros_like(signal)})
 
-    result = pdr.detect_step_result(df_acc, method="paper_vertical_threshold")
+    result = detect_step_result(df_acc, method="paper_vertical_threshold")
 
     assert result.method == "paper_vertical_threshold"
     assert result.polarity == 1
     assert result.threshold is not None
     np.testing.assert_array_equal(result.peaks, np.array([70, 130, 190]))
     assert result.segments == (
-        pdr.StepSegment(start_index=10, end_index=70, contact_index=70),
-        pdr.StepSegment(start_index=70, end_index=130, contact_index=130),
-        pdr.StepSegment(start_index=130, end_index=190, contact_index=190),
+        StepSegment(start_index=10, end_index=70, contact_index=70),
+        StepSegment(start_index=70, end_index=130, contact_index=130),
+        StepSegment(start_index=130, end_index=190, contact_index=190),
     )
 
 
@@ -1462,13 +1451,13 @@ def test_paper_vertical_threshold_handles_negative_contact_polarity() -> None:
     signal[[20, 80, 140]] = [-4.0, -5.0, -4.5]
     df_acc = pd.DataFrame({"v_acc": signal, "low_lin_norm": np.zeros_like(signal)})
 
-    result = pdr.detect_step_result(df_acc, method="paper_vertical_threshold")
+    result = detect_step_result(df_acc, method="paper_vertical_threshold")
 
     assert result.polarity == -1
     np.testing.assert_array_equal(result.peaks, np.array([80, 140]))
     assert result.segments == (
-        pdr.StepSegment(start_index=20, end_index=80, contact_index=80),
-        pdr.StepSegment(start_index=80, end_index=140, contact_index=140),
+        StepSegment(start_index=20, end_index=80, contact_index=80),
+        StepSegment(start_index=80, end_index=140, contact_index=140),
     )
 
 
@@ -1477,12 +1466,12 @@ def test_paper_vertical_threshold_suppresses_close_contacts() -> None:
     signal[[10, 40, 100, 160]] = [4.0, 8.0, 5.0, 5.0]
     df_acc = pd.DataFrame({"v_acc": signal, "low_lin_norm": np.zeros_like(signal)})
 
-    result = pdr.detect_step_result(df_acc, method="paper_vertical_threshold")
+    result = detect_step_result(df_acc, method="paper_vertical_threshold")
 
     np.testing.assert_array_equal(result.peaks, np.array([100, 160]))
     assert result.segments == (
-        pdr.StepSegment(start_index=40, end_index=100, contact_index=100),
-        pdr.StepSegment(start_index=100, end_index=160, contact_index=160),
+        StepSegment(start_index=40, end_index=100, contact_index=100),
+        StepSegment(start_index=100, end_index=160, contact_index=160),
     )
 
 
@@ -1491,11 +1480,11 @@ def test_paper_vertical_threshold_filters_invalid_segment_lengths() -> None:
     signal[[10, 20, 90, 210]] = [4.0, 5.0, 5.0, 5.0]
     df_acc = pd.DataFrame({"v_acc": signal, "low_lin_norm": np.zeros_like(signal)})
 
-    result = pdr.detect_step_result(df_acc, method="paper_vertical_threshold")
+    result = detect_step_result(df_acc, method="paper_vertical_threshold")
 
     np.testing.assert_array_equal(result.peaks, np.array([90]))
     assert result.segments == (
-        pdr.StepSegment(start_index=20, end_index=90, contact_index=90),
+        StepSegment(start_index=20, end_index=90, contact_index=90),
     )
 
 
@@ -1504,10 +1493,10 @@ def test_detect_steps_returns_paper_detection_peaks() -> None:
     signal[[20, 80, 140]] = [4.0, 5.0, 4.5]
     df_acc = pd.DataFrame({"v_acc": signal, "low_lin_norm": np.zeros_like(signal)})
 
-    result = pdr.detect_step_result(df_acc, method="paper_vertical_threshold")
+    result = detect_step_result(df_acc, method="paper_vertical_threshold")
 
     np.testing.assert_array_equal(
-        pdr.detect_steps(df_acc, method="paper_vertical_threshold"),
+        detect_steps(df_acc, method="paper_vertical_threshold"),
         result.peaks,
     )
 
@@ -1530,7 +1519,7 @@ def test_resolve_step_heading_uses_accel_method1_when_requested() -> None:
         }
     )
 
-    heading = pdr.resolve_step_heading(
+    heading = resolve_step_heading(
         np.array([10, 70]),
         df_gyro,
         df_acc,
@@ -1566,7 +1555,7 @@ def test_resolve_step_heading_gyro_accel_motion_detects_sidestep() -> None:
         }
     )
 
-    heading = pdr.resolve_step_heading(
+    heading = resolve_step_heading(
         np.array([10, 70]),
         df_gyro,
         df_acc,
@@ -1604,7 +1593,7 @@ def test_estimate_step_motion_uses_sidestep_left_adjustment() -> None:
         }
     )
 
-    heading = pdr.resolve_step_heading(
+    heading = resolve_step_heading(
         np.array([10, 70]),
         df_gyro,
         df_acc,
@@ -1613,7 +1602,7 @@ def test_estimate_step_motion_uses_sidestep_left_adjustment() -> None:
         heading_method="gyro",
         sidestep_min_lateral_displacement=0.001,
     )
-    motion = pdr.estimate_step_motion(heading, 1.0)
+    motion = estimate_step_motion(heading, 1.0)
 
     assert motion is not None
     assert motion.movement_type == "sidestep_left"
@@ -1638,7 +1627,7 @@ def test_estimate_step_motion_uses_sidestep_right_adjustment() -> None:
         }
     )
 
-    heading = pdr.resolve_step_heading(
+    heading = resolve_step_heading(
         np.array([10, 70]),
         df_gyro,
         df_acc,
@@ -1647,12 +1636,12 @@ def test_estimate_step_motion_uses_sidestep_right_adjustment() -> None:
         heading_method="gyro",
         sidestep_min_lateral_displacement=0.001,
     )
-    motion = pdr.estimate_step_motion(heading, 1.0)
+    motion = estimate_step_motion(heading, 1.0)
 
     assert motion is not None
     assert motion.movement_type == "sidestep_right"
     np.testing.assert_allclose(motion.heading, -np.pi / 2, atol=1e-12)
-    np.testing.assert_allclose(motion.length, pdr.SIDESTEP_LENGTH_SCALE, atol=1e-12)
+    np.testing.assert_allclose(motion.length, SIDESTEP_LENGTH_SCALE, atol=1e-12)
 
 
 def test_classify_movement_type_uses_configurable_sidestep_ratio() -> None:
@@ -1705,7 +1694,7 @@ def test_estimate_step_motion_uses_turning_adjustment() -> None:
         }
     )
 
-    heading = pdr.resolve_step_heading(
+    heading = resolve_step_heading(
         np.array([10, 70]),
         df_gyro,
         df_acc,
@@ -1714,12 +1703,12 @@ def test_estimate_step_motion_uses_turning_adjustment() -> None:
         heading_method="gyro",
     )
     previous_heading = 0.25
-    motion = pdr.estimate_step_motion(heading, 1.0, previous_heading)
+    motion = estimate_step_motion(heading, 1.0, previous_heading)
 
     assert motion is not None
     assert motion.movement_type == "turning"
     np.testing.assert_allclose(motion.heading, previous_heading, atol=1e-12)
-    np.testing.assert_allclose(motion.length, pdr.TURNING_LENGTH_SCALE, atol=1e-12)
+    np.testing.assert_allclose(motion.length, TURNING_LENGTH_SCALE, atol=1e-12)
 
 
 def test_resolve_step_heading_respects_sidestep_ratio_parameter() -> None:
@@ -1740,7 +1729,7 @@ def test_resolve_step_heading_respects_sidestep_ratio_parameter() -> None:
         }
     )
 
-    heading = pdr.resolve_step_heading(
+    heading = resolve_step_heading(
         np.array([10, 70]),
         df_gyro,
         df_acc,
@@ -1773,7 +1762,7 @@ def test_resolve_step_heading_applies_motion_heading_correction() -> None:
         }
     )
 
-    heading = pdr.resolve_step_heading(
+    heading = resolve_step_heading(
         np.array([10, 70]),
         df_gyro,
         df_acc,
@@ -1933,9 +1922,9 @@ def test_smooth_step_headings_suppresses_isolated_sidestep() -> None:
         "motion_reject_reason": None,
     }
     headings = [
-        pdr.StepHeading(step_index=1, movement_type="forward", **base),
-        pdr.StepHeading(step_index=2, movement_type="sidestep_left", **base),
-        pdr.StepHeading(step_index=3, movement_type="forward", **base),
+        StepHeading(step_index=1, movement_type="forward", **base),
+        StepHeading(step_index=2, movement_type="sidestep_left", **base),
+        StepHeading(step_index=3, movement_type="forward", **base),
     ]
 
     smoothed = _smooth_step_headings(headings, method="isolated")
@@ -1982,9 +1971,9 @@ def test_smooth_step_headings_clustered_suppresses_single_sidestep() -> None:
         "motion_reject_reason": None,
     }
     headings = [
-        pdr.StepHeading(step_index=1, movement_type="forward", **base),
-        pdr.StepHeading(step_index=2, movement_type="sidestep_left", **base),
-        pdr.StepHeading(step_index=3, movement_type="forward", **base),
+        StepHeading(step_index=1, movement_type="forward", **base),
+        StepHeading(step_index=2, movement_type="sidestep_left", **base),
+        StepHeading(step_index=3, movement_type="forward", **base),
     ]
 
     smoothed = _smooth_step_headings(headings, method="clustered")
@@ -2019,11 +2008,11 @@ def test_smooth_step_headings_clustered_suppresses_separated_same_direction() ->
         "motion_reject_reason": None,
     }
     headings = [
-        pdr.StepHeading(step_index=1, movement_type="forward", **base),
-        pdr.StepHeading(step_index=2, movement_type="sidestep_left", **base),
-        pdr.StepHeading(step_index=3, movement_type="forward", **base),
-        pdr.StepHeading(step_index=4, movement_type="sidestep_left", **base),
-        pdr.StepHeading(step_index=5, movement_type="forward", **base),
+        StepHeading(step_index=1, movement_type="forward", **base),
+        StepHeading(step_index=2, movement_type="sidestep_left", **base),
+        StepHeading(step_index=3, movement_type="forward", **base),
+        StepHeading(step_index=4, movement_type="sidestep_left", **base),
+        StepHeading(step_index=5, movement_type="forward", **base),
     ]
 
     smoothed = _smooth_step_headings(headings, method="clustered")
@@ -2060,10 +2049,10 @@ def test_smooth_step_headings_clustered_keeps_consecutive_same_direction() -> No
         "motion_reject_reason": None,
     }
     headings = [
-        pdr.StepHeading(step_index=1, movement_type="forward", **base),
-        pdr.StepHeading(step_index=2, movement_type="sidestep_right", **base),
-        pdr.StepHeading(step_index=3, movement_type="sidestep_right", **base),
-        pdr.StepHeading(step_index=4, movement_type="forward", **base),
+        StepHeading(step_index=1, movement_type="forward", **base),
+        StepHeading(step_index=2, movement_type="sidestep_right", **base),
+        StepHeading(step_index=3, movement_type="sidestep_right", **base),
+        StepHeading(step_index=4, movement_type="forward", **base),
     ]
 
     smoothed = _smooth_step_headings(headings, method="clustered")
@@ -2100,13 +2089,13 @@ def test_smooth_step_headings_clustered_does_not_override_sidestep_heading() -> 
         "motion_reject_reason": None,
     }
     headings = [
-        pdr.StepHeading(
+        StepHeading(
             step_index=1,
             movement_type="sidestep_left",
             motion_heading=np.deg2rad(170.0),
             **base,
         ),
-        pdr.StepHeading(
+        StepHeading(
             step_index=2,
             movement_type="sidestep_left",
             motion_heading=np.deg2rad(-170.0),
@@ -2147,10 +2136,10 @@ def test_smooth_step_headings_clustered_requires_lateral_feature_strength() -> N
         "motion_reject_reason": None,
     }
     headings = [
-        pdr.StepHeading(step_index=1, movement_type="forward", **base),
-        pdr.StepHeading(step_index=2, movement_type="sidestep_right", **base),
-        pdr.StepHeading(step_index=3, movement_type="sidestep_right", **base),
-        pdr.StepHeading(step_index=4, movement_type="forward", **base),
+        StepHeading(step_index=1, movement_type="forward", **base),
+        StepHeading(step_index=2, movement_type="sidestep_right", **base),
+        StepHeading(step_index=3, movement_type="sidestep_right", **base),
+        StepHeading(step_index=4, movement_type="forward", **base),
     ]
 
     smoothed = _smooth_step_headings(headings, method="clustered")
@@ -2186,10 +2175,10 @@ def test_smooth_step_headings_clustered_requires_same_direction() -> None:
         "motion_reject_reason": None,
     }
     headings = [
-        pdr.StepHeading(step_index=1, movement_type="forward", **base),
-        pdr.StepHeading(step_index=2, movement_type="sidestep_left", **base),
-        pdr.StepHeading(step_index=3, movement_type="sidestep_right", **base),
-        pdr.StepHeading(step_index=4, movement_type="forward", **base),
+        StepHeading(step_index=1, movement_type="forward", **base),
+        StepHeading(step_index=2, movement_type="sidestep_left", **base),
+        StepHeading(step_index=3, movement_type="sidestep_right", **base),
+        StepHeading(step_index=4, movement_type="forward", **base),
     ]
 
     smoothed = _smooth_step_headings(headings, method="clustered")
@@ -2222,7 +2211,7 @@ def test_smooth_step_headings_clustered_uses_body_motion_lateral_evidence() -> N
         "motion_reject_reason": None,
     }
     headings = [
-        pdr.StepHeading(
+        StepHeading(
             step_index=1,
             movement_type="forward",
             motion_heading=np.pi / 2,
@@ -2230,7 +2219,7 @@ def test_smooth_step_headings_clustered_uses_body_motion_lateral_evidence() -> N
             lateral_displacement=0.08,
             **base,
         ),
-        pdr.StepHeading(
+        StepHeading(
             step_index=2,
             movement_type="unknown",
             motion_heading=np.deg2rad(100.0),
@@ -2279,7 +2268,7 @@ def test_smooth_step_headings_clustered_includes_single_bridge_gap() -> None:
         "motion_reject_reason": None,
     }
     headings = [
-        pdr.StepHeading(
+        StepHeading(
             step_index=1,
             movement_type="forward",
             motion_heading=np.pi / 2,
@@ -2287,7 +2276,7 @@ def test_smooth_step_headings_clustered_includes_single_bridge_gap() -> None:
             lateral_displacement=-0.08,
             **base,
         ),
-        pdr.StepHeading(
+        StepHeading(
             step_index=2,
             movement_type="forward",
             motion_heading=0.0,
@@ -2295,7 +2284,7 @@ def test_smooth_step_headings_clustered_includes_single_bridge_gap() -> None:
             lateral_displacement=-0.04,
             **base,
         ),
-        pdr.StepHeading(
+        StepHeading(
             step_index=3,
             movement_type="unknown",
             motion_heading=np.deg2rad(100.0),
@@ -2319,7 +2308,7 @@ def test_smooth_step_headings_clustered_includes_single_bridge_gap() -> None:
 
 
 def test_smooth_step_headings_clustered_marks_strong_single_as_suspect() -> None:
-    heading = pdr.StepHeading(
+    heading = StepHeading(
         step_index=1,
         timestamp_s=0.0,
         gyro_heading=0.0,
@@ -2393,13 +2382,13 @@ def test_stabilize_trajectory_headings_uses_forward_motion_per_step() -> None:
         "motion_reject_reason": None,
     }
     headings = [
-        pdr.StepHeading(
+        StepHeading(
             step_index=1,
             body_heading=np.deg2rad(80.0),
             motion_heading=np.deg2rad(40.0),
             **base,
         ),
-        pdr.StepHeading(
+        StepHeading(
             step_index=2,
             body_heading=np.deg2rad(100.0),
             motion_heading=np.deg2rad(60.0),
@@ -2421,7 +2410,7 @@ def test_stabilize_trajectory_headings_uses_forward_motion_per_step() -> None:
 
 
 def test_stabilize_trajectory_headings_rejects_initial_forward_outlier() -> None:
-    heading = pdr.StepHeading(
+    heading = StepHeading(
         step_index=1,
         timestamp_s=0.0,
         gyro_heading=0.0,
@@ -2476,13 +2465,13 @@ def test_stabilize_trajectory_headings_limits_same_type_heading_jump() -> None:
         "motion_reject_reason": None,
     }
     headings = [
-        pdr.StepHeading(
+        StepHeading(
             step_index=1,
             body_heading=np.deg2rad(0.0),
             motion_heading=np.deg2rad(0.0),
             **base,
         ),
-        pdr.StepHeading(
+        StepHeading(
             step_index=2,
             body_heading=np.deg2rad(0.0),
             motion_heading=np.deg2rad(60.0),
@@ -2523,8 +2512,8 @@ def test_stabilize_trajectory_headings_can_use_forward_body_source() -> None:
         "motion_reject_reason": None,
     }
     headings = [
-        pdr.StepHeading(step_index=1, body_heading=np.deg2rad(80.0), **base),
-        pdr.StepHeading(step_index=2, body_heading=np.deg2rad(100.0), **base),
+        StepHeading(step_index=1, body_heading=np.deg2rad(80.0), **base),
+        StepHeading(step_index=2, body_heading=np.deg2rad(100.0), **base),
     ]
 
     stabilized = _stabilize_trajectory_headings(
@@ -2561,13 +2550,13 @@ def test_stabilize_trajectory_headings_uses_sidestep_motion_with_constraint() ->
         "trajectory_movement_type": "sidestep_right",
     }
     headings = [
-        pdr.StepHeading(
+        StepHeading(
             step_index=1,
             body_heading=np.deg2rad(0.0),
             motion_heading=np.deg2rad(-80.0),
             **base,
         ),
-        pdr.StepHeading(
+        StepHeading(
             step_index=2,
             body_heading=np.deg2rad(0.0),
             motion_heading=np.deg2rad(-70.0),
@@ -2606,13 +2595,13 @@ def test_stabilize_trajectory_headings_falls_back_for_sidestep_motion_outlier() 
         "trajectory_movement_type": "sidestep_right",
     }
     headings = [
-        pdr.StepHeading(
+        StepHeading(
             step_index=1,
             body_heading=0.0,
             motion_heading=np.deg2rad(-80.0),
             **base,
         ),
-        pdr.StepHeading(
+        StepHeading(
             step_index=2,
             body_heading=0.0,
             motion_heading=np.deg2rad(0.0),
@@ -2670,7 +2659,7 @@ def test_stabilize_trajectory_headings_prefers_motion_for_turning_sidestep() -> 
         "motion_reject_reason": None,
         "trajectory_movement_type": "turning_sidestep_right",
     }
-    heading = pdr.StepHeading(
+    heading = StepHeading(
         step_index=1,
         body_heading=np.deg2rad(0.0),
         motion_heading=np.deg2rad(20.0),
@@ -2706,13 +2695,13 @@ def test_stabilize_trajectory_headings_loosens_turning_sidestep_limit() -> None:
         "trajectory_movement_type": "turning_sidestep_left",
     }
     headings = [
-        pdr.StepHeading(
+        StepHeading(
             step_index=1,
             body_heading=0.0,
             motion_heading=np.deg2rad(0.0),
             **base,
         ),
-        pdr.StepHeading(
+        StepHeading(
             step_index=2,
             body_heading=0.0,
             motion_heading=np.deg2rad(70.0),
@@ -2757,7 +2746,7 @@ def test_smooth_step_headings_clustered_suppresses_alternating_evidence() -> Non
         "motion_reject_reason": None,
     }
     headings = [
-        pdr.StepHeading(
+        StepHeading(
             step_index=1,
             movement_type="forward",
             motion_heading=np.deg2rad(100.0),
@@ -2765,7 +2754,7 @@ def test_smooth_step_headings_clustered_suppresses_alternating_evidence() -> Non
             lateral_displacement=0.09,
             **base,
         ),
-        pdr.StepHeading(
+        StepHeading(
             step_index=2,
             movement_type="forward",
             motion_heading=np.deg2rad(-100.0),
@@ -2784,7 +2773,7 @@ def test_smooth_step_headings_clustered_suppresses_alternating_evidence() -> Non
 
 
 def test_estimate_step_motion_uses_trajectory_movement_type_override() -> None:
-    heading = pdr.StepHeading(
+    heading = StepHeading(
         step_index=1,
         timestamp_s=0.0,
         gyro_heading=0.0,
@@ -2809,7 +2798,7 @@ def test_estimate_step_motion_uses_trajectory_movement_type_override() -> None:
         trajectory_movement_type="forward",
     )
 
-    motion = pdr.estimate_step_motion(
+    motion = estimate_step_motion(
         heading,
         1.0,
         forward_heading_source="motion",
@@ -2822,7 +2811,7 @@ def test_estimate_step_motion_uses_trajectory_movement_type_override() -> None:
 
 
 def test_estimate_step_motion_can_use_motion_heading_for_forward() -> None:
-    heading = pdr.StepHeading(
+    heading = StepHeading(
         step_index=1,
         timestamp_s=0.0,
         gyro_heading=0.0,
@@ -2846,7 +2835,7 @@ def test_estimate_step_motion_can_use_motion_heading_for_forward() -> None:
         motion_reject_reason=None,
     )
 
-    motion = pdr.estimate_step_motion(
+    motion = estimate_step_motion(
         heading,
         1.0,
         forward_heading_source="motion",
@@ -2859,7 +2848,7 @@ def test_estimate_step_motion_can_use_motion_heading_for_forward() -> None:
 
 
 def test_estimate_step_motion_sidestep_defaults_to_motion_heading() -> None:
-    heading = pdr.StepHeading(
+    heading = StepHeading(
         step_index=1,
         timestamp_s=0.0,
         gyro_heading=0.0,
@@ -2884,7 +2873,7 @@ def test_estimate_step_motion_sidestep_defaults_to_motion_heading() -> None:
         trajectory_movement_type="sidestep_right",
     )
 
-    motion = pdr.estimate_step_motion(
+    motion = estimate_step_motion(
         heading,
         1.0,
         sidestep_suspect_mode="motion",
@@ -2893,11 +2882,11 @@ def test_estimate_step_motion_sidestep_defaults_to_motion_heading() -> None:
     assert motion is not None
     assert motion.movement_type == "sidestep_right"
     np.testing.assert_allclose(motion.heading, np.pi / 3, atol=1e-12)
-    np.testing.assert_allclose(motion.length, pdr.SIDESTEP_LENGTH_SCALE, atol=1e-12)
+    np.testing.assert_allclose(motion.length, SIDESTEP_LENGTH_SCALE, atol=1e-12)
 
 
 def test_estimate_step_motion_sidestep_can_use_motion_heading() -> None:
-    heading = pdr.StepHeading(
+    heading = StepHeading(
         step_index=1,
         timestamp_s=0.0,
         gyro_heading=0.0,
@@ -2922,7 +2911,7 @@ def test_estimate_step_motion_sidestep_can_use_motion_heading() -> None:
         trajectory_movement_type="sidestep_right",
     )
 
-    motion = pdr.estimate_step_motion(
+    motion = estimate_step_motion(
         heading,
         1.0,
         sidestep_heading_source="motion",
@@ -2931,11 +2920,11 @@ def test_estimate_step_motion_sidestep_can_use_motion_heading() -> None:
     assert motion is not None
     assert motion.movement_type == "sidestep_right"
     np.testing.assert_allclose(motion.heading, np.pi / 3, atol=1e-12)
-    np.testing.assert_allclose(motion.length, pdr.SIDESTEP_LENGTH_SCALE, atol=1e-12)
+    np.testing.assert_allclose(motion.length, SIDESTEP_LENGTH_SCALE, atol=1e-12)
 
 
 def test_estimate_step_motion_sidestep_falls_back_without_selected_heading() -> None:
-    heading = pdr.StepHeading(
+    heading = StepHeading(
         step_index=1,
         timestamp_s=0.0,
         gyro_heading=0.0,
@@ -2960,16 +2949,16 @@ def test_estimate_step_motion_sidestep_falls_back_without_selected_heading() -> 
         trajectory_movement_type="sidestep_right",
     )
 
-    motion = pdr.estimate_step_motion(heading, 1.0)
+    motion = estimate_step_motion(heading, 1.0)
 
     assert motion is not None
     assert motion.movement_type == "sidestep_right"
     np.testing.assert_allclose(motion.heading, -np.pi / 2, atol=1e-12)
-    np.testing.assert_allclose(motion.length, pdr.SIDESTEP_LENGTH_SCALE, atol=1e-12)
+    np.testing.assert_allclose(motion.length, SIDESTEP_LENGTH_SCALE, atol=1e-12)
 
 
 def test_estimate_step_motion_sidestep_suspect_uses_motion_heading() -> None:
-    heading = pdr.StepHeading(
+    heading = StepHeading(
         step_index=1,
         timestamp_s=0.0,
         gyro_heading=0.0,
@@ -2994,7 +2983,7 @@ def test_estimate_step_motion_sidestep_suspect_uses_motion_heading() -> None:
         trajectory_movement_type="sidestep_suspect_right",
     )
 
-    motion = pdr.estimate_step_motion(
+    motion = estimate_step_motion(
         heading,
         1.0,
         sidestep_suspect_mode="motion",
@@ -3003,11 +2992,11 @@ def test_estimate_step_motion_sidestep_suspect_uses_motion_heading() -> None:
     assert motion is not None
     assert motion.movement_type == "sidestep_suspect_right"
     np.testing.assert_allclose(motion.heading, np.pi / 3, atol=1e-12)
-    np.testing.assert_allclose(motion.length, pdr.SIDESTEP_LENGTH_SCALE, atol=1e-12)
+    np.testing.assert_allclose(motion.length, SIDESTEP_LENGTH_SCALE, atol=1e-12)
 
 
 def test_estimate_step_motion_forward_body_falls_back_without_body_heading() -> None:
-    heading = pdr.StepHeading(
+    heading = StepHeading(
         step_index=1,
         timestamp_s=0.0,
         gyro_heading=None,
@@ -3031,7 +3020,7 @@ def test_estimate_step_motion_forward_body_falls_back_without_body_heading() -> 
         motion_reject_reason=None,
     )
 
-    motion = pdr.estimate_step_motion(
+    motion = estimate_step_motion(
         heading,
         1.0,
         forward_heading_source="body",
@@ -3044,7 +3033,7 @@ def test_estimate_step_motion_forward_body_falls_back_without_body_heading() -> 
 
 
 def test_estimate_step_motion_unknown_uses_body_heading() -> None:
-    heading = pdr.StepHeading(
+    heading = StepHeading(
         step_index=1,
         timestamp_s=0.0,
         gyro_heading=0.0,
@@ -3068,7 +3057,7 @@ def test_estimate_step_motion_unknown_uses_body_heading() -> None:
         motion_reject_reason=None,
     )
 
-    motion = pdr.estimate_step_motion(heading, 1.0)
+    motion = estimate_step_motion(heading, 1.0)
 
     assert motion is not None
     assert motion.movement_type == "unknown"
@@ -3077,7 +3066,7 @@ def test_estimate_step_motion_unknown_uses_body_heading() -> None:
 
 
 def test_estimate_step_motion_unknown_falls_back_without_body_heading() -> None:
-    heading = pdr.StepHeading(
+    heading = StepHeading(
         step_index=1,
         timestamp_s=0.0,
         gyro_heading=None,
@@ -3101,7 +3090,7 @@ def test_estimate_step_motion_unknown_falls_back_without_body_heading() -> None:
         motion_reject_reason=None,
     )
 
-    motion = pdr.estimate_step_motion(heading, 1.0)
+    motion = estimate_step_motion(heading, 1.0)
 
     assert motion is not None
     assert motion.movement_type == "unknown"
@@ -3126,7 +3115,7 @@ def test_resolve_step_heading_gyro_accel_motion_rotates_by_gyro_angle() -> None:
         }
     )
 
-    heading = pdr.resolve_step_heading(
+    heading = resolve_step_heading(
         np.array([10, 70]),
         df_gyro,
         df_acc,
@@ -3160,7 +3149,7 @@ def test_resolve_step_heading_gyro_accel_motion_falls_back_to_gyro() -> None:
         }
     )
 
-    heading = pdr.resolve_step_heading(
+    heading = resolve_step_heading(
         np.array([10, 70]),
         df_gyro,
         df_acc,
@@ -3342,7 +3331,6 @@ def test_particle_animation_respects_save_animation_flag(tmp_path, monkeypatch) 
         return output_dir
 
     monkeypatch.setattr(plot_pipeline, "create_output_dir", fake_create_output_dir)
-    monkeypatch.setattr(pdr, "detect_steps", lambda _df_acc: np.array([], dtype=int))
 
     calls = 0
 
@@ -3356,7 +3344,7 @@ def test_particle_animation_respects_save_animation_flag(tmp_path, monkeypatch) 
         fake_save_particle_animation,
     )
 
-    pdr.run(
+    run_pdr(
         df_acc=df_acc,
         df_gyro=df_gyro,
         plot=False,
@@ -3373,7 +3361,7 @@ def test_particle_animation_respects_save_animation_flag(tmp_path, monkeypatch) 
     assert "ess_after_observation" in first_diagnostics.columns
     assert "stride_scale_mean" in first_diagnostics.columns
 
-    pdr.run(
+    run_pdr(
         df_acc=df_acc,
         df_gyro=df_gyro,
         plot=False,
