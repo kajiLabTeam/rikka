@@ -6,20 +6,20 @@ import numpy as np
 import pandas as pd
 
 from rikka.analyze import pdr
+from rikka.common.lib.pdr_math import (
+    _validate_non_negative_parameter,
+    _validate_positive_parameter,
+    _validate_scale,
+)
+from rikka.common.lib.time_utils import _sample_gyro_angle
 from rikka.particle.lib.branches import branch_preserving_resample
 from rikka.particle.lib.map_constraints import (
     _evaluate_particle_transitions,
     _normalize_floormap_gray,
     _snap_trajectory_to_walkable_pixels,
 )
-from rikka.particle.lib.path_history import (
-    _reconstruct_particle_paths,
-    _reconstruct_resampled_paths,
-)
-from rikka.particle.lib.path_selection import (
-    _select_reachable_cluster_path,
-    _select_reachable_mean_path,
-)
+from rikka.particle.lib.path_history import _reconstruct_particle_paths
+from rikka.particle.lib.path_selection import _select_reachable_cluster_path
 from rikka.particle.lib.proposal import (
     _motion_state_headings,
     _sample_motion_states,
@@ -34,16 +34,32 @@ from rikka.particle.lib.resampling import (
 from rikka.particle.lib.runner import run_particle_filter as _run_particle_filter
 from rikka.pdr.lib.fusion.adaptive import estimate_adaptive_pdr
 from rikka.pdr.lib.heading.body import estimate_dynamic_body_headings
+from rikka.pdr.lib.heading.device_orientation import (
+    _apply_device_orientation_to_horizontal,
+    _classify_movement_type,
+    _estimate_device_orientation_mode,
+)
+from rikka.pdr.lib.heading.motion import (
+    _estimate_motion_heading_correction,
+    _resolve_motion_heading_correction,
+)
+from rikka.pdr.lib.motion_state.clustering import _smooth_step_headings
 from rikka.pdr.lib.motion_state.decoder import decode_step_motion_segments
 from rikka.pdr.lib.motion_state.evidence import (
     build_particle_motion_headings,
     build_step_motion_evidences,
     build_step_motion_observations,
 )
+from rikka.pdr.lib.motion_state.heading_policy import _stabilize_trajectory_headings
 from rikka.pdr.lib.motion_state.refinement import (
     refine_step_headings_with_motion_model,
 )
+from rikka.pdr.lib.motion_state.step_motion import (
+    _is_sidestep_suspect_movement,
+    _is_trajectory_sidestep_movement,
+)
 from rikka.plot import pipeline as plot_pipeline
+from rikka.plot.lib.outputs import _build_trajectory_dataframe, _create_output_dir
 from rikka.plot.lib.sensor import _project_acceleration_to_step_axes
 
 
@@ -305,29 +321,29 @@ def test_estimate_gyro_bias_quietest_keeps_legacy_window_behavior() -> None:
 def test_sample_gyro_angle_interpolates_by_time() -> None:
     df_gyro = pd.DataFrame({"t": [10.0, 20.0], "low_angle": [0.0, 10.0]})
 
-    assert pdr._sample_gyro_angle(df_gyro, sample_index=0, sample_time=15.0) == 5.0
+    assert _sample_gyro_angle(df_gyro, sample_index=0, sample_time=15.0) == 5.0
 
 
 def test_sample_gyro_angle_clips_index_when_time_is_unavailable() -> None:
     df_gyro = pd.DataFrame({"low_angle": [1.0, 2.0, 3.0]})
 
-    assert pdr._sample_gyro_angle(df_gyro, sample_index=-1) == 1.0
-    assert pdr._sample_gyro_angle(df_gyro, sample_index=100) == 3.0
+    assert _sample_gyro_angle(df_gyro, sample_index=-1) == 1.0
+    assert _sample_gyro_angle(df_gyro, sample_index=100) == 3.0
 
 
 def test_sample_gyro_angle_returns_none_for_empty_or_nan_fallback() -> None:
     empty = pd.DataFrame({"low_angle": []})
     with_nan = pd.DataFrame({"low_angle": [np.nan]})
 
-    assert pdr._sample_gyro_angle(empty, sample_index=0) is None
-    assert pdr._sample_gyro_angle(with_nan, sample_index=0) is None
+    assert _sample_gyro_angle(empty, sample_index=0) is None
+    assert _sample_gyro_angle(with_nan, sample_index=0) is None
 
 
 def test_create_output_dir_avoids_timestamp_collisions(tmp_path) -> None:
     now = datetime(2026, 5, 15, 12, 0, 0, 123456)
 
-    first = pdr._create_output_dir(tmp_path, now)
-    second = pdr._create_output_dir(tmp_path, now)
+    first = _create_output_dir(tmp_path, now)
+    second = _create_output_dir(tmp_path, now)
 
     assert first != second
     assert first.exists()
@@ -335,7 +351,7 @@ def test_create_output_dir_avoids_timestamp_collisions(tmp_path) -> None:
 
 
 def test_build_trajectory_dataframe_adds_elapsed_timestamps() -> None:
-    df_trajectory = pdr._build_trajectory_dataframe(
+    df_trajectory = _build_trajectory_dataframe(
         [[0.0, 0.0], [1.0, 2.0], [3.0, 4.0]],
         [10.5, 11.25],
     )
@@ -355,14 +371,14 @@ def test_build_trajectory_dataframe_adds_elapsed_timestamps() -> None:
 def test_numeric_validators_reject_non_finite_values() -> None:
     for value in (float("nan"), float("inf"), float("-inf")):
         try:
-            pdr._validate_scale(value)
+            _validate_scale(value)
         except ValueError as exc:
             assert "有限" in str(exc)
         else:
             raise AssertionError("_validate_scale should reject non-finite values")
 
         try:
-            pdr._validate_positive_parameter("value", value)
+            _validate_positive_parameter("value", value)
         except ValueError as exc:
             assert "有限" in str(exc)
         else:
@@ -371,7 +387,7 @@ def test_numeric_validators_reject_non_finite_values() -> None:
             )
 
         try:
-            pdr._validate_non_negative_parameter("value", value)
+            _validate_non_negative_parameter("value", value)
         except ValueError as exc:
             assert "有限" in str(exc)
         else:
@@ -495,10 +511,8 @@ def test_particle_filter_compatibility_facade_exports_existing_symbols() -> None
         "_motion_state_headings",
         "_normalize_floormap_gray",
         "_reconstruct_particle_paths",
-        "_reconstruct_resampled_paths",
         "_replay_from_checkpoint",
         "_sample_motion_states",
-        "_select_reachable_mean_path",
         "_snap_trajectory_to_walkable_pixels",
         "_systematic_resample",
         "plot_particle_filter_trajectory",
@@ -1163,41 +1177,6 @@ def test_checkpoint_replay_reconstructs_wall_valid_multi_step_path() -> None:
     ).all()
 
 
-def test_reachable_mean_path_averages_only_dominant_reachable_cluster() -> None:
-    map_gray = np.full((7, 7), 255.0)
-    map_gray[3, 3] = 0.0
-    upper_path = np.array([[1.0, 3.0], [2.0, 2.0], [3.0, 1.0], [4.0, 2.0], [5.0, 3.0]])
-    lower_path = np.array([[1.0, 3.0], [2.0, 4.0], [3.0, 5.0], [4.0, 4.0], [5.0, 3.0]])
-    wall_path = np.array([[1.0, 3.0], [2.0, 3.0], [3.0, 3.0], [4.0, 3.0], [5.0, 3.0]])
-
-    selected, modes, sources = _select_reachable_mean_path(
-        np.stack([upper_path, lower_path, wall_path]),
-        np.array([0.5, 0.5, 0.0]),
-        map_gray,
-        gx_mean=0.0,
-        gz_mean=1.0,
-        origin_px=(0, 0),
-        scale=1.0,
-    )
-
-    assert modes == ["weighted_mean"] * len(upper_path)
-    assert sources == [None] * len(upper_path)
-    np.testing.assert_allclose(
-        selected,
-        [[1.0, 3.0], [2.0, 3.0], [3.0, 1.0], [4.0, 3.0], [5.0, 3.0]],
-    )
-    assert 2 not in sources
-    assert _evaluate_particle_transitions(
-        selected[:-1],
-        selected[1:],
-        map_gray,
-        gx_mean=0.0,
-        gz_mean=1.0,
-        origin_px=(0, 0),
-        scale=1.0,
-    ).all()
-
-
 def test_reachable_cluster_path_averages_particles_on_same_side_of_wall() -> None:
     map_gray = np.full((7, 7), 255.0)
     map_gray[:, 3] = 0.0
@@ -1668,7 +1647,7 @@ def test_estimate_step_motion_uses_sidestep_right_adjustment() -> None:
 
 def test_classify_movement_type_uses_configurable_sidestep_ratio() -> None:
     assert (
-        pdr._classify_movement_type(
+        _classify_movement_type(
             forward_displacement=1.0,
             lateral_displacement=1.2,
             sidestep_lateral_ratio=1.0,
@@ -1677,7 +1656,7 @@ def test_classify_movement_type_uses_configurable_sidestep_ratio() -> None:
         == "sidestep_left"
     )
     assert (
-        pdr._classify_movement_type(
+        _classify_movement_type(
             forward_displacement=1.0,
             lateral_displacement=1.2,
             sidestep_lateral_ratio=1.5,
@@ -1689,7 +1668,7 @@ def test_classify_movement_type_uses_configurable_sidestep_ratio() -> None:
 
 def test_classify_movement_type_requires_min_lateral_displacement() -> None:
     assert (
-        pdr._classify_movement_type(
+        _classify_movement_type(
             forward_displacement=0.001,
             lateral_displacement=0.02,
             sidestep_lateral_ratio=1.0,
@@ -1819,7 +1798,7 @@ def test_estimate_motion_heading_correction_uses_initial_forward_steps() -> None
         }
     )
 
-    correction = pdr._estimate_motion_heading_correction(
+    correction = _estimate_motion_heading_correction(
         df_acc,
         df_gyro,
         np.array([10, 70, 130, 190]),
@@ -1847,7 +1826,7 @@ def test_resolve_motion_heading_correction_can_be_disabled() -> None:
     )
 
     assert (
-        pdr._resolve_motion_heading_correction(
+        _resolve_motion_heading_correction(
             df_acc,
             df_gyro,
             np.array([10, 70, 130, 190]),
@@ -1863,22 +1842,22 @@ def test_apply_device_orientation_to_horizontal_flips_candidate_axes() -> None:
     h_y = np.array([1.0, -2.0])
     h_z = np.array([3.0, -4.0])
 
-    normal_y, normal_z = pdr._apply_device_orientation_to_horizontal(
+    normal_y, normal_z = _apply_device_orientation_to_horizontal(
         h_y,
         h_z,
         "normal",
     )
-    fb_y, fb_z = pdr._apply_device_orientation_to_horizontal(
+    fb_y, fb_z = _apply_device_orientation_to_horizontal(
         h_y,
         h_z,
         "front_back_inverted",
     )
-    lr_y, lr_z = pdr._apply_device_orientation_to_horizontal(
+    lr_y, lr_z = _apply_device_orientation_to_horizontal(
         h_y,
         h_z,
         "left_right_inverted",
     )
-    rot_y, rot_z = pdr._apply_device_orientation_to_horizontal(
+    rot_y, rot_z = _apply_device_orientation_to_horizontal(
         h_y,
         h_z,
         "rotated_180",
@@ -1911,7 +1890,7 @@ def test_estimate_device_orientation_mode_prefers_initial_forward_alignment() ->
         }
     )
 
-    mode = pdr._estimate_device_orientation_mode(
+    mode = _estimate_device_orientation_mode(
         df_acc,
         df_gyro,
         np.array([10, 70, 130, 190]),
@@ -1949,7 +1928,7 @@ def test_smooth_step_headings_suppresses_isolated_sidestep() -> None:
         pdr.StepHeading(step_index=3, movement_type="forward", **base),
     ]
 
-    smoothed = pdr._smooth_step_headings(headings, method="isolated")
+    smoothed = _smooth_step_headings(headings, method="isolated")
 
     assert [heading.movement_type for heading in smoothed] == [
         "forward",
@@ -1962,7 +1941,7 @@ def test_smooth_step_headings_suppresses_isolated_sidestep() -> None:
         None,
     ]
 
-    unsmoothed = pdr._smooth_step_headings(headings, method="none")
+    unsmoothed = _smooth_step_headings(headings, method="none")
     assert [heading.movement_type for heading in unsmoothed] == [
         "forward",
         "sidestep_left",
@@ -1998,7 +1977,7 @@ def test_smooth_step_headings_clustered_suppresses_single_sidestep() -> None:
         pdr.StepHeading(step_index=3, movement_type="forward", **base),
     ]
 
-    smoothed = pdr._smooth_step_headings(headings, method="clustered")
+    smoothed = _smooth_step_headings(headings, method="clustered")
 
     assert [heading.trajectory_movement_type for heading in smoothed] == [
         None,
@@ -2037,7 +2016,7 @@ def test_smooth_step_headings_clustered_suppresses_separated_same_direction() ->
         pdr.StepHeading(step_index=5, movement_type="forward", **base),
     ]
 
-    smoothed = pdr._smooth_step_headings(headings, method="clustered")
+    smoothed = _smooth_step_headings(headings, method="clustered")
 
     assert [heading.trajectory_movement_type for heading in smoothed] == [
         None,
@@ -2077,7 +2056,7 @@ def test_smooth_step_headings_clustered_keeps_consecutive_same_direction() -> No
         pdr.StepHeading(step_index=4, movement_type="forward", **base),
     ]
 
-    smoothed = pdr._smooth_step_headings(headings, method="clustered")
+    smoothed = _smooth_step_headings(headings, method="clustered")
 
     assert [heading.trajectory_movement_type for heading in smoothed] == [
         None,
@@ -2125,7 +2104,7 @@ def test_smooth_step_headings_clustered_does_not_override_sidestep_heading() -> 
         ),
     ]
 
-    smoothed = pdr._smooth_step_headings(headings, method="clustered")
+    smoothed = _smooth_step_headings(headings, method="clustered")
 
     assert [heading.trajectory_movement_type for heading in smoothed] == [
         "sidestep_left",
@@ -2164,7 +2143,7 @@ def test_smooth_step_headings_clustered_requires_lateral_feature_strength() -> N
         pdr.StepHeading(step_index=4, movement_type="forward", **base),
     ]
 
-    smoothed = pdr._smooth_step_headings(headings, method="clustered")
+    smoothed = _smooth_step_headings(headings, method="clustered")
 
     assert [heading.trajectory_movement_type for heading in smoothed] == [
         None,
@@ -2203,7 +2182,7 @@ def test_smooth_step_headings_clustered_requires_same_direction() -> None:
         pdr.StepHeading(step_index=4, movement_type="forward", **base),
     ]
 
-    smoothed = pdr._smooth_step_headings(headings, method="clustered")
+    smoothed = _smooth_step_headings(headings, method="clustered")
 
     assert [heading.trajectory_movement_type for heading in smoothed] == [
         None,
@@ -2251,7 +2230,7 @@ def test_smooth_step_headings_clustered_uses_body_motion_lateral_evidence() -> N
         ),
     ]
 
-    smoothed = pdr._smooth_step_headings(headings, method="clustered")
+    smoothed = _smooth_step_headings(headings, method="clustered")
 
     assert [heading.trajectory_movement_type for heading in smoothed] == [
         "sidestep_left",
@@ -2316,7 +2295,7 @@ def test_smooth_step_headings_clustered_includes_single_bridge_gap() -> None:
         ),
     ]
 
-    smoothed = pdr._smooth_step_headings(headings, method="clustered")
+    smoothed = _smooth_step_headings(headings, method="clustered")
 
     assert [heading.trajectory_movement_type for heading in smoothed] == [
         "sidestep_right",
@@ -2354,7 +2333,7 @@ def test_smooth_step_headings_clustered_marks_strong_single_as_suspect() -> None
         motion_reject_reason=None,
     )
 
-    smoothed = pdr._smooth_step_headings(
+    smoothed = _smooth_step_headings(
         [heading],
         method="clustered",
         sidestep_suspect_mode="motion",
@@ -2377,7 +2356,7 @@ def test_smooth_step_headings_keeps_turning_when_side_cluster_is_not_confirmed()
         yaw_delta=np.deg2rad(55.0),
     )
 
-    smoothed = pdr._smooth_step_headings([heading], method="clustered")
+    smoothed = _smooth_step_headings([heading], method="clustered")
 
     assert smoothed[0].trajectory_movement_type == "turning_sidestep_right"
 
@@ -2418,7 +2397,7 @@ def test_stabilize_trajectory_headings_uses_forward_motion_per_step() -> None:
         ),
     ]
 
-    stabilized = pdr._stabilize_trajectory_headings(
+    stabilized = _stabilize_trajectory_headings(
         headings,
         forward_heading_source="motion",
     )
@@ -2456,7 +2435,7 @@ def test_stabilize_trajectory_headings_rejects_initial_forward_outlier() -> None
         motion_reject_reason=None,
     )
 
-    stabilized = pdr._stabilize_trajectory_headings(
+    stabilized = _stabilize_trajectory_headings(
         [heading],
         forward_heading_source="motion",
     )
@@ -2501,7 +2480,7 @@ def test_stabilize_trajectory_headings_limits_same_type_heading_jump() -> None:
         ),
     ]
 
-    stabilized = pdr._stabilize_trajectory_headings(
+    stabilized = _stabilize_trajectory_headings(
         headings,
         forward_heading_source="motion",
     )
@@ -2538,7 +2517,7 @@ def test_stabilize_trajectory_headings_can_use_forward_body_source() -> None:
         pdr.StepHeading(step_index=2, body_heading=np.deg2rad(100.0), **base),
     ]
 
-    stabilized = pdr._stabilize_trajectory_headings(
+    stabilized = _stabilize_trajectory_headings(
         headings,
         forward_heading_source="body",
     )
@@ -2586,7 +2565,7 @@ def test_stabilize_trajectory_headings_uses_sidestep_motion_with_constraint() ->
         ),
     ]
 
-    stabilized = pdr._stabilize_trajectory_headings(headings)
+    stabilized = _stabilize_trajectory_headings(headings)
 
     np.testing.assert_allclose(stabilized[0].selected_heading, np.deg2rad(-80.0))
     np.testing.assert_allclose(stabilized[1].selected_heading, np.deg2rad(-70.0))
@@ -2631,7 +2610,7 @@ def test_stabilize_trajectory_headings_falls_back_for_sidestep_motion_outlier() 
         ),
     ]
 
-    stabilized = pdr._stabilize_trajectory_headings(headings)
+    stabilized = _stabilize_trajectory_headings(headings)
 
     np.testing.assert_allclose(stabilized[0].selected_heading, np.deg2rad(-80.0))
     np.testing.assert_allclose(stabilized[1].selected_heading, np.deg2rad(-80.0))
@@ -2640,7 +2619,7 @@ def test_stabilize_trajectory_headings_falls_back_for_sidestep_motion_outlier() 
 
 def test_classify_movement_type_detects_turning_sidestep() -> None:
     assert (
-        pdr._classify_movement_type(
+        _classify_movement_type(
             forward_displacement=0.02,
             lateral_displacement=0.12,
             yaw_delta=np.deg2rad(35.0),
@@ -2649,7 +2628,7 @@ def test_classify_movement_type_detects_turning_sidestep() -> None:
         == "turning_sidestep_left"
     )
     assert (
-        pdr._classify_movement_type(
+        _classify_movement_type(
             forward_displacement=0.20,
             lateral_displacement=0.02,
             yaw_delta=np.deg2rad(35.0),
@@ -2688,7 +2667,7 @@ def test_stabilize_trajectory_headings_prefers_motion_for_turning_sidestep() -> 
         **base,
     )
 
-    stabilized = pdr._stabilize_trajectory_headings([heading])
+    stabilized = _stabilize_trajectory_headings([heading])
 
     np.testing.assert_allclose(stabilized[0].selected_heading, np.deg2rad(20.0))
     assert stabilized[0].source == "trajectory_turning_sidestep_motion"
@@ -2731,21 +2710,21 @@ def test_stabilize_trajectory_headings_loosens_turning_sidestep_limit() -> None:
         ),
     ]
 
-    stabilized = pdr._stabilize_trajectory_headings(headings)
+    stabilized = _stabilize_trajectory_headings(headings)
 
     np.testing.assert_allclose(stabilized[1].selected_heading, np.deg2rad(70.0))
     assert stabilized[1].source == "trajectory_turning_sidestep_motion"
 
 
 def test_sidestep_suspect_is_trajectory_sidestep_movement() -> None:
-    assert pdr._is_trajectory_sidestep_movement("sidestep_suspect_left")
-    assert pdr._is_trajectory_sidestep_movement("sidestep_suspect_right")
-    assert pdr._is_trajectory_sidestep_movement("turning_sidestep_left")
-    assert pdr._is_trajectory_sidestep_movement("turning_sidestep_right")
-    assert pdr._is_sidestep_suspect_movement("sidestep_suspect_left")
-    assert pdr._is_sidestep_suspect_movement("sidestep_suspect_right")
-    assert not pdr._is_sidestep_suspect_movement("sidestep_left")
-    assert not pdr._is_trajectory_sidestep_movement("forward")
+    assert _is_trajectory_sidestep_movement("sidestep_suspect_left")
+    assert _is_trajectory_sidestep_movement("sidestep_suspect_right")
+    assert _is_trajectory_sidestep_movement("turning_sidestep_left")
+    assert _is_trajectory_sidestep_movement("turning_sidestep_right")
+    assert _is_sidestep_suspect_movement("sidestep_suspect_left")
+    assert _is_sidestep_suspect_movement("sidestep_suspect_right")
+    assert not _is_sidestep_suspect_movement("sidestep_left")
+    assert not _is_trajectory_sidestep_movement("forward")
 
 
 def test_smooth_step_headings_clustered_suppresses_alternating_evidence() -> None:
@@ -2786,7 +2765,7 @@ def test_smooth_step_headings_clustered_suppresses_alternating_evidence() -> Non
         ),
     ]
 
-    smoothed = pdr._smooth_step_headings(headings, method="clustered")
+    smoothed = _smooth_step_headings(headings, method="clustered")
 
     assert [heading.trajectory_movement_type for heading in smoothed] == [
         "forward",
@@ -3194,31 +3173,6 @@ def test_normalize_floormap_gray_handles_float_and_uint8_images() -> None:
     np.testing.assert_allclose(
         _normalize_floormap_gray(image_float),
         _normalize_floormap_gray(image_uint8),
-    )
-
-
-def test_reconstruct_resampled_paths_traces_final_particle_ancestors() -> None:
-    position_history = [
-        np.array([[0.0, 0.0], [10.0, 0.0], [20.0, 0.0]]),
-        np.array([[1.0, 0.0], [11.0, 0.0], [21.0, 0.0]]),
-        np.array([[22.0, 0.0], [2.0, 0.0], [12.0, 0.0]]),
-    ]
-    resample_history = [
-        np.array([2, 0, 1]),
-        np.array([1, 1, 0]),
-    ]
-
-    paths = _reconstruct_resampled_paths(position_history, resample_history)
-
-    np.testing.assert_allclose(
-        paths,
-        np.array(
-            [
-                [[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]],
-                [[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]],
-                [[20.0, 0.0], [21.0, 0.0], [22.0, 0.0]],
-            ]
-        ),
     )
 
 
