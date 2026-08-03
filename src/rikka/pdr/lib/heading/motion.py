@@ -27,7 +27,6 @@ from ....common.lib.models import StepSegment
 from ....common.lib.pdr_math import (
     _normalize_angle,
     _score_ratio,
-    _validate_motion_heading_correction,
 )
 from ....common.lib.time_utils import (
     _sample_gyro_angle,
@@ -302,8 +301,7 @@ def _resolve_motion_heading_correction(
     device_orientation_mode: str = "normal",
 ) -> float:
     """指定モードに応じた水平加速度方位補正角を返す。"""
-    selected_method = _validate_motion_heading_correction(method)
-    if selected_method == "none":
+    if method == "none":
         return 0.0
     return _estimate_motion_heading_correction(
         df_acc,

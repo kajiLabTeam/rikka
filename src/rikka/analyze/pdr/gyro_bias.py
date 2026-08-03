@@ -16,7 +16,6 @@ from ...common.lib.gyro_bias_estimators import (
     _GyroBiasStaticCandidate,
     _robust_gyro_bias_from_mask,
     _time_mask,
-    _validate_gyro_bias_method,
 )
 
 __all__ = [
@@ -32,6 +31,5 @@ __all__ = [
     "_robust_gyro_bias_from_mask",
     "_startup_static_search_range",
     "_time_mask",
-    "_validate_gyro_bias_method",
     "estimate_gyro_bias",
 ]

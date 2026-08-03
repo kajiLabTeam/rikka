@@ -26,9 +26,6 @@ from ....common.lib.models import (
 )
 from ....common.lib.pdr_math import (
     _normalize_angle,
-    _validate_forward_heading_source,
-    _validate_sidestep_heading_source,
-    _validate_sidestep_suspect_mode,
 )
 
 _circular_mean_angles = circular_mean_angles
@@ -109,13 +106,12 @@ def _resolve_sidestep_heading(
     heading_source: str,
 ) -> float | None:
     """指定ソースに応じた横歩き軌跡方位を返す。"""
-    selected_heading_source = _validate_sidestep_heading_source(heading_source)
     motion_heading = _sidestep_motion_heading(step_heading)
     body_lateral_heading = _sidestep_body_lateral_heading(body_heading, movement_type)
 
-    if selected_heading_source == "motion":
+    if heading_source == "motion":
         return motion_heading if motion_heading is not None else body_lateral_heading
-    if selected_heading_source == "body_lateral":
+    if heading_source == "body_lateral":
         return (
             body_lateral_heading if body_lateral_heading is not None else motion_heading
         )
@@ -263,11 +259,6 @@ def estimate_step_motion(
     sidestep_suspect_mode: str = SIDESTEP_SUSPECT_MODE,
 ) -> StepMotion | None:
     """状態別に1歩の移動方位と歩幅を決める。"""
-    selected_forward_source = _validate_forward_heading_source(forward_heading_source)
-    selected_sidestep_source = _validate_sidestep_heading_source(
-        sidestep_heading_source
-    )
-    selected_suspect_mode = _validate_sidestep_suspect_mode(sidestep_suspect_mode)
     body_heading = (
         step_heading.body_heading
         if step_heading.body_heading is not None
@@ -291,9 +282,9 @@ def estimate_step_motion(
         body_heading,
         fallback_heading,
         previous_heading,
-        selected_forward_source,
-        selected_sidestep_source,
-        selected_suspect_mode,
+        forward_heading_source,
+        sidestep_heading_source,
+        sidestep_suspect_mode,
     )
 
     return StepMotion(

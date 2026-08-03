@@ -42,7 +42,6 @@ from .gyro_bias_estimators import (
     _GyroBiasStaticCandidate,
     _robust_gyro_bias_from_mask,
     _time_mask,
-    _validate_gyro_bias_method,
 )
 from .models import GyroBiasResult
 from .time_utils import _time_at_index, _time_values
@@ -238,8 +237,7 @@ def estimate_gyro_bias(
     # 加速度・ジャイロの両方を補正計算より先に検証する。
     _time_values(df_acc)
     _time_values(df_gyro)
-    selected_method = _validate_gyro_bias_method(method)
-    if selected_method == "zero":
+    if method == "zero":
         return GyroBiasResult(
             method="zero",
             bias_rad_s=0.0,
@@ -259,7 +257,7 @@ def estimate_gyro_bias(
             search_end_s=None,
             fallback_reason=None,
         )
-    if selected_method == "manual":
+    if method == "manual":
         if manual_bias is None:
             raise ValueError("gyro_bias_method='manual' では gyro_bias が必要です。")
         if not np.isfinite(manual_bias):
@@ -284,10 +282,10 @@ def estimate_gyro_bias(
             fallback_reason=None,
         )
 
-    if selected_method == "quietest":
+    if method == "quietest":
         return _estimate_gyro_bias_quietest(df_gyro)
 
-    if selected_method == "initial_robust":
+    if method == "initial_robust":
         result = _estimate_gyro_bias_initial_robust(df_gyro)
         return (
             result
@@ -298,7 +296,7 @@ def estimate_gyro_bias(
             )
         )
 
-    guarded = selected_method == "prewalk_guarded"
+    guarded = method == "prewalk_guarded"
     result = _estimate_gyro_bias_prewalk_robust(df_acc, df_gyro)
     if result is not None:
         return _guard_gyro_bias_result(result) if guarded else result

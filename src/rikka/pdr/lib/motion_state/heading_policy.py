@@ -26,8 +26,6 @@ from ....common.lib.pdr_math import (
     TRAJECTORY_HEADING_MAX_STEP_DELTA_RAD,
     TURNING_SIDESTEP_HEADING_MAX_STEP_DELTA_RAD,
     _normalize_angle,
-    _validate_forward_heading_source,
-    _validate_sidestep_heading_source,
 )
 from .step_motion import _sidestep_body_lateral_heading
 
@@ -219,12 +217,6 @@ def _stabilize_trajectory_headings(
     sidestep_heading_source: str = "motion",
 ) -> list[StepHeading]:
     """世界座標変換済み移動方位を制約付きで軌跡方位へ反映する。"""
-    selected_forward_heading_source = _validate_forward_heading_source(
-        forward_heading_source
-    )
-    selected_sidestep_heading_source = _validate_sidestep_heading_source(
-        sidestep_heading_source
-    )
     stabilized = list(step_headings)
     previous_heading: float | None = None
     previous_movement_type: str | None = None
@@ -235,8 +227,8 @@ def _stabilize_trajectory_headings(
             movement_type,
             previous_heading,
             previous_movement_type,
-            selected_forward_heading_source,
-            selected_sidestep_heading_source,
+            forward_heading_source,
+            sidestep_heading_source,
         )
         if selected_heading is not None:
             stabilized[index] = step_heading._replace(

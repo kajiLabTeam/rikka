@@ -10,7 +10,7 @@
     ``trajectory.prepare_pdr_steps`` と ``sensor_plot`` がステップ列を作るために使い、
     互換 facade から従来の ``detect_steps`` も公開される。
 処理フロー:
-    指定方式を検証し、候補イベントを抽出して近接重複や不正区間を除き、結果を返す。
+    検証済みの指定方式に応じて候補イベントを抽出し、近接重複や不正区間を除く。
 """
 
 import numpy as np
@@ -27,19 +27,6 @@ from ...common.config import (
     STEP_VERTICAL_THRESHOLD_PERCENTILE,
 )
 from ...common.lib.models import StepDetectionResult, StepSegment
-from ...common.lib.validation import (
-    STEP_DETECTION_METHODS as STEP_DETECTION_METHODS,
-)
-from ...common.lib.validation import validate_choice
-
-
-def _validate_step_detection_method(method: str) -> str:
-    """ステップ検出手法名を検証する。"""
-    return validate_choice(
-        "step_detection_method",
-        method,
-        STEP_DETECTION_METHODS,
-    )
 
 
 def _detect_steps_by_peak(df_acc: pd.DataFrame) -> StepDetectionResult:
@@ -181,9 +168,7 @@ def detect_step_result(
     method: str | None = None,
 ) -> StepDetectionResult:
     """指定方式でステップを検出し、互換ピーク列と区間情報を返す。"""
-    selected_method = _validate_step_detection_method(
-        STEP_DETECTION_METHOD if method is None else method
-    )
+    selected_method = STEP_DETECTION_METHOD if method is None else method
     if selected_method == "paper_vertical_threshold":
         return _detect_steps_by_vertical_threshold(df_acc)
     return _detect_steps_by_peak(df_acc)
