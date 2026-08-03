@@ -140,8 +140,7 @@ def _apply_checkpoint_replay(ctx: ParticleRuntime) -> None:
     if ctx.replay_depth > 1:
         ctx.parent_history.append(ctx.recovery.parent_indices.copy())
         ctx.parent_history.extend(
-            np.arange(ctx.n_particles, dtype=int)
-            for _ in range(ctx.replay_depth - 2)
+            np.arange(ctx.n_particles, dtype=int) for _ in range(ctx.replay_depth - 2)
         )
     ctx.heading_correction_history = ctx.heading_correction_history[
         : ctx.checkpoint_step + 1
@@ -187,9 +186,7 @@ def _apply_checkpoint_replay(ctx: ParticleRuntime) -> None:
         - (
             ctx.replay_result.replay_positions[-2]
             if ctx.replay_depth > 1
-            else ctx.position_history[ctx.checkpoint_step][
-                ctx.recovery.parent_indices
-            ]
+            else ctx.position_history[ctx.checkpoint_step][ctx.recovery.parent_indices]
         ),
         axis=1,
     )
@@ -243,9 +240,7 @@ def _apply_fallback_recovery(ctx: ParticleRuntime) -> bool:
     ctx.recovery_heading_delta_deg = recovery.heading_delta_deg
     ctx.recovery_step_scale = recovery.step_scale
     ctx.recovery_cost = recovery.mean_cost
-    ctx.recovery_candidate_branch_count = int(
-        np.unique(recovery.route_branch_ids).size
-    )
+    ctx.recovery_candidate_branch_count = int(np.unique(recovery.route_branch_ids).size)
     ctx.recovery_selected_branch_count = ctx.recovery_candidate_branch_count
     ctx.recovery_candidate_headings = recovery.candidate_headings
     ctx.recovery_candidate_valid = recovery.candidate_valid
