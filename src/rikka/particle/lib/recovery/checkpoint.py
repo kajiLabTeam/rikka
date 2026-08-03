@@ -172,8 +172,7 @@ def record_checkpoint_replay(ctx: ParticleRuntime) -> None:
                 ),
                 recovery_candidate_valid=(
                     ctx.recovery.candidate_valid.copy()
-                    if replay_offset == 0
-                    and ctx.recovery.candidate_valid is not None
+                    if replay_offset == 0 and ctx.recovery.candidate_valid is not None
                     else None
                 ),
                 recovery_selected_index=(
