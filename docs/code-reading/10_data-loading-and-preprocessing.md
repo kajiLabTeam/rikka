@@ -13,7 +13,7 @@ biasを推定し、補正角速度を積分して `angle` / `low_angle` を生�
 | 入力データ | `Accelerometer.csv`, `Gyroscope.csv` または2つのDataFrame |
 | 入力元 | CLI `-d` / Python API |
 | 出力データ | 標準列・解析列を追加した2つのDataFrame |
-| 出力先 | `prepare_pdr_steps_with_settings()`、`sensor` 描画 |
+| 出力先 | [`prepare_pdr_steps_with_settings()`](../../src/rikka/pdr/lib/preparation.py#L111)、`sensor` 描画 |
 | 主な型 | `pandas.DataFrame` |
 | 単位 | 時刻s、加速度m/s²、角速度rad/s、角度rad |
 | 座標系 | 入力XYZは端末座標、`v_acc`は重力軸、`h_*`は重力直交平面 |
@@ -40,10 +40,10 @@ biasを推定し、補正角速度を積分して `angle` / `low_angle` を生�
 
 | 関数・クラス | ファイル | 役割 | 入力 | 出力 | 呼び出し元 |
 |---|---|---|---|---|---|
-| `load_sensor_data` | `common/lib/sensors.py` | CSV読込・列統一 | path | 2 DataFrame | CLI / PDR |
-| `process_sensor_data` | 同上 | 信号分解・角度生成 | 2 DataFrame、bias設定 | 2 DataFrame | preparation |
-| `estimate_gyro_bias` | `common/lib/gyro_bias.py` | bias方式選択 | acc/gyro、方式 | `GyroBiasResult` | process |
-| `_gyro_integration_dt` | `common/lib/time_utils.py` | 積分刻み決定 | gyro DF | dt配列 | process |
+| [`load_sensor_data`](../../src/rikka/common/lib/sensors.py#L51) | `common/lib/sensors.py` | CSV読込・列統一 | path | 2 DataFrame | CLI / PDR |
+| [`process_sensor_data`](../../src/rikka/common/lib/sensors.py#L71) | 同上 | 信号分解・角度生成 | 2 DataFrame、bias設定 | 2 DataFrame | preparation |
+| [`estimate_gyro_bias`](../../src/rikka/common/lib/gyro_bias.py#L229) | `common/lib/gyro_bias.py` | bias方式選択 | acc/gyro、方式 | `GyroBiasResult` | process |
+| [`_gyro_integration_dt`](../../src/rikka/common/lib/time_utils.py#L40) | `common/lib/time_utils.py` | 積分刻み決定 | gyro DF | dt配列 | process |
 
 ## 6. 呼び出し関係
 
@@ -75,11 +75,11 @@ bias guard単独の効果とは断定しません。
 - ジャイロは `x` 軸をyawとして使う点
 - 0.003 rad/s guardとfallback理由
 - 100Hz fallbackは「`t` 列が無い場合」だけで、壊れた `t` 列は例外になること
-  （`common/lib/time_utils.py::_time_values`）
+  （[`common/lib/time_utils.py::_time_values`](../../src/rikka/common/lib/time_utils.py#L22)）
 
 ## 10. 関連ファイル
 
-- `src/rikka/common/lib/sensors.py`
-- `src/rikka/common/lib/gyro_bias.py`
-- `src/rikka/common/lib/gyro_bias_estimators.py`
-- `src/rikka/common/lib/time_utils.py`
+- [`src/rikka/common/lib/sensors.py`](../../src/rikka/common/lib/sensors.py)
+- [`src/rikka/common/lib/gyro_bias.py`](../../src/rikka/common/lib/gyro_bias.py)
+- [`src/rikka/common/lib/gyro_bias_estimators.py`](../../src/rikka/common/lib/gyro_bias_estimators.py)
+- [`src/rikka/common/lib/time_utils.py`](../../src/rikka/common/lib/time_utils.py)

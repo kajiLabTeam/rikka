@@ -2,11 +2,11 @@
 
 ## 表で使う記号
 
-`agent/EXPERIMENT_LOG.md` の表記に合わせています。
+[`agent/EXPERIMENT_LOG.md`](../../agent/EXPERIMENT_LOG.md) の表記に合わせています。
 
-- 「無印」= `input/sensor_data/natsuki/1turn_rightsidestep_3turn_leftsidestep`（末尾に数字なし）
+- 「無印」= [`input/sensor_data/natsuki/1turn_rightsidestep_3turn_leftsidestep`](../../input/sensor_data/natsuki/1turn_rightsidestep_3turn_leftsidestep)（末尾に数字なし）
 - 「5〜9」= 同じルートの反復計測 `...leftsidestep5` 〜 `...leftsidestep9`
-- 正解軌跡は `input/correct_path/1turn_rightsidestep_3turn_leftsidestep/` を共通で使用
+- 正解軌跡は [`input/correct_path/1turn_rightsidestep_3turn_leftsidestep/`](../../input/correct_path/1turn_rightsidestep_3turn_leftsidestep) を共通で使用
 
 ## 同一条件で比較できる結果
 

@@ -16,7 +16,7 @@ PFの各提案移動が通路内に収まるかをフロアマップ全画素で
 | 出力先 | PF重み・履歴・診断 |
 | 主な型 | `(N,2)` array、2D gray array、bool array |
 | 単位 | meter / pixel |
-| 座標系 | `compute_pixel_coords()` で画像座標へ変換 |
+| 座標系 | [`compute_pixel_coords()`](../../src/rikka/common/lib/floormap.py#L23) で画像座標へ変換 |
 
 ## 3. 処理の流れ
 
@@ -42,12 +42,12 @@ PFの各提案移動が通路内に収まるかをフロアマップ全画素で
 
 | 関数・クラス | ファイル | 役割 | 入力 | 出力 | 呼び出し元 |
 |---|---|---|---|---|---|
-| `_evaluate_particle_transitions` | `particle/lib/map_constraints.py` | 全粒子線分判定 | 前後位置/map | bool列 | propose/finalize |
-| `_segment_crosses_only_walkable_cells` | 同上 | 1線分supercover | pixel線分 | bool | 上記 |
-| `resolve_map_constraints` | `particle/lib/evaluate_map.py` | 復旧順制御 | runtime | runtime更新 | runner |
-| `_generate_recovery_candidates` | `recovery/local.py` | 局所候補生成 | 状態/map | recovery | apply |
-| `_replay_from_checkpoint` | `recovery/checkpoint.py` | 複数歩再生 | checkpoint/歩列 | replay result | apply |
-| `_select_reachable_cluster_path` | `path_selection.py` | current経路 | 履歴/map | path/mode/source | finalize |
+| [`_evaluate_particle_transitions`](../../src/rikka/particle/lib/map_constraints.py#L127) | `particle/lib/map_constraints.py` | 全粒子線分判定 | 前後位置/map | bool列 | propose/finalize |
+| [`_segment_crosses_only_walkable_cells`](../../src/rikka/particle/lib/map_constraints.py#L69) | 同上 | 1線分supercover | pixel線分 | bool | 上記 |
+| [`resolve_map_constraints`](../../src/rikka/particle/lib/evaluate_map.py#L98) | `particle/lib/evaluate_map.py` | 復旧順制御 | runtime | runtime更新 | runner |
+| [`_generate_recovery_candidates`](../../src/rikka/particle/lib/recovery/local.py#L72) | `recovery/local.py` | 局所候補生成 | 状態/map | recovery | apply |
+| [`_replay_from_checkpoint`](../../src/rikka/particle/lib/recovery/checkpoint.py#L191) | `recovery/checkpoint.py` | 複数歩再生 | checkpoint/歩列 | replay result | apply |
+| [`_select_reachable_cluster_path`](../../src/rikka/particle/lib/path_selection.py#L21) | `path_selection.py` | current経路 | 履歴/map | path/mode/source | finalize |
 
 ## 6. 呼び出し関係
 
@@ -68,7 +68,7 @@ flowchart TD
 - 全画素壁判定、ESS再標本化、recovery順: PF実行時に標準使用。
 - checkpoint replay: 条件成立時のみ使用。
 - branch preserving recovery: 実験機能、既定無効。
-- `_snap_trajectory_to_walkable_pixels`: 実装はあるが、現行PF主経路からの呼び出し元は見つかりません。
+- [`_snap_trajectory_to_walkable_pixels`](../../src/rikka/particle/lib/map_constraints.py#L170): 実装はあるが、現行PF主経路からの呼び出し元は見つかりません。
 
 ## 8. 精度・評価結果
 
@@ -87,7 +87,7 @@ flowchart TD
 
 ## 10. 関連ファイル
 
-- `src/rikka/particle/lib/map_constraints.py`
-- `src/rikka/particle/lib/evaluate_map.py`
-- `src/rikka/particle/lib/recovery/`
-- `src/rikka/particle/lib/path_selection.py`
+- [`src/rikka/particle/lib/map_constraints.py`](../../src/rikka/particle/lib/map_constraints.py)
+- [`src/rikka/particle/lib/evaluate_map.py`](../../src/rikka/particle/lib/evaluate_map.py)
+- [`src/rikka/particle/lib/recovery/`](../../src/rikka/particle/lib/recovery)
+- [`src/rikka/particle/lib/path_selection.py`](../../src/rikka/particle/lib/path_selection.py)

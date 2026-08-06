@@ -10,11 +10,11 @@
 
 | 項目 | 内容 |
 |---|---|
-| 入力データ | `StepHeading`、生歩幅、歩幅観測、motion evidence |
+| 入力データ | [`StepHeading`](../../src/rikka/common/lib/models.py#L49)、生歩幅、歩幅観測、motion evidence |
 | 入力元 | heading・step length処理 |
 | 出力データ | 確定heading/length、posterior、direction posterior |
-| 出力先 | `PreparedPdrSteps`、軌跡積分、PF |
-| 主な型 | `StepMotionEvidence`, `StepMotionPosterior` |
+| 出力先 | [`PreparedPdrSteps`](../../src/rikka/common/lib/models.py#L230)、軌跡積分、PF |
+| 主な型 | [`StepMotionEvidence`](../../src/rikka/common/lib/models.py#L123), [`StepMotionPosterior`](../../src/rikka/common/lib/models.py#L172) |
 | 単位 | 方位rad、歩幅m、確率0〜1 |
 | 座標系 | body方向、body左方向、世界方位を分離 |
 
@@ -23,7 +23,7 @@
 `refine_step_headings_with_motion_model()` は、区間復号と横歩きクラスタリングを
 「動的body heading推定」を挟んで2回実行します。
 
-1. `build_step_motion_observations()` が、端末yaw・身体方位候補・方向未確定の移動軸を
+1. [`build_step_motion_observations()`](../../src/rikka/pdr/lib/motion_state/evidence.py#L81) が、端末yaw・身体方位候補・方向未確定の移動軸を
    分離した観測列を作ります。
 2. semi-Markov decoderが観測列を forward / 左右横歩きの区間へ復号します（1回目）。
 3. 並行して既存のclusteringが、同方向の横歩きevidenceを最大1歩のgapを許してまとめます。
@@ -47,12 +47,12 @@
 
 | 関数・クラス | ファイル | 役割 | 入力 | 出力 | 呼び出し元 |
 |---|---|---|---|---|---|
-| `refine_step_headings_with_motion_model` | `motion_state/refinement.py` | 区間復号・body補正 | heading列 | heading列 | trajectory |
-| `smooth_step_headings` | `motion_state/clustering.py` | clustered/isolated/none | heading列 | heading列 | refinement内で2回、`motion_refinement=False` 時はtrajectoryから直接 |
-| `build_step_motion_evidences` | `motion_state/evidence.py` | 4状態尤度 | heading列 | evidence列 | preparation |
-| `estimate_adaptive_pdr` | `fusion/adaptive.py` | 標準確率推定 | heading/length/evidence | result | protocol |
-| `resolve_step_directions` | `fusion/robust.py` | 2方向Viterbi | heading/observation | 方位列 | protocol |
-| `MOTION_ESTIMATORS` | `fusion/protocol.py` | 方式レジストリ | 設定名 | callable | preparation |
+| [`refine_step_headings_with_motion_model`](../../src/rikka/pdr/lib/motion_state/refinement.py#L170) | `motion_state/refinement.py` | 区間復号・body補正 | heading列 | heading列 | trajectory |
+| [`smooth_step_headings`](../../src/rikka/pdr/lib/motion_state/clustering.py#L385) | `motion_state/clustering.py` | clustered/isolated/none | heading列 | heading列 | refinement内で2回、`motion_refinement=False` 時はtrajectoryから直接 |
+| [`build_step_motion_evidences`](../../src/rikka/pdr/lib/motion_state/evidence.py#L123) | `motion_state/evidence.py` | 4状態尤度 | heading列 | evidence列 | preparation |
+| [`estimate_adaptive_pdr`](../../src/rikka/pdr/lib/fusion/adaptive.py#L288) | `fusion/adaptive.py` | 標準確率推定 | heading/length/evidence | result | protocol |
+| [`resolve_step_directions`](../../src/rikka/pdr/lib/fusion/robust.py#L257) | `fusion/robust.py` | 2方向Viterbi | heading/observation | 方位列 | protocol |
+| [`MOTION_ESTIMATORS`](../../src/rikka/pdr/lib/fusion/protocol.py#L117) | `fusion/protocol.py` | 方式レジストリ | 設定名 | callable | preparation |
 
 ## 6. 呼び出し関係
 
@@ -99,6 +99,6 @@ robustは最大値を改善しましたが中央値を悪化させたため標�
 
 ## 10. 関連ファイル
 
-- `src/rikka/pdr/lib/motion_state/`
-- `src/rikka/pdr/lib/fusion/`
-- `src/rikka/pdr/lib/preparation.py`
+- [`src/rikka/pdr/lib/motion_state/`](../../src/rikka/pdr/lib/motion_state)
+- [`src/rikka/pdr/lib/fusion/`](../../src/rikka/pdr/lib/fusion)
+- [`src/rikka/pdr/lib/preparation.py`](../../src/rikka/pdr/lib/preparation.py)
