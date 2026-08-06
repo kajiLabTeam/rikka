@@ -11,7 +11,7 @@
 | 項目 | 内容 |
 |---|---|
 | 入力データ | センサーCSV、正解XY CSV、map、方式、seed |
-| 入力元 | `input/` とCLI引数 |
+| 入力元 | [`input/`](../../input) とCLI引数 |
 | 出力データ | JSON/CSV、任意比較PNG、候補軌跡 |
 | 出力先 | stdout、指定path、diagnostics |
 | 主な型 | NumPy、Pandas、dict |
@@ -40,11 +40,11 @@
 
 | 関数・クラス | ファイル | 役割 | 入力 | 出力 | 呼び出し元 |
 |---|---|---|---|---|---|
-| `_trajectory_metrics` | `agent_benchmark_pdr_pf_methods.py` | 横断指標 | trajectory/truth | dict | main |
+| [`_trajectory_metrics`](../../agent/agent_benchmark_pdr_pf_methods.py#L198) | `agent_benchmark_pdr_pf_methods.py` | 横断指標 | trajectory/truth | dict | main |
 | `_sample_by_arclength` | 各評価script | 300点補間 | XY | XY | metrics |
-| `evaluate_terminal_direction` | `common/lib/trajectory_direction.py` | 終端方向指標 | 2軌跡 | metrics | agent scripts |
-| `_evaluate_pf` | benchmark script | PF実行・安全性 | prepared/seed | row | main |
-| `_select_medoid` | `agent_build_consensus_trajectory.py` | 代表候補 | 候補群 | index | main |
+| [`evaluate_terminal_direction`](../../src/rikka/common/lib/trajectory_direction.py#L80) | `common/lib/trajectory_direction.py` | 終端方向指標 | 2軌跡 | metrics | agent scripts |
+| [`_evaluate_pf`](../../agent/agent_benchmark_pdr_pf_methods.py#L302) | benchmark script | PF実行・安全性 | prepared/seed | row | main |
+| [`_select_medoid`](../../agent/agent_build_consensus_trajectory.py#L162) | `agent_build_consensus_trajectory.py` | 代表候補 | 候補群 | index | main |
 
 ## 6. 呼び出し関係
 
@@ -65,9 +65,9 @@ flowchart LR
 ## 7. 現在の利用状態
 
 - 評価処理は通常CLIから自動実行されず、`agent/agent_*.py` の明示実行です。
-- `agent_benchmark_pdr_pf_methods.py`: PDR/PF・複数記録・複数seed横断。
-- `agent_evaluate_pf_ground_truth.py`: 1記録のPF複数seed。
-- `agent_evaluate_adaptive_pdr.py`: PDR方式比較。
+- [`agent_benchmark_pdr_pf_methods.py`](../../agent/agent_benchmark_pdr_pf_methods.py): PDR/PF・複数記録・複数seed横断。
+- [`agent_evaluate_pf_ground_truth.py`](../../agent/agent_evaluate_pf_ground_truth.py): 1記録のPF複数seed。
+- [`agent_evaluate_adaptive_pdr.py`](../../agent/agent_evaluate_adaptive_pdr.py): PDR方式比較。
 - consensus/heading reversal scripts: 候補群診断・代表選択。
 
 ## 8. 精度・評価結果
@@ -86,8 +86,8 @@ flowchart LR
 
 ## 10. 関連ファイル
 
-- `agent/agent_benchmark_pdr_pf_methods.py`
-- `agent/agent_evaluate_pf_ground_truth.py`
-- `agent/agent_evaluate_adaptive_pdr.py`
-- `src/rikka/common/lib/trajectory_direction.py`
-- `agent/EXPERIMENT_LOG.md`
+- [`agent/agent_benchmark_pdr_pf_methods.py`](../../agent/agent_benchmark_pdr_pf_methods.py)
+- [`agent/agent_evaluate_pf_ground_truth.py`](../../agent/agent_evaluate_pf_ground_truth.py)
+- [`agent/agent_evaluate_adaptive_pdr.py`](../../agent/agent_evaluate_adaptive_pdr.py)
+- [`src/rikka/common/lib/trajectory_direction.py`](../../src/rikka/common/lib/trajectory_direction.py)
+- [`agent/EXPERIMENT_LOG.md`](../../agent/EXPERIMENT_LOG.md)

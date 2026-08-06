@@ -57,22 +57,22 @@ sequenceDiagram
 
 ## 初期化とデータ読み込み
 
-1. `rikka.__init__.main()` が Matplotlib cache を設定して Click を起動します。
-2. `cli.options._common_options()` が共通引数を用意します。
+1. [`rikka.__init__.main()`](../../src/rikka/__init__.py#L14) が Matplotlib cache を設定して Click を起動します。
+2. [`cli.options._common_options()`](../../src/rikka/cli/options.py#L172) が共通引数を用意します。
 3. `run` / `particle` は `common.lib.sensors.load_sensor_data(data_dir)` を呼びます。
-4. `cli.commands.run()` が不変設定 dataclass を構築し、PF時はフロアマップと原点を先に検証します。
+4. [`cli.commands.run()`](../../src/rikka/cli/commands.py#L81) が不変設定 dataclass を構築し、PF時はフロアマップと原点を先に検証します。
 5. Python API で DataFrame を渡す場合は、加速度・ジャイロを両方渡す必要があります。
 
 ## メイン処理
 
 | 段階 | ファイル・関数 | 出力 |
 |---|---|---|
-| PDR入口 | `pdr/pipeline.py::run_pdr()` | `TrajectoryResult` |
-| 共有歩列 | `pdr/lib/preparation.py::prepare_pdr_steps_with_settings()` | `PreparedPdrSteps` |
-| PF入口 | `particle/pipeline.py::run_particle()` | PF付き `TrajectoryResult` |
-| PF低水準 | `particle/lib/runner.py::run_particle_steps()` | 軌跡、歩幅、時刻、全粒子、方位 |
-| CSV保存 | `plot/pipeline.py::write_outputs()` | 共通・方式固有CSV |
-| 図・動画 | `plot/pipeline.py::render()` | PNG、MP4またはGIF |
+| PDR入口 | [`pdr/pipeline.py::run_pdr()`](../../src/rikka/pdr/pipeline.py#L21) | [`TrajectoryResult`](../../src/rikka/common/lib/models.py#L280) |
+| 共有歩列 | [`pdr/lib/preparation.py::prepare_pdr_steps_with_settings()`](../../src/rikka/pdr/lib/preparation.py#L111) | [`PreparedPdrSteps`](../../src/rikka/common/lib/models.py#L230) |
+| PF入口 | [`particle/pipeline.py::run_particle()`](../../src/rikka/particle/pipeline.py#L28) | PF付き `TrajectoryResult` |
+| PF低水準 | [`particle/lib/runner.py::run_particle_steps()`](../../src/rikka/particle/lib/runner.py#L74) | 軌跡、歩幅、時刻、全粒子、方位 |
+| CSV保存 | [`plot/pipeline.py::write_outputs()`](../../src/rikka/plot/pipeline.py#L51) | 共通・方式固有CSV |
+| 図・動画 | [`plot/pipeline.py::render()`](../../src/rikka/plot/pipeline.py#L128) | PNG、MP4またはGIF |
 
 ## CLIで切り替える主な実験条件
 
@@ -87,6 +87,6 @@ sequenceDiagram
 
 ## 評価との接続
 
-CLI本体は正解軌跡を読みません。`agent/agent_evaluate_adaptive_pdr.py`、
-`agent_evaluate_pf_ground_truth.py`、`agent_benchmark_pdr_pf_methods.py` が、同じ
+CLI本体は正解軌跡を読みません。[`agent/agent_evaluate_adaptive_pdr.py`](../../agent/agent_evaluate_adaptive_pdr.py)、
+[`agent_evaluate_pf_ground_truth.py`](../../agent/agent_evaluate_pf_ground_truth.py)、[`agent_benchmark_pdr_pf_methods.py`](../../agent/agent_benchmark_pdr_pf_methods.py) が、同じ
 低水準関数を呼び、正解点列との正規化弧長比較を行います。

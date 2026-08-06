@@ -2,8 +2,8 @@
 
 ## 1. この処理の役割
 
-推定領域から受け取った `TrajectoryResult` をCSV、静止画、動画へ変換します。推定本体は
-保存処理を呼ばず、`cli.commands.run()` が `plot.pipeline` へ結果を渡す構造です。
+推定領域から受け取った [`TrajectoryResult`](../../src/rikka/common/lib/models.py#L280) をCSV、静止画、動画へ変換します。推定本体は
+保存処理を呼ばず、[`cli.commands.run()`](../../src/rikka/cli/commands.py#L81) が [`plot.pipeline`](../../src/rikka/plot/pipeline.py) へ結果を渡す構造です。
 通常PDRとPFの共通成果物を一か所で管理します。
 
 ## 2. 入力と出力
@@ -11,7 +11,7 @@
 | 項目 | 内容 |
 |---|---|
 | 入力データ | `TrajectoryResult` と3種のsettings |
-| 入力元 | `cli.commands.run()` |
+| 入力元 | [`cli.commands.run()`](../../src/rikka/cli/commands.py#L81) |
 | 出力データ | CSV、PNG、MP4/GIF、console summary |
 | 出力先 | `output/<timestamp>/`、sensor図のみ入力dir |
 | 主な型 | DataFrame、Matplotlib figure、NumPy |
@@ -20,7 +20,7 @@
 
 ## 3. 処理の流れ
 
-1. `_create_output_dir()` がmicrosecond付き時刻dirを作ります。
+1. [`_create_output_dir()`](../../src/rikka/plot/lib/outputs.py#L33) がmicrosecond付き時刻dirを作ります。
 2. `write_outputs()` が共通CSVを常に保存します。
 3. adaptive/robust/PF時だけ対応診断CSVを追加します。
 4. `plot=True` なら軌跡、歩幅、歩ベクトル図を保存・表示します。
@@ -41,12 +41,12 @@
 
 | 関数・クラス | ファイル | 役割 | 入力 | 出力 | 呼び出し元 |
 |---|---|---|---|---|---|
-| `create_output_dir` | `plot/pipeline.py` | 保存先作成 | なし | Path | CLI |
-| `write_outputs` | 同上 | CSV一式 | result/path | DataFrame | CLI |
-| `render` | 同上 | 図・PF成果物分岐 | result/settings | なし | CLI |
-| `_build_step_headings_dataframe` | `plot/lib/outputs.py` | heading診断表 | StepHeading列 | DataFrame | write |
-| `save_particle_animation` | `plot/lib/animation.py` | MP4/GIF | 粒子履歴 | file | render |
-| `save_particle_step_frames` | `plot/lib/frames.py` | 段階別画像 | stage/diagnostics | paths | render |
+| [`create_output_dir`](../../src/rikka/plot/pipeline.py#L46) | `plot/pipeline.py` | 保存先作成 | なし | Path | CLI |
+| [`write_outputs`](../../src/rikka/plot/pipeline.py#L51) | 同上 | CSV一式 | result/path | DataFrame | CLI |
+| [`render`](../../src/rikka/plot/pipeline.py#L128) | 同上 | 図・PF成果物分岐 | result/settings | なし | CLI |
+| [`_build_step_headings_dataframe`](../../src/rikka/plot/lib/outputs.py#L226) | `plot/lib/outputs.py` | heading診断表 | StepHeading列 | DataFrame | write |
+| [`save_particle_animation`](../../src/rikka/plot/lib/animation.py#L93) | `plot/lib/animation.py` | MP4/GIF | 粒子履歴 | file | render |
+| [`save_particle_step_frames`](../../src/rikka/plot/lib/frames.py#L421) | `plot/lib/frames.py` | 段階別画像 | stage/diagnostics | paths | render |
 
 ## 6. 呼び出し関係
 
@@ -84,8 +84,8 @@ flowchart LR
 
 ## 10. 関連ファイル
 
-- `src/rikka/plot/pipeline.py`
-- `src/rikka/plot/lib/outputs.py`
-- `src/rikka/plot/lib/animation.py`
-- `src/rikka/plot/lib/frames.py`
-- `src/rikka/plot/lib/sensor.py`
+- [`src/rikka/plot/pipeline.py`](../../src/rikka/plot/pipeline.py)
+- [`src/rikka/plot/lib/outputs.py`](../../src/rikka/plot/lib/outputs.py)
+- [`src/rikka/plot/lib/animation.py`](../../src/rikka/plot/lib/animation.py)
+- [`src/rikka/plot/lib/frames.py`](../../src/rikka/plot/lib/frames.py)
+- [`src/rikka/plot/lib/sensor.py`](../../src/rikka/plot/lib/sensor.py)

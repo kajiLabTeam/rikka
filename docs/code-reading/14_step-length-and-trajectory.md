@@ -13,7 +13,7 @@
 | 入力データ | `v_acc`、水平加速度、歩ピーク、確定heading |
 | 入力元 | 前処理・歩検出・motion fusion |
 | 出力データ | 歩幅m、時刻s、`[[x,y],...]` |
-| 出力先 | `PreparedPdrSteps`、PF、plot |
+| 出力先 | [`PreparedPdrSteps`](../../src/rikka/common/lib/models.py#L230)、PF、plot |
 | 主な型 | list[float]、list[list[float]] |
 | 単位 | m、s、rad |
 | 座標系 | 原点開始、0rad=+X、反時計回り正 |
@@ -23,7 +23,7 @@
 1. 身長からWeinberg係数 `K` を計算します。
 2. 各ピーク±50sampleの `v_acc` 最大―最小からnominal歩幅を作ります。
 3. 横歩き・旋回などの状態別倍率を反映します。
-4. `StepLengthObservation` が接地区間ベースの候補、品質、不確かさを作ります。
+4. [`StepLengthObservation`](../../src/rikka/common/lib/models.py#L158) が接地区間ベースの候補、品質、不確かさを作ります。
 5. adaptiveは状態別log scaleを更新し、posterior平均歩幅を確定します。
 6. `integrate_steps()` が各歩をXYへ加算します。
 
@@ -40,11 +40,11 @@
 
 | 関数・クラス | ファイル | 役割 | 入力 | 出力 | 呼び出し元 |
 |---|---|---|---|---|---|
-| `estimate_step_length` | `pdr/lib/step_length.py` | Weinberg歩幅 | acc/peak/K | m | trajectory |
-| `estimate_step_length_forward` | 同上 | 射影積分歩幅 | acc/gyro/歩 | m | trajectory |
-| `build_step_length_observation` | 同上 | 品質・不確かさ | 1歩区間 | observation | preparation |
-| `estimate_step_motion` | `motion_state/step_motion.py` | 状態別方位・倍率 | heading/length | `StepMotion` | trajectory |
-| `integrate_steps` | `pdr/lib/integrate.py` | XY積分 | heading/length列 | 軌跡 | preparation |
+| [`estimate_step_length`](../../src/rikka/pdr/lib/step_length.py#L60) | `pdr/lib/step_length.py` | Weinberg歩幅 | acc/peak/K | m | trajectory |
+| [`estimate_step_length_forward`](../../src/rikka/pdr/lib/step_length.py#L199) | 同上 | 射影積分歩幅 | acc/gyro/歩 | m | trajectory |
+| [`build_step_length_observation`](../../src/rikka/pdr/lib/step_length.py#L79) | 同上 | 品質・不確かさ | 1歩区間 | observation | preparation |
+| [`estimate_step_motion`](../../src/rikka/pdr/lib/motion_state/step_motion.py#L253) | `motion_state/step_motion.py` | 状態別方位・倍率 | heading/length | `StepMotion` | trajectory |
+| [`integrate_steps`](../../src/rikka/pdr/lib/integrate.py#L18) | `pdr/lib/integrate.py` | XY積分 | heading/length列 | 軌跡 | preparation |
 
 ## 6. 呼び出し関係
 
@@ -82,7 +82,7 @@ EXP-016では横歩き倍率1.0→0.8で5つの通常PDR RMSEがすべて改善�
 
 ## 10. 関連ファイル
 
-- `src/rikka/pdr/lib/step_length.py`
-- `src/rikka/pdr/lib/motion_state/step_motion.py`
-- `src/rikka/pdr/lib/integrate.py`
-- `src/rikka/pdr/lib/fusion/adaptive.py`
+- [`src/rikka/pdr/lib/step_length.py`](../../src/rikka/pdr/lib/step_length.py)
+- [`src/rikka/pdr/lib/motion_state/step_motion.py`](../../src/rikka/pdr/lib/motion_state/step_motion.py)
+- [`src/rikka/pdr/lib/integrate.py`](../../src/rikka/pdr/lib/integrate.py)
+- [`src/rikka/pdr/lib/fusion/adaptive.py`](../../src/rikka/pdr/lib/fusion/adaptive.py)

@@ -11,8 +11,8 @@
 | 項目 | 内容 |
 |---|---|
 | 入力データ | 前処理acc/gyro、歩ピーク/区間、初期方向 |
-| 入力元 | `prepare_trajectory_steps()` |
-| 出力データ | 生の `StepHeading` 列 |
+| 入力元 | [`prepare_trajectory_steps()`](../../src/rikka/pdr/lib/trajectory.py#L164) |
+| 出力データ | 生の [`StepHeading`](../../src/rikka/common/lib/models.py#L49) 列 |
 | 出力先 | motion refinement、fusion、PF |
 | 主な型 | DataFrame、`StepHeading` |
 | 単位 | 角度rad、初期方向CLIのみdeg、変位m相当 |
@@ -42,11 +42,11 @@
 
 | 関数・クラス | ファイル | 役割 | 入力 | 出力 | 呼び出し元 |
 |---|---|---|---|---|---|
-| `resolve_step_heading` | `pdr/lib/heading/resolver.py` | 候補統合 | acc/gyro/歩 | `StepHeading` | trajectory |
-| `_estimate_motion_heading_from_horizontal_accel` | `heading/motion.py` | 移動方位・変位 | 1歩信号 | motion result | resolver |
-| `_estimate_accel_headings` | `heading/accel.py` | 2つの加速度候補 | 1歩信号 | accel result | resolver |
-| `estimate_device_orientation_mode` | `heading/device_orientation.py` | 端末軸向き選択 | 初期歩 | mode文字列 | trajectory |
-| `resolve_motion_heading_correction` | `heading/motion.py` | 固定ずれ補正 | 初期歩 | rad | trajectory |
+| [`resolve_step_heading`](../../src/rikka/pdr/lib/heading/resolver.py#L109) | `pdr/lib/heading/resolver.py` | 候補統合 | acc/gyro/歩 | `StepHeading` | trajectory |
+| [`_estimate_motion_heading_from_horizontal_accel`](../../src/rikka/pdr/lib/heading/motion.py#L175) | `heading/motion.py` | 移動方位・変位 | 1歩信号 | motion result | resolver |
+| [`_estimate_accel_headings`](../../src/rikka/pdr/lib/heading/accel.py#L81) | `heading/accel.py` | 2つの加速度候補 | 1歩信号 | accel result | resolver |
+| [`estimate_device_orientation_mode`](../../src/rikka/pdr/lib/heading/device_orientation.py#L166) | `heading/device_orientation.py` | 端末軸向き選択 | 初期歩 | mode文字列 | trajectory |
+| [`resolve_motion_heading_correction`](../../src/rikka/pdr/lib/heading/motion.py#L321) | `heading/motion.py` | 固定ずれ補正 | 初期歩 | rad | trajectory |
 
 ## 6. 呼び出し関係
 
@@ -85,7 +85,7 @@ flowchart TD
 
 ## 10. 関連ファイル
 
-- `src/rikka/pdr/lib/heading/resolver.py`
-- `src/rikka/pdr/lib/heading/motion.py`
-- `src/rikka/pdr/lib/heading/accel.py`
-- `src/rikka/pdr/lib/heading/device_orientation.py`
+- [`src/rikka/pdr/lib/heading/resolver.py`](../../src/rikka/pdr/lib/heading/resolver.py)
+- [`src/rikka/pdr/lib/heading/motion.py`](../../src/rikka/pdr/lib/heading/motion.py)
+- [`src/rikka/pdr/lib/heading/accel.py`](../../src/rikka/pdr/lib/heading/accel.py)
+- [`src/rikka/pdr/lib/heading/device_orientation.py`](../../src/rikka/pdr/lib/heading/device_orientation.py)

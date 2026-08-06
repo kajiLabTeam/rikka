@@ -4,14 +4,14 @@
 
 通常PDRで準備済みの歩列を粒子ごとに揺らし、フロアマップと運動状態尤度で重み付け
 して地図上の代表軌跡を作ります。PDRのheading・歩幅を再推定せず、
-`PreparedPdrSteps` を入力境界とします。
+[`PreparedPdrSteps`](../../src/rikka/common/lib/models.py#L230) を入力境界とします。
 
 ## 2. 入力と出力
 
 | 項目 | 内容 |
 |---|---|
 | 入力データ | prepared heading/length/time/evidence/posterior、FloorMap |
-| 入力元 | `particle.pipeline.run_particle()` |
+| 入力元 | [`particle.pipeline.run_particle()`](../../src/rikka/particle/pipeline.py#L28) |
 | 出力データ | 代表軌跡、全粒子履歴、診断、任意stage/path比較 |
 | 出力先 | `TrajectoryResult.particle`、plot |
 | 主な型 | `ParticleRuntime`, NumPy配列 |
@@ -43,12 +43,12 @@
 
 | 関数・クラス | ファイル | 役割 | 入力 | 出力 | 呼び出し元 |
 |---|---|---|---|---|---|
-| `run_particle` | `particle/pipeline.py` | 共有型adapter | prepared/map/settings | result | CLI |
-| `run_particle_steps` | `particle/lib/runner.py` | PFループ | 42個の位置引数 | 低水準tuple | pipeline |
-| `ParticleRuntime` | `particle/lib/state.py` | 型付き実行状態 | 設定/歩列 | mutable context | runner |
-| `propose` | `particle/lib/propose.py` | 状態・位置提案と重み | runtime | runtime更新 | runner |
-| `resolve_map_constraints` | `particle/lib/evaluate_map.py` | 復旧/再標本化 | runtime | runtime更新 | runner |
-| `finalize` | `particle/lib/finalize.py` | 代表経路選択 | 履歴 | 最終tuple | runner |
+| [`run_particle`](../../src/rikka/particle/pipeline.py#L28) | `particle/pipeline.py` | 共有型adapter | prepared/map/settings | result | CLI |
+| [`run_particle_steps`](../../src/rikka/particle/lib/runner.py#L74) | `particle/lib/runner.py` | PFループ | 42個の位置引数 | 低水準tuple | pipeline |
+| [`ParticleRuntime`](../../src/rikka/particle/lib/state.py#L36) | `particle/lib/state.py` | 型付き実行状態 | 設定/歩列 | mutable context | runner |
+| [`propose`](../../src/rikka/particle/lib/propose.py#L36) | `particle/lib/propose.py` | 状態・位置提案と重み | runtime | runtime更新 | runner |
+| [`resolve_map_constraints`](../../src/rikka/particle/lib/evaluate_map.py#L98) | `particle/lib/evaluate_map.py` | 復旧/再標本化 | runtime | runtime更新 | runner |
+| [`finalize`](../../src/rikka/particle/lib/finalize.py#L30) | `particle/lib/finalize.py` | 代表経路選択 | 履歴 | 最終tuple | runner |
 
 ## 6. 呼び出し関係
 
@@ -92,8 +92,8 @@ recovery failure 0、終端方向failure 0でした。EXP-029以降の無印デ�
 
 ## 10. 関連ファイル
 
-- `src/rikka/particle/pipeline.py`
-- `src/rikka/particle/lib/runner.py`
-- `src/rikka/particle/lib/state.py`
-- `src/rikka/particle/lib/propose.py`
-- `src/rikka/particle/lib/finalize.py`
+- [`src/rikka/particle/pipeline.py`](../../src/rikka/particle/pipeline.py)
+- [`src/rikka/particle/lib/runner.py`](../../src/rikka/particle/lib/runner.py)
+- [`src/rikka/particle/lib/state.py`](../../src/rikka/particle/lib/state.py)
+- [`src/rikka/particle/lib/propose.py`](../../src/rikka/particle/lib/propose.py)
+- [`src/rikka/particle/lib/finalize.py`](../../src/rikka/particle/lib/finalize.py)
