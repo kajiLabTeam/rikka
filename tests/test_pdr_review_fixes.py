@@ -5,15 +5,21 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from rikka.analyze.pdr import adaptive_estimator, heading, step_length
-from rikka.analyze.pdr.adaptive_estimator import estimate_adaptive_pdr
-from rikka.analyze.pdr.direction_resolver import resolve_step_directions
-from rikka.analyze.pdr.models import (
+from rikka.common.lib.models import (
     StepHeading,
     StepLengthObservation,
     StepMotionEvidence,
     StepMotionObservation,
 )
+from rikka.pdr.lib.fusion import adaptive as adaptive_estimator
+from rikka.pdr.lib.fusion.adaptive import estimate_adaptive_pdr
+from rikka.pdr.lib.fusion.robust import resolve_step_directions
+from rikka.pdr.lib.heading import motion as heading_motion
+from rikka.pdr.lib.heading.device_orientation import (
+    _estimate_device_orientation_mode,
+)
+from rikka.pdr.lib.heading.motion import _MotionHeadingResult
+from rikka.pdr.lib.step_length import estimate_step_length_forward
 
 
 def _step_heading(
@@ -203,7 +209,7 @@ def test_device_orientation_keeps_default_when_initial_motion_is_lateral(
 
     def lateral_result(*_args, device_orientation_mode="normal", **_kwargs):
         is_rotated = device_orientation_mode == "rotated_180"
-        return heading._MotionHeadingResult(
+        return _MotionHeadingResult(
             body_heading=0.0,
             motion_heading=0.0 if is_rotated else np.pi / 2.0,
             movement_type="sidestep_left",
@@ -215,12 +221,12 @@ def test_device_orientation_keeps_default_when_initial_motion_is_lateral(
         )
 
     monkeypatch.setattr(
-        heading,
+        heading_motion,
         "_estimate_motion_heading_from_horizontal_accel",
         lateral_result,
     )
 
-    mode = heading._estimate_device_orientation_mode(
+    mode = _estimate_device_orientation_mode(
         df_acc,
         df_gyro,
         np.asarray([10, 40, 70]),
@@ -250,14 +256,14 @@ def test_forward_step_length_uses_sensor_timestamps() -> None:
     normal_acc, normal_gyro = frames(0.01)
     slow_acc, slow_gyro = frames(0.02)
     peaks = np.asarray([0, 40])
-    normal = step_length.estimate_step_length_forward(
+    normal = estimate_step_length_forward(
         normal_acc,
         normal_gyro,
         peaks,
         0,
         0.0,
     )
-    slow = step_length.estimate_step_length_forward(
+    slow = estimate_step_length_forward(
         slow_acc,
         slow_gyro,
         peaks,
