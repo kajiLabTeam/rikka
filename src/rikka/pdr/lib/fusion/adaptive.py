@@ -1,0 +1,390 @@
+"""運動状態・方位・歩幅を同時に逐次推定する適応PDR。
+
+役割:
+    1歩ごとの運動状態を確率分布として保持し、端末方位の変化を移動方位へ直接
+    混入させず、歩幅の局所変化と不確かさを逐次推定する。
+依存元:
+    ``models`` から方位・歩幅観測・事後分布型、``config`` から横歩きの既定倍率を
+    取得し、NumPy で角度分布と小規模なベイズ更新を計算する。
+利用先:
+    ``trajectory.prepare_pdr_steps`` が adaptive モードの通常PDRを生成し、同じ
+    事後分布を ``particle_filter`` が地図制約付き推定に利用する。
+処理フロー:
+    運動状態の遷移予測、センサー尤度と方位連続性による更新、状態別歩幅倍率の
+    更新、方位・歩幅の混合分布生成を各歩で行い、offline 指定時は状態列を後向きに
+    平滑化する。
+"""
+
+from __future__ import annotations
+
+import numpy as np
+
+from ....common.lib.models import (
+    AdaptivePdrResult,
+    AdaptivePdrState,
+    StepHeading,
+    StepLengthObservation,
+    StepMotionEvidence,
+    StepMotionPosterior,
+)
+from .adaptive_math import (
+    _body_heading,
+    _circular_std,
+    _initial_state,
+    _kalman_update,
+    _length_moments,
+    _mode_heading_candidates,
+    _normalize_angle,
+)
+
+_MODE_NAMES = ("forward", "sidestep_left", "sidestep_right", "turning")
+_TRANSITION = np.asarray(
+    [
+        [0.91, 0.035, 0.035, 0.02],
+        [0.08, 0.86, 0.01, 0.05],
+        [0.08, 0.01, 0.86, 0.05],
+        [0.20, 0.04, 0.04, 0.72],
+    ],
+    dtype=float,
+)
+
+
+def _adaptive_mode_probabilities(
+    previous: AdaptivePdrState,
+    step_heading: StepHeading,
+    evidence: StepMotionEvidence,
+    candidates: np.ndarray,
+) -> np.ndarray:
+    """遷移事前分布、観測尤度、方位連続性から状態確率を更新する。"""
+    prior = np.asarray(previous.mode_probabilities) @ _TRANSITION
+    likelihood = np.asarray(
+        [
+            evidence.forward_likelihood,
+            evidence.sidestep_left_likelihood,
+            evidence.sidestep_right_likelihood,
+            evidence.turning_likelihood,
+        ],
+        dtype=float,
+    )
+    if previous.heading_mean is None:
+        continuity = np.ones(4, dtype=float)
+    else:
+        expected_yaw = float(step_heading.yaw_delta or 0.0)
+        residuals = np.asarray(
+            [
+                _normalize_angle(value - previous.heading_mean - expected_yaw)
+                for value in candidates
+            ]
+        )
+        sigmas = np.deg2rad(np.asarray([24.0, 34.0, 34.0, 70.0]))
+        continuity = np.exp(-0.5 * np.square(residuals / sigmas)) + 1e-4
+    probabilities = prior * np.maximum(likelihood, 1e-4) * continuity
+    probabilities /= probabilities.sum()
+    return np.asarray(probabilities, dtype=float)
+
+
+def _adaptive_heading_state(
+    previous: AdaptivePdrState,
+    step_heading: StepHeading,
+    candidates: np.ndarray,
+    probabilities: np.ndarray,
+) -> tuple[float, float]:
+    """代表方位を選び、横歩き誤遷移時の急変を抑制する。"""
+    representative = next(
+        (
+            value
+            for value in (
+                step_heading.selected_heading,
+                step_heading.motion_heading,
+                _body_heading(step_heading),
+            )
+            if value is not None
+        ),
+        float(candidates[int(np.argmax(probabilities))]),
+    )
+    heading_mean = float(representative)
+    if previous.heading_mean is not None:
+        heading_jump = _normalize_angle(heading_mean - previous.heading_mean)
+        movement_type = (
+            step_heading.trajectory_movement_type or step_heading.movement_type
+        )
+        previous_side = previous.mode_probabilities[1] + previous.mode_probabilities[2]
+        if (
+            movement_type in {"sidestep_left", "sidestep_right"}
+            and previous_side < 0.5
+            and abs(heading_jump) > np.deg2rad(45.0)
+            and abs(float(step_heading.yaw_delta or 0.0)) < np.deg2rad(20.0)
+            and probabilities[3] < 0.25
+        ):
+            heading_mean = previous.heading_mean
+    return heading_mean, min(_circular_std(candidates, probabilities), np.pi)
+
+
+def _adaptive_length_state(
+    previous: AdaptivePdrState,
+    observation: StepLengthObservation,
+    probabilities: np.ndarray,
+) -> tuple[float, float, float, float, float, float]:
+    """forward/sidestepの歩幅scale状態と混合分布のmomentsを更新する。"""
+    nominal = max(observation.nominal_length_m, 1e-4)
+    interval = max(observation.interval_length_m, 1e-4)
+    measurement = float(np.log(np.clip(interval / nominal, 0.60, 1.45)))
+    variance = float(observation.log_length_sigma**2)
+    side_probability = float(probabilities[1] + probabilities[2])
+    forward_probability = float(probabilities[0] + probabilities[3])
+    forward_mean, forward_variance = _kalman_update(
+        previous.forward_log_scale_mean,
+        previous.forward_log_scale_variance,
+        measurement,
+        variance,
+        forward_probability,
+    )
+    side_mean, side_variance = _kalman_update(
+        previous.sidestep_log_scale_mean,
+        previous.sidestep_log_scale_variance,
+        measurement,
+        variance,
+        side_probability,
+    )
+    mode_scales = np.exp(np.asarray([forward_mean, side_mean, side_mean, forward_mean]))
+    length_mean, length_std = _length_moments(
+        probabilities,
+        nominal * mode_scales,
+        np.asarray([forward_variance, side_variance, side_variance, forward_variance])
+        + variance,
+    )
+    return (
+        forward_mean,
+        forward_variance,
+        side_mean,
+        side_variance,
+        length_mean,
+        length_std,
+    )
+
+
+def _adaptive_offset_state(
+    previous: AdaptivePdrState,
+    step_heading: StepHeading,
+) -> tuple[float, float]:
+    """端末―身体方位offsetの状態を更新する。"""
+    variance = float(
+        np.deg2rad(6.0 + 24.0 * (1.0 - step_heading.dynamic_body_heading_confidence))
+        ** 2
+    )
+    return _kalman_update(
+        previous.device_body_offset_mean,
+        previous.device_body_offset_variance,
+        float(step_heading.device_body_offset),
+        variance,
+        max(step_heading.dynamic_body_heading_confidence, 0.05),
+    )
+
+
+class AdaptivePdrEstimator:
+    """ステップ到着ごとに更新可能な適応PDR推定器。"""
+
+    def __init__(self, state: AdaptivePdrState | None = None) -> None:
+        self.state = _initial_state() if state is None else state
+
+    def update_step(
+        self,
+        step_heading: StepHeading,
+        length_observation: StepLengthObservation,
+        motion_evidence: StepMotionEvidence,
+    ) -> StepMotionPosterior:
+        """1歩分の観測だけを使い、因果的に状態を更新する。"""
+        previous = self.state
+        candidates = _mode_heading_candidates(step_heading)
+        probabilities = _adaptive_mode_probabilities(
+            previous,
+            step_heading,
+            motion_evidence,
+            candidates,
+        )
+        heading_mean, heading_std = _adaptive_heading_state(
+            previous,
+            step_heading,
+            candidates,
+            probabilities,
+        )
+        (
+            forward_mean,
+            forward_variance,
+            side_mean,
+            side_variance,
+            length_mean,
+            length_std,
+        ) = _adaptive_length_state(
+            previous,
+            length_observation,
+            probabilities,
+        )
+        offset_mean, offset_state_variance = _adaptive_offset_state(
+            previous,
+            step_heading,
+        )
+
+        selected_mode = _MODE_NAMES[int(np.argmax(probabilities))]
+        self.state = AdaptivePdrState(
+            heading_mean=heading_mean,
+            heading_variance=heading_std**2,
+            forward_log_scale_mean=forward_mean,
+            forward_log_scale_variance=forward_variance,
+            sidestep_log_scale_mean=side_mean,
+            sidestep_log_scale_variance=side_variance,
+            device_body_offset_mean=offset_mean,
+            device_body_offset_variance=offset_state_variance,
+            mode_probabilities=(
+                float(probabilities[0]),
+                float(probabilities[1]),
+                float(probabilities[2]),
+                float(probabilities[3]),
+            ),
+            step_count=previous.step_count + 1,
+        )
+        return StepMotionPosterior(
+            step_index=step_heading.step_index,
+            forward_probability=float(probabilities[0]),
+            sidestep_left_probability=float(probabilities[1]),
+            sidestep_right_probability=float(probabilities[2]),
+            turning_probability=float(probabilities[3]),
+            heading_mean=heading_mean,
+            heading_std=heading_std,
+            length_mean_m=length_mean,
+            length_std_m=length_std,
+            device_body_offset_mean=offset_mean,
+            device_body_offset_std=float(np.sqrt(offset_state_variance)),
+            selected_mode=selected_mode,
+            source="adaptive_causal",
+        )
+
+
+def _smooth_mode_probabilities(
+    posteriors: list[StepMotionPosterior],
+) -> list[np.ndarray]:
+    """因果状態確率を後向き遷移で平滑化する。"""
+    if not posteriors:
+        return []
+    smoothed = [
+        np.asarray(
+            [
+                item.forward_probability,
+                item.sidestep_left_probability,
+                item.sidestep_right_probability,
+                item.turning_probability,
+            ],
+            dtype=float,
+        )
+        for item in posteriors
+    ]
+    for index in range(len(smoothed) - 2, -1, -1):
+        backward = _TRANSITION @ smoothed[index + 1]
+        values = smoothed[index] * np.maximum(backward, 1e-6)
+        smoothed[index] = values / values.sum()
+    return smoothed
+
+
+def estimate_adaptive_pdr(
+    step_headings: list[StepHeading],
+    length_observations: tuple[StepLengthObservation, ...],
+    motion_evidences: tuple[StepMotionEvidence, ...],
+    smoothing_mode: str = "causal",
+) -> AdaptivePdrResult:
+    """ステップ列を適応推定し、軌跡生成に使える方位と歩幅を返す。"""
+    if smoothing_mode not in {"causal", "offline"}:
+        raise ValueError("smoothing_mode は causal または offline を指定してください")
+    if not (len(step_headings) == len(length_observations) == len(motion_evidences)):
+        raise ValueError("適応PDRへ渡すステップ列の長さが一致しません")
+
+    estimator = AdaptivePdrEstimator()
+    posteriors: list[StepMotionPosterior] = []
+    mode_length_means: list[np.ndarray] = []
+    mode_log_variances: list[np.ndarray] = []
+    for heading, length, evidence in zip(
+        step_headings,
+        length_observations,
+        motion_evidences,
+        strict=True,
+    ):
+        posterior = estimator.update_step(heading, length, evidence)
+        posteriors.append(posterior)
+        nominal = max(length.nominal_length_m, 1e-4)
+        state = estimator.state
+        mode_length_means.append(
+            nominal
+            * np.exp(
+                np.asarray(
+                    [
+                        state.forward_log_scale_mean,
+                        state.sidestep_log_scale_mean,
+                        state.sidestep_log_scale_mean,
+                        state.forward_log_scale_mean,
+                    ]
+                )
+            )
+        )
+        mode_log_variances.append(
+            np.asarray(
+                [
+                    state.forward_log_scale_variance,
+                    state.sidestep_log_scale_variance,
+                    state.sidestep_log_scale_variance,
+                    state.forward_log_scale_variance,
+                ]
+            )
+            + length.log_length_sigma**2
+        )
+    if smoothing_mode == "offline":
+        probabilities = _smooth_mode_probabilities(posteriors)
+        offline_posteriors: list[StepMotionPosterior] = []
+        for posterior, values, length_means, log_variances in zip(
+            posteriors,
+            probabilities,
+            mode_length_means,
+            mode_log_variances,
+            strict=True,
+        ):
+            length_mean, length_std = _length_moments(
+                values,
+                length_means,
+                log_variances,
+            )
+            offline_posteriors.append(
+                posterior._replace(
+                    forward_probability=float(values[0]),
+                    sidestep_left_probability=float(values[1]),
+                    sidestep_right_probability=float(values[2]),
+                    turning_probability=float(values[3]),
+                    length_mean_m=length_mean,
+                    length_std_m=length_std,
+                    selected_mode=_MODE_NAMES[int(np.argmax(values))],
+                    source="adaptive_offline",
+                )
+            )
+        posteriors = offline_posteriors
+
+    adjusted_headings = [
+        heading._replace(
+            selected_heading=posterior.heading_mean,
+            source=f"trajectory_{posterior.source}",
+            trajectory_movement_type=posterior.selected_mode,
+            decoded_motion_mode=posterior.selected_mode,
+            decoded_motion_confidence=max(
+                posterior.forward_probability,
+                posterior.sidestep_left_probability,
+                posterior.sidestep_right_probability,
+                posterior.turning_probability,
+            ),
+        )
+        for heading, posterior in zip(step_headings, posteriors, strict=True)
+    ]
+    return AdaptivePdrResult(
+        step_headings=adjusted_headings,
+        step_lengths=[posterior.length_mean_m for posterior in posteriors],
+        posteriors=tuple(posteriors),
+        final_state=estimator.state,
+    )
+
+
+__all__ = ["AdaptivePdrEstimator", "estimate_adaptive_pdr"]

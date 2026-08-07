@@ -2,7 +2,7 @@ import pytest
 from click.testing import CliRunner
 
 from rikka import cli
-from rikka.config import (
+from rikka.common.config import (
     FORWARD_HEADING_SOURCE,
     GYRO_BIAS_METHOD,
     HEADING_METHOD,

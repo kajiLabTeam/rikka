@@ -4,10 +4,39 @@ import matplotlib.image as mpimg
 import numpy as np
 import pandas as pd
 
-from rikka.analyze.particle.map_constraints import _evaluate_particle_transitions
-from rikka.analyze.particle.paths import _select_sequence_map_path
-from rikka.analyze.particle.runner import run_particle_filter
-from rikka.analyze.pdr.models import StepHeading
+from rikka.common.lib.models import StepHeading
+from rikka.particle.lib.map_constraints import _evaluate_particle_transitions
+from rikka.particle.lib.runner import run_particle_filter as _run_particle_filter
+from rikka.particle.lib.sequence_path import _select_sequence_map_path
+from rikka.pdr.lib.motion_state.evidence import (
+    build_particle_motion_headings,
+    build_step_motion_evidences,
+)
+
+
+def run_particle_filter(*args, **kwargs):
+    """確定済みPDR歩列をPF内部回帰テストへ渡す。"""
+    for unused_name in (
+        "peaks",
+        "df_gyro",
+        "df_acc",
+        "initial_direction",
+        "weinberg_k",
+        "heading_method",
+        "step_segments",
+    ):
+        kwargs.pop(unused_name, None)
+    headings = kwargs.get("prepared_step_headings")
+    if headings is not None:
+        kwargs.setdefault(
+            "prepared_motion_evidences",
+            build_step_motion_evidences(headings),
+        )
+        kwargs.setdefault(
+            "prepared_particle_motion_headings",
+            build_particle_motion_headings(headings),
+        )
+    return _run_particle_filter(*args[3:], **kwargs)
 
 
 def _select(

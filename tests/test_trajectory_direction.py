@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from rikka.analyze.trajectory_direction import (
+from rikka.common.lib.trajectory_direction import (
     evaluate_terminal_direction,
     sample_trajectory_by_arclength,
     terminal_consensus_outliers,

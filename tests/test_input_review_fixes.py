@@ -11,10 +11,17 @@ import pytest
 from click.testing import CliRunner
 
 from rikka import cli
-from rikka.analyze import sensor_plot
-from rikka.analyze.pdr import pipeline
-from rikka.analyze.pdr.gyro_bias import estimate_gyro_bias
-from rikka.analyze.pdr.time_utils import _gyro_integration_dt, _time_values
+from rikka.cli import commands as pipeline
+from rikka.common.lib.gyro_bias import estimate_gyro_bias
+from rikka.common.lib.time_utils import _gyro_integration_dt, _time_values
+from rikka.common.settings import (
+    HeadingSettings,
+    MotionStateSettings,
+    SensorSettings,
+    StepSettings,
+)
+from rikka.plot import pipeline as plot_pipeline
+from rikka.plot.lib import sensor as sensor_plot
 
 
 @pytest.mark.parametrize(
@@ -77,7 +84,7 @@ def test_pipeline_rejects_non_finite_direction_before_output_creation(
         output_created = True
         raise AssertionError("output should not be created")
 
-    monkeypatch.setattr(pipeline, "_create_output_dir", fail_if_called)
+    monkeypatch.setattr(plot_pipeline, "create_output_dir", fail_if_called)
 
     with pytest.raises(ValueError, match="initial_direction.*有限"):
         pipeline.run(
@@ -99,7 +106,7 @@ def test_pipeline_rejects_invalid_pf_path_before_output_creation(
         output_created = True
         raise AssertionError("output should not be created")
 
-    monkeypatch.setattr(pipeline, "_create_output_dir", fail_if_called)
+    monkeypatch.setattr(plot_pipeline, "create_output_dir", fail_if_called)
 
     with pytest.raises(ValueError, match="pf_path_selection"):
         pipeline.run(
@@ -122,7 +129,7 @@ def test_particle_map_failure_happens_before_output_creation(
         output_created = True
         raise AssertionError("output should not be created")
 
-    monkeypatch.setattr(pipeline, "_create_output_dir", fail_if_called)
+    monkeypatch.setattr(plot_pipeline, "create_output_dir", fail_if_called)
     sensor = pd.DataFrame(
         {
             "t": [0.0],
@@ -161,10 +168,67 @@ def test_particle_map_validation_rejects_directory_corrupt_image_and_wall_origin
     plt.imsave(floormap, image, cmap="gray", vmin=0.0, vmax=1.0)
 
     pipeline._validate_particle_floormap(floormap, (1, 1))
-    with pytest.raises(ValueError, match="origin_px"):
+    with pytest.raises(ValueError, match="origin_px") as wall_error:
         pipeline._validate_particle_floormap(floormap, (2, 2))
+    assert "形状が不正" not in str(wall_error.value)
     with pytest.raises(ValueError, match="origin_px"):
         pipeline._validate_particle_floormap(floormap, (10, 10))
+
+
+def test_particle_map_validation_reports_shape_independently(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    floormap = tmp_path / "map.png"
+    floormap.touch()
+    monkeypatch.setattr(pipeline.mpimg, "imread", lambda _path: np.empty((0,)))
+
+    with pytest.raises(ValueError, match="画像の形状が不正") as shape_error:
+        pipeline._validate_particle_floormap(floormap, (0, 0))
+
+    assert str(floormap) in str(shape_error.value)
+
+
+@pytest.mark.parametrize(
+    ("settings_type", "kwargs", "option_name"),
+    [
+        (StepSettings, {"detection_method": "invalid"}, "step_detection_method"),
+        (SensorSettings, {"gyro_bias_method": "invalid"}, "gyro_bias_method"),
+        (HeadingSettings, {"method": "invalid"}, "heading_method"),
+        (
+            MotionStateSettings,
+            {"motion_heading_correction": "invalid"},
+            "motion_heading_correction",
+        ),
+        (
+            MotionStateSettings,
+            {"forward_heading_source": "invalid"},
+            "forward_heading_source",
+        ),
+        (
+            MotionStateSettings,
+            {"sidestep_heading_source": "invalid"},
+            "sidestep_heading_source",
+        ),
+        (
+            MotionStateSettings,
+            {"sidestep_suspect_mode": "invalid"},
+            "sidestep_suspect_mode",
+        ),
+    ],
+)
+def test_settings_reject_invalid_method_during_construction(
+    settings_type: (
+        type[StepSettings]
+        | type[SensorSettings]
+        | type[HeadingSettings]
+        | type[MotionStateSettings]
+    ),
+    kwargs: dict[str, str],
+    option_name: str,
+) -> None:
+    with pytest.raises(ValueError, match=option_name):
+        settings_type(**kwargs)
 
 
 def test_sensor_plot_uses_numbered_path_without_overwrite(tmp_path: Path) -> None:

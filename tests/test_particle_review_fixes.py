@@ -5,23 +5,48 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from rikka.analyze.particle.frames import save_particle_step_frames
-from rikka.analyze.particle.motion import _motion_state_transition_matrix
-from rikka.analyze.particle.paths import _unsupported_reversal_count
-from rikka.analyze.particle.recovery import (
-    _generate_recovery_candidates,
-    _replay_from_checkpoint,
-)
-from rikka.analyze.particle.runner import (
-    _adaptive_heading_rejuvenation_sigma,
-    run_particle_filter,
-)
-from rikka.analyze.particle_filter import (
+from rikka.common.lib.models import StepHeading
+from rikka.particle.lib.initialize import _adaptive_heading_rejuvenation_sigma
+from rikka.particle.lib.proposal import _motion_state_transition_matrix
+from rikka.particle.lib.recorder import (
     ParticleFilterStepDiagnostics,
     ParticlePathComparison,
     ParticleStepStages,
 )
-from rikka.analyze.pdr.models import StepHeading
+from rikka.particle.lib.recovery.checkpoint import _replay_from_checkpoint
+from rikka.particle.lib.recovery.local import _generate_recovery_candidates
+from rikka.particle.lib.runner import run_particle_filter as _run_particle_filter
+from rikka.particle.lib.sequence_path import _unsupported_reversal_count
+from rikka.pdr.lib.motion_state.evidence import (
+    build_particle_motion_headings,
+    build_step_motion_evidences,
+)
+from rikka.plot.lib.frames import save_particle_step_frames
+
+
+def run_particle_filter(*args, **kwargs):
+    """確定済みPDR歩列をPF内部回帰テストへ渡す。"""
+    for unused_name in (
+        "peaks",
+        "df_gyro",
+        "df_acc",
+        "initial_direction",
+        "weinberg_k",
+        "heading_method",
+        "step_segments",
+    ):
+        kwargs.pop(unused_name, None)
+    headings = kwargs.get("prepared_step_headings")
+    if headings is not None:
+        kwargs.setdefault(
+            "prepared_motion_evidences",
+            build_step_motion_evidences(headings),
+        )
+        kwargs.setdefault(
+            "prepared_particle_motion_headings",
+            build_particle_motion_headings(headings),
+        )
+    return _run_particle_filter(*args[3:], **kwargs)
 
 
 def _forward_heading(step_index: int = 1) -> StepHeading:
