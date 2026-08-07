@@ -57,7 +57,7 @@ input/
 現在の既定入力は次です。
 
 ```python
-DATA_DIR = "input/sensor_data/natsuki/1turn_rightsidestep_3turn_leftsidestep5"
+DATA_DIR = "input/sensor_data/hiroto/hiroto_1turn_rightsidestep_3turn_leftsidestep"
 ```
 
 別データを使う場合は、CLI の `-d` で指定できます。
@@ -110,6 +110,7 @@ uv run rikka particle --no-plot --pf-seed 10 \
 `--step-frames-dpi` で解像度を調整できます。
 
 センサー波形を確認します。入力フォルダに `sensor_plot.png` を保存します。
+同名ファイルがある場合は、`sensor_plot_001.png` のように連番を付けて保存します。
 
 ```sh
 uv run rikka sensor
@@ -117,18 +118,25 @@ uv run rikka sensor
 
 ## データフロー
 
+`rikka.__init__.main()` から Click の `cli.options` に入り、
+`cli.commands.run()` が設定の組み立てと各 pipeline の呼び出しを担当します。
 `run` / `pdr` / `particle` は、同じ CSV 読み込みと PDR ステップ準備を通ります。
-通常 PDR はそのステップ列をそのまま軌跡へ積み上げ、particle filter は同じステップ列を
-フロアマップ制約で補正してから画像やアニメーションへ出力します。
+通常 PDR はそのステップ列をそのまま軌跡へ積み上げ、particle filter は同じ
+`PreparedPdrSteps` をフロアマップ制約で補正します。最後に `plot.pipeline` が
+CSV・画像・アニメーションを出力します。
 
 ```mermaid
 flowchart TD
+    command["uv run rikka run / pdr / particle"] --> entry["rikka.__init__.main()"]
+    entry --> cli_options["cli.options\nClickコマンド・オプション"]
+    cli_options --> cli_run["cli.commands.run()\n設定構築・pipeline呼び出し"]
+
     input_dir["input/sensor_data/<data_dir>/"] --> acc_csv["Accelerometer.csv"]
     input_dir --> gyro_csv["Gyroscope.csv"]
-    floormap["input/Floormap_building14_5floor.png"] --> plot_pdr
-    floormap --> pf_map
 
-    acc_csv --> load["load_sensor_data()\n列名を t,x,y,z に正規化"]
+    cli_run --> pdr_pipeline["pdr.pipeline.run_pdr()"]
+    pdr_pipeline --> load["load_sensor_data()\n列名を t,x,y,z に正規化"]
+    acc_csv --> load
     gyro_csv --> load
     load --> preprocess["process_sensor_data()\n重力推定 / 線形加速度 / 水平加速度 / gyro bias / low_angle"]
 
@@ -139,30 +147,22 @@ flowchart TD
     step_detect --> step_length
     heading --> sidestep["motion segment decode / dynamic body heading\nsidestep smoothing / heading stabilize"]
     step_length --> sidestep
-    sidestep --> prepared["prepare_pdr_steps()\ntrajectory候補 / step_lengths / t_at_steps / step_headings"]
+    sidestep --> prepared["prepare_pdr_steps_with_settings()\nPreparedPdrSteps"]
 
     prepared --> pdr_branch{"コマンド"}
-    pdr_branch -->|rikka run / pdr| det_traj["通常 PDR\nstep_length × selected_heading を積み上げ"]
-    pdr_branch -->|rikka particle| pf["run_particle_filter()\n全画素壁判定 / ESS適応リサンプリング / recovery"]
+    pdr_branch -->|rikka run / pdr| det_traj["TrajectoryResult\n通常 PDR 軌跡"]
+    pdr_branch -->|rikka particle| particle_pipeline["particle.pipeline.run_particle()"]
+    particle_pipeline --> pf["particle.lib.runner.run_particle_steps()\n地図拘束 / 重み / 再標本化 / recovery"]
 
-    pf_map["フロアマップ輝度\n通路/壁判定"] --> pf
+    floormap["input/Floormap_building14_5floor.png"] --> pf_map["FloorMap\n通路/壁判定"]
+    pf_map --> particle_pipeline
     pf --> pf_path["既定: 重み付き平均を優先\nsequence: 反転減少時だけ単一祖先経路"]
 
-    det_traj --> csv_common["CSV 出力\ntrajectory.csv / step_lengths.csv / step_headings.csv / gyro_bias.csv"]
-    det_traj --> plot_pdr["plot_trajectory()\ntrajectory.png"]
-    det_traj --> step_plots["plot_step_lengths() / plot_step_vectors()\nstep_lengths.png / step_vectors/step_*.png"]
-
-    pf_path --> csv_common
-    pf_path --> plot_pf["plot_particle_filter_trajectory()\npf_trajectory.png"]
-    pf --> pf_diagnostics["particle_diagnostics.csv\nESS / 多様性 / recovery"]
-    pf --> anim["save_particle_animation()\nparticle_filter.mp4 または .gif"]
-
-    csv_common --> output_dir["output/<timestamp>/"]
-    plot_pdr --> output_dir
-    step_plots --> output_dir
-    plot_pf --> output_dir
-    pf_diagnostics --> output_dir
-    anim --> output_dir
+    det_traj --> plot_pipeline["plot.pipeline.write_outputs() / render()"]
+    pf_path --> pf_result["TrajectoryResult\nPF補正軌跡・diagnostics"]
+    pf_result --> plot_pipeline
+    floormap --> plot_pipeline
+    plot_pipeline --> output_dir["output/<timestamp>/\nCSV / PNG / MP4 または GIF"]
 ```
 
 センサー波形だけを確認する `sensor` コマンドは、軌跡推定までは進まず、
@@ -183,7 +183,7 @@ flowchart LR
 
 | 項目 | 既定値 | 説明 |
 |---|---:|---|
-| `DATA_DIR` | `input/sensor_data/natsuki/1turn_rightsidestep_3turn_leftsidestep5` | 入力データ |
+| `DATA_DIR` | `input/sensor_data/hiroto/hiroto_1turn_rightsidestep_3turn_leftsidestep` | 入力データ |
 | `FLOORMAP_PATH` | `input/Floormap_building14_5floor.png` | 背景マップ |
 | `FLOORMAP_ORIGIN_PX` | `(2050, 400)` | 軌跡の開始ピクセル |
 | `FLOORMAP_SCALE` | `0.01` | 1px あたりのメートル数 |
@@ -388,10 +388,14 @@ uv run rikka run \
 
 ## コード構成
 
-実装は `common / pdr / particle / plot` の4領域に分割されています。
+公開エントリポイントと CLI をアダプターとして、実装は
+`common / pdr / particle / plot` の4領域に分割されています。
 
 | ファイル | 役割 |
 |---|---|
+| `__init__.py` | `main()` と公開APIのエントリポイント |
+| `cli/options.py` | ClickコマンドとCLIオプションの定義 |
+| `cli/commands.py` | 入力読込、設定構築、PDR・PF・出力pipelineの接続 |
 | `common/config/`, `common/settings.py` | 定数と検証済み設定 |
 | `common/lib/models.py` | `PreparedPdrSteps`、`TrajectoryResult` などの共有型 |
 | `pdr/pipeline.py` | センサー入力から通常PDR結果までの手順 |
@@ -401,9 +405,12 @@ uv run rikka run \
 | `plot/pipeline.py` | CSV・図・animationの出力手順 |
 | `plot/lib/` | フロアマップ座標変換と個別成果物 |
 
-新しい `particle.pipeline.run_particle()` は `prepare_pdr_steps()` が作った
+`particle.pipeline.run_particle()` は `prepare_pdr_steps_with_settings()` が作った
 `PreparedPdrSteps` を境界として受け取り、フロアマップ制約で軌跡を補正します。
-低水準のPF段階実行は `particle.lib.runner.run_particle_filter()` が担当します。
+低水準のPF段階実行は `particle.lib.runner.run_particle_steps()` が担当します。
+
+関数単位の読み順、設定、入出力、通常PDRとPFの分岐は、
+[コードリード資料](docs/code-reading/README.md) にまとめています。
 
 ## Python から使う
 
@@ -414,11 +421,13 @@ from rikka.cli.commands import run
 df_acc = pd.DataFrame(...)   # 列: t, x, y, z
 df_gyro = pd.DataFrame(...)  # 列: t, x, y, z
 
-trajectory = run(df_acc=df_acc, df_gyro=df_gyro)
+trajectory_df = run(df_acc=df_acc, df_gyro=df_gyro)
 ```
 
 `df_acc` と `df_gyro` は両方渡すか、両方省略してください。片方だけ渡すと
-`ValueError` になります。
+`ValueError` になります。戻り値は `timestamp_s`, `x`, `y` 列を持つ
+`pandas.DataFrame` です。APIから呼んだ場合も `output/<timestamp>/` を作成し、
+CSVと、設定に応じた画像・アニメーションを保存します。
 
 区間復号・動的身体方位と従来clusterをAPIで比較する場合は、
 `prepare_pdr_steps(..., motion_refinement=False)` で従来処理を実行できます。
@@ -426,13 +435,13 @@ trajectory = run(df_acc=df_acc, df_gyro=df_gyro)
 グラフを表示しない場合:
 
 ```python
-trajectory = run(df_acc=df_acc, df_gyro=df_gyro, plot=False)
+trajectory_df = run(df_acc=df_acc, df_gyro=df_gyro, plot=False)
 ```
 
 パーティクルフィルタを使う場合:
 
 ```python
-trajectory = run(
+trajectory_df = run(
     df_acc=df_acc,
     df_gyro=df_gyro,
     use_particle_filter=True,
