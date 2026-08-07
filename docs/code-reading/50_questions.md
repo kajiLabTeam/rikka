@@ -2,7 +2,6 @@
 
 | 分類 | 質問 | 関連ファイル・関数 | 確認できた事実 |
 |---|---|---|---|
-| READMEとコード不一致 | 現在の正式な既定入力はhirotoかnatsuki data5か | [`README.md`](../../README.md), [`common/config/__init__.py::DATA_DIR`](../../src/rikka/common/config/__init__.py#L21) | コードはhiroto、READMEはnatsuki data5 |
 | 実験結果不足 | hiroto既定入力に対応するtruthと最新精度はあるか | [`DATA_DIR`](../../src/rikka/common/config/__init__.py#L21), `agent/agent_evaluate_*` | ログ主評価はnatsuki反復計測 |
 | コメントとコード不一致 | CLI module docstringの`analyze.*`記述をいつ更新するか | [`cli/options.py`](../../src/rikka/cli/options.py) 先頭docstring | 実コードは[`common.lib.sensors`](../../src/rikka/common/lib/sensors.py)と[`cli.commands`](../../src/rikka/cli/commands.py)を遅延import |
 | READMEとコード不一致 | 正解経路READMEの`src/rikka/config.py`参照を現パスへ更新するか | `input/correct_path/.../README.md` | `src/rikka/config.py`は削除済み |
@@ -25,6 +24,6 @@
 
 ## 会議で先に決めたい3点
 
-1. 正式な既定入力と、その正解・受入基準。
+1. 現行既定入力に対応する正解と受入基準。
 2. sensor取得時の軸・装着・sampling仕様をどこへ記録するか。
 3. recovery後の滑らかだが誤った曲がりを検出する追加指標を採用するか。
