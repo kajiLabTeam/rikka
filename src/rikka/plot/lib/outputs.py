@@ -20,6 +20,7 @@ import pandas as pd
 
 from ...common.lib.models import (
     GyroBiasResult,
+    LandmarkCorrectionResult,
     StepDetectionResult,
     StepDirectionPosterior,
     StepHeading,
@@ -370,6 +371,44 @@ def _build_direction_posteriors_dataframe(
         }
         rows.append(values)
     return pd.DataFrame(rows)
+
+
+def _build_landmark_corrections_dataframe(
+    landmark: LandmarkCorrectionResult,
+) -> pd.DataFrame:
+    """BLE ランドマーク検出と補正の履歴をCSV保存用DataFrameに変換する。"""
+    columns = [
+        "step",
+        "timestamp_s",
+        "beacon_id",
+        "rssi_dbm",
+        "detected",
+        "applied",
+        "before_x",
+        "before_y",
+        "landmark_x",
+        "landmark_y",
+        "after_x",
+        "after_y",
+    ]
+    rows = [
+        {
+            "step": correction.step_index,
+            "timestamp_s": correction.timestamp_s,
+            "beacon_id": correction.beacon_id,
+            "rssi_dbm": correction.rssi_dbm,
+            "detected": True,
+            "applied": correction.applied,
+            "before_x": correction.before_x,
+            "before_y": correction.before_y,
+            "landmark_x": correction.landmark_x,
+            "landmark_y": correction.landmark_y,
+            "after_x": correction.after_x,
+            "after_y": correction.after_y,
+        }
+        for correction in landmark.corrections
+    ]
+    return pd.DataFrame(rows, columns=columns)
 
 
 def _step_plot_signal(
