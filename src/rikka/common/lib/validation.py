@@ -104,3 +104,21 @@ def validate_sidestep_heading_source(value: str) -> str:
 def validate_sidestep_suspect_mode(value: str) -> str:
     """横歩き疑いの処理方式を検証する。"""
     return validate_choice("sidestep_suspect_mode", value, SIDESTEP_SUSPECT_MODES)
+
+
+def validate_landmarks(
+    landmarks: tuple[tuple[str, float, float], ...],
+) -> tuple[tuple[str, float, float], ...]:
+    """ランドマーク定義の beacon_id 重複と座標の有限性を確認する。"""
+    seen: set[str] = set()
+    for beacon_id, x, y in landmarks:
+        if not beacon_id or not beacon_id.strip():
+            raise ValueError("beacon_id は空にできません。")
+        if beacon_id in seen:
+            raise ValueError(f"beacon_id が重複しています: {beacon_id}")
+        seen.add(beacon_id)
+        if not np.isfinite(x) or not np.isfinite(y):
+            raise ValueError(
+                f"ランドマーク座標は有限な値を指定してください: {beacon_id}"
+            )
+    return landmarks

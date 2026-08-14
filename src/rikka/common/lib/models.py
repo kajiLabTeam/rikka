@@ -2,7 +2,7 @@
 
 役割:
     ステップ区間、検出結果、方位候補、ジャイロ補正結果、確定移動量、前処理済み
-    PDR 一式を NamedTuple / dataclass として定義する。
+    PDR 一式と BLE ランドマーク補正結果を NamedTuple / dataclass として定義する。
 依存元:
     ``config`` から ``PreparedPdrSteps`` の既定値を取得し、NumPy と Pandas の型を
     配列・DataFrame フィールドに使用する。
@@ -277,6 +277,64 @@ class FloorMap:
 
 
 @dataclass(frozen=True)
+class Landmark:
+    """既知座標に設置した BLE ビーコン 1 台分の定義。"""
+
+    beacon_id: str
+    x: float
+    y: float
+
+
+class BleObservation(NamedTuple):
+    """BLE CSV の 1 行に対応する RSSI 観測。"""
+
+    timestamp_s: float
+    beacon_id: str
+    rssi_dbm: float
+
+
+class LandmarkDetection(NamedTuple):
+    """RSSI 閾値判定で確定した 1 件のランドマーク検出。"""
+
+    timestamp_s: float
+    beacon_id: str
+    rssi_dbm: float
+
+
+class LandmarkCorrection(NamedTuple):
+    """1 件の検出に対する補正前後の座標記録。
+
+    ``applied`` は最終的な軌跡へ反映されたかどうかを表す。同じ歩に複数の検出が
+    割り当たった場合、最後の 1 件だけが ``True`` になる。
+    """
+
+    step_index: int
+    timestamp_s: float
+    beacon_id: str
+    rssi_dbm: float
+    before_x: float
+    before_y: float
+    landmark_x: float
+    landmark_y: float
+    after_x: float
+    after_y: float
+    applied: bool
+
+
+@dataclass(frozen=True)
+class LandmarkCorrectionResult:
+    """BLE ランドマーク補正の結果と診断情報。"""
+
+    trajectory: list[list[float]]
+    raw_trajectory: list[list[float]]
+    corrections: tuple[LandmarkCorrection, ...]
+    detection_count: int
+    discarded_count: int
+    rssi_threshold_dbm: float
+    data_path: str
+
+
+@dataclass(frozen=True)
 class TrajectoryResult:
     """PDR/PF と出力領域を結ぶ解析結果。"""
 
@@ -286,3 +344,4 @@ class TrajectoryResult:
     step_headings: list[StepHeading]
     prepared: PreparedPdrSteps
     particle: ParticleFilterResult | None = None
+    landmark: LandmarkCorrectionResult | None = None
