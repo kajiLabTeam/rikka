@@ -21,6 +21,8 @@ import click
 
 from ..common.config import (
     BLE_DATA_PATH,
+    BLE_LANDMARK_ENABLED,
+    BLE_RSSI_THRESHOLD_DBM,
     BLE_SAMPLE_SEED,
     DATA_DIR,
     FLOORMAP_ORIGIN_PX,
@@ -62,6 +64,8 @@ from ..common.lib.validation import (
 
 _DATA_DIR_DEFAULT = DATA_DIR
 _BLE_DATA_DEFAULT = BLE_DATA_PATH
+_BLE_LANDMARK_DEFAULT = BLE_LANDMARK_ENABLED
+_BLE_RSSI_THRESHOLD_DEFAULT = BLE_RSSI_THRESHOLD_DBM
 _BLE_SAMPLE_SEED_DEFAULT = BLE_SAMPLE_SEED
 _FLOORMAP_DEFAULT = FLOORMAP_PATH
 _ORIGIN_DEFAULT = FLOORMAP_ORIGIN_PX
@@ -192,6 +196,28 @@ def _common_options(f: click.decorators.FC) -> click.decorators.FC:
     )(f)
     f = click.option(
         "--no-plot", is_flag=True, default=False, help="グラフ表示を無効化"
+    )(f)
+    f = click.option(
+        "--ble-rssi-threshold",
+        type=float,
+        default=_BLE_RSSI_THRESHOLD_DEFAULT,
+        show_default=True,
+        callback=_validate_cli_finite_float,
+        help="ランドマーク検出とみなす RSSI の下限 [dBm]",
+    )(f)
+    f = click.option(
+        "--ble-data",
+        "ble_data_path",
+        default=_BLE_DATA_DEFAULT,
+        type=click.Path(),
+        show_default=True,
+        help="BLE RSSI CSV のパス",
+    )(f)
+    f = click.option(
+        "--ble-landmark/--no-ble-landmark",
+        default=_BLE_LANDMARK_DEFAULT,
+        show_default=True,
+        help="BLE ランドマークによる位置補正の有効・無効",
     )(f)
     f = click.option(
         "--sidestep-smoothing",
@@ -361,6 +387,9 @@ def _run_pdr(
     motion_estimation: str,
     smoothing_mode: str,
     no_plot: bool,
+    ble_landmark: bool,
+    ble_data_path: str,
+    ble_rssi_threshold: float,
 ) -> None:
     from ..common.lib.sensors import load_sensor_data  # noqa: PLC0415
     from .commands import run as _run  # noqa: PLC0415
@@ -391,6 +420,9 @@ def _run_pdr(
         sidestep_suspect_mode=sidestep_suspect_mode,
         motion_estimation=motion_estimation,
         smoothing_mode=smoothing_mode,
+        ble_landmark=ble_landmark,
+        ble_data_path=ble_data_path,
+        ble_rssi_threshold=ble_rssi_threshold,
     )
 
 
@@ -418,6 +450,9 @@ def run(
     motion_estimation: str,
     smoothing_mode: str,
     no_plot: bool,
+    ble_landmark: bool,
+    ble_data_path: str,
+    ble_rssi_threshold: float,
 ) -> None:
     """決定論的 PDR で歩行軌跡を推定する。"""
     _run_pdr(
@@ -442,6 +477,9 @@ def run(
         motion_estimation,
         smoothing_mode,
         no_plot,
+        ble_landmark,
+        ble_data_path,
+        ble_rssi_threshold,
     )
 
 
@@ -541,6 +579,9 @@ def particle(
     motion_estimation: str,
     smoothing_mode: str,
     no_plot: bool,
+    ble_landmark: bool,
+    ble_data_path: str,
+    ble_rssi_threshold: float,
     save_animation: bool,
     save_step_frames: bool,
     step_frames_range: tuple[int, int] | None,
@@ -592,6 +633,9 @@ def particle(
         particle_count=pf_particles,
         motion_predictive_weight_power=motion_predictive_weight_power,
         pf_path_selection=pf_path_selection,
+        ble_landmark=ble_landmark,
+        ble_data_path=ble_data_path,
+        ble_rssi_threshold=ble_rssi_threshold,
     )
 
 

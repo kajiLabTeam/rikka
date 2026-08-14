@@ -116,6 +116,44 @@ uv run rikka particle --no-plot --pf-seed 10 \
 uv run rikka sensor
 ```
 
+## BLE ランドマーク補正
+
+既知座標に置いた BLE ビーコンの RSSI が閾値以上になったとき、通常 PDR の位置を
+ランドマーク座標へ補正できます。既定では無効で、particle filter には適用しません。
+
+実測データがない場合は、センサー CSV と同じ時間軸のサンプルを先に生成します。
+
+```sh
+uv run rikka ble-sample
+uv run rikka run --ble-landmark --no-plot
+```
+
+BLE CSV は次の3列を持ちます。
+
+| 列 | 内容 |
+|---|---|
+| `timestamp_s` | phyphox の実験開始からの経過秒 |
+| `beacon_id` | `BLE_LANDMARKS` に登録するビーコン識別子 |
+| `rssi_dbm` | 受信 RSSI [dBm] |
+
+ランドマーク座標は `src/rikka/common/config/__init__.py` の `BLE_LANDMARKS` に
+`(beacon_id, x_m, y_m)` で設定します。既定の検出下限は -55 dBm です。
+
+- `--ble-landmark`: BLE 補正を有効化
+- `--ble-data PATH`: BLE CSV を指定
+- `--ble-rssi-threshold DBM`: 検出下限を変更
+
+実測値へ差し替える場合は、同じ3列と経過秒の時間軸へ整形し、
+`--ble-data <実測CSV>` を指定します。絶対時刻だけの場合は、phyphox の
+`meta/time.csv` にある START の `system time` を引いて経過秒へ変換してください。
+
+BLE 有効時は `output/<timestamp>/landmark_corrections.csv` に検出時刻、RSSI、
+補正前座標、ランドマーク座標、補正後座標を保存します。`trajectory.png` には
+補正前後の軌跡、ランドマーク、補正地点を重ねて描画します。
+
+`rikka particle --ble-landmark` は警告を表示し、最終的な PF 軌跡には BLE 補正を
+適用しません。PF へ統合する場合は、座標上書きではなく観測尤度として別途設計します。
+
 ## データフロー
 
 `rikka.__init__.main()` から Click の `cli.options` に入り、

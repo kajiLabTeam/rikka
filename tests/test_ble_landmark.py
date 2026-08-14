@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+from click.testing import CliRunner
 
 from rikka.ble.lib.correction import (
     apply_landmark_corrections,
@@ -14,6 +15,7 @@ from rikka.ble.lib.detection import detect_landmarks
 from rikka.ble.lib.loader import group_by_timestamp, load_ble_observations
 from rikka.ble.lib.sample import generate_sample_observations, write_sample_csv
 from rikka.ble.pipeline import run_landmark_correction
+from rikka.cli.options import cli
 from rikka.common.lib.models import BleObservation, Landmark, LandmarkDetection
 from rikka.common.lib.sensors import load_sensor_data
 from rikka.common.settings import BleLandmarkSettings, BleSampleSettings, PdrSettings
@@ -360,3 +362,32 @@ def test_build_landmark_corrections_dataframe_has_diagnostic_columns() -> None:
             "after_y": 2.0,
         }
     ]
+
+
+def test_run_help_includes_ble_landmark_option() -> None:
+    """run --help に BLE ランドマークのオプションが出る。"""
+    result = CliRunner().invoke(cli, ["run", "--help"])
+
+    assert result.exit_code == 0
+    assert "--ble-landmark" in result.output
+    assert "--ble-data" in result.output
+    assert "--ble-rssi-threshold" in result.output
+
+
+def test_particle_help_includes_ble_landmark_option() -> None:
+    """particle --help にも BLE ランドマークのオプションが出る。"""
+    result = CliRunner().invoke(cli, ["particle", "--help"])
+
+    assert result.exit_code == 0
+    assert "--ble-landmark" in result.output
+    assert "--ble-data" in result.output
+    assert "--ble-rssi-threshold" in result.output
+
+
+def test_ble_sample_help_lists_options() -> None:
+    """ble-sample --help が output と seed を表示する。"""
+    result = CliRunner().invoke(cli, ["ble-sample", "--help"])
+
+    assert result.exit_code == 0
+    assert "--output" in result.output
+    assert "--seed" in result.output
