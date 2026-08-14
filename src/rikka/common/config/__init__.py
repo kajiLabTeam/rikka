@@ -190,3 +190,45 @@ MOTION_ESTIMATION = "adaptive"  # 標準の運動状態・方位・歩幅推定�
 SMOOTHING_MODE = "causal"  # 標準の時系列平滑化方式
 PF_MOTION_PREDICTIVE_WEIGHT_POWER = 0.1  # 運動状態予測尤度の重み指数
 PF_PATH_SELECTION = "sequence"  # 反転減少時だけ単一祖先経路を採用
+
+# BLE ランドマーク測位設定
+# 既知座標に設置した BLE ビーコンの強い電波を検出した時点で、PDR の推定位置を
+# ランドマーク座標へ補正する。BLE データが無い環境でも既存 PDR が動くよう既定は無効。
+BLE_LANDMARK_ENABLED = False
+
+# BLE RSSI の入力 CSV パス（列: timestamp_s, beacon_id, rssi_dbm）
+# サンプルデータは `rikka ble-sample` で生成する。実測データへ差し替える場合は
+# 同じ列構成・同じ経過秒の時間軸に揃えてこのパスを変更する。
+BLE_DATA_PATH = "input/ble/sample_rssi.csv"
+
+# ランドマーク検出とみなす RSSI の下限 [dBm]
+# この値以上の RSSI を受信したビーコンをランドマーク到達と判定する
+BLE_RSSI_THRESHOLD_DBM = -55.0
+
+# 同一ビーコンによる連続補正を防ぐラッチ解除マージン [dB]
+# 一度補正したビーコンは、RSSI が (閾値 - このマージン) を下回るまで再検出しない
+BLE_RSSI_RELEASE_MARGIN_DB = 3.0
+
+# ランドマークとして扱う BLE ビーコンの既知座標
+# (beacon_id, x [m], y [m]) の並び。座標系は PDR 軌跡と同じで、原点は歩行開始位置。
+# 既定値は既定データの PDR 推定座標から 1〜2 m ずらした値。
+BLE_LANDMARKS: tuple[tuple[str, float, float], ...] = (
+    ("beacon_1", 2.0, 20.0),
+    ("beacon_2", -13.0, 9.0),
+    ("beacon_3", 1.0, 3.0),
+)
+
+# サンプル BLE RSSI 生成条件
+# 本番のランドマーク測位では使用せず、`rikka ble-sample` だけが参照する。
+BLE_SAMPLE_PEAK_TIMES_S: tuple[tuple[str, float], ...] = (
+    ("beacon_1", 20.0),
+    ("beacon_2", 45.0),
+    ("beacon_3", 60.0),
+)
+BLE_SAMPLE_INTERVAL_S = 0.1
+BLE_SAMPLE_BASE_RSSI_DBM = -90.0
+BLE_SAMPLE_PEAK_RSSI_DBM = -45.0
+BLE_SAMPLE_SIGMA_S = 6.0
+BLE_SAMPLE_NOISE_SIGMA_DB = 1.5
+BLE_SAMPLE_MIN_RSSI_DBM = -99.0
+BLE_SAMPLE_SEED = 0

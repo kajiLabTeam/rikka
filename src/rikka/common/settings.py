@@ -16,6 +16,19 @@ from pathlib import Path
 import numpy as np
 
 from .config import (
+    BLE_DATA_PATH,
+    BLE_LANDMARK_ENABLED,
+    BLE_LANDMARKS,
+    BLE_RSSI_RELEASE_MARGIN_DB,
+    BLE_RSSI_THRESHOLD_DBM,
+    BLE_SAMPLE_BASE_RSSI_DBM,
+    BLE_SAMPLE_INTERVAL_S,
+    BLE_SAMPLE_MIN_RSSI_DBM,
+    BLE_SAMPLE_NOISE_SIGMA_DB,
+    BLE_SAMPLE_PEAK_RSSI_DBM,
+    BLE_SAMPLE_PEAK_TIMES_S,
+    BLE_SAMPLE_SEED,
+    BLE_SAMPLE_SIGMA_S,
     FLOORMAP_ORIGIN_PX,
     FLOORMAP_PATH,
     FLOORMAP_SCALE,
@@ -38,6 +51,7 @@ from .config import (
     STEP_LENGTH_METHOD,
     USER_HEIGHT_M,
 )
+from .lib.models import Landmark
 from .lib.validation import (
     FORWARD_HEADING_SOURCES,
     GYRO_BIAS_METHODS,
@@ -52,6 +66,7 @@ from .lib.validation import (
     STEP_DETECTION_METHODS,
     STEP_LENGTH_METHODS,
     validate_choice,
+    validate_landmarks,
     validate_non_negative_parameter,
     validate_positive_parameter,
     validate_scale,
@@ -190,6 +205,71 @@ class ParticleSettings:
 
 
 @dataclass(frozen=True)
+class BleLandmarkSettings:
+    """BLE ランドマーク補正の設定。"""
+
+    enabled: bool = BLE_LANDMARK_ENABLED
+    data_path: str | Path = BLE_DATA_PATH
+    rssi_threshold_dbm: float = BLE_RSSI_THRESHOLD_DBM
+    release_margin_db: float = BLE_RSSI_RELEASE_MARGIN_DB
+    landmarks: tuple[Landmark, ...] = field(
+        default_factory=lambda: tuple(
+            Landmark(beacon_id=beacon_id, x=x, y=y)
+            for beacon_id, x, y in validate_landmarks(BLE_LANDMARKS)
+        )
+    )
+
+    def __post_init__(self) -> None:
+        if not np.isfinite(self.rssi_threshold_dbm):
+            raise ValueError("rssi_threshold_dbm は有限な値を指定してください。")
+        validate_non_negative_parameter("release_margin_db", self.release_margin_db)
+        validate_landmarks(
+            tuple((item.beacon_id, item.x, item.y) for item in self.landmarks)
+        )
+        if self.enabled and not self.landmarks:
+            raise ValueError(
+                "BLE ランドマーク補正を有効にする場合は landmarks を 1 件以上"
+                "指定してください。"
+            )
+
+    def landmark_map(self) -> dict[str, Landmark]:
+        """beacon_id からランドマークを引く辞書を返す。"""
+        return {item.beacon_id: item for item in self.landmarks}
+
+
+@dataclass(frozen=True)
+class BleSampleSettings:
+    """サンプル BLE RSSI 生成の条件。本番のランドマーク測位では使用しない。"""
+
+    peak_times_s: tuple[tuple[str, float], ...] = BLE_SAMPLE_PEAK_TIMES_S
+    interval_s: float = BLE_SAMPLE_INTERVAL_S
+    base_rssi_dbm: float = BLE_SAMPLE_BASE_RSSI_DBM
+    peak_rssi_dbm: float = BLE_SAMPLE_PEAK_RSSI_DBM
+    sigma_s: float = BLE_SAMPLE_SIGMA_S
+    noise_sigma_db: float = BLE_SAMPLE_NOISE_SIGMA_DB
+    min_rssi_dbm: float = BLE_SAMPLE_MIN_RSSI_DBM
+    seed: int = BLE_SAMPLE_SEED
+
+    def __post_init__(self) -> None:
+        validate_positive_parameter("interval_s", self.interval_s)
+        validate_positive_parameter("sigma_s", self.sigma_s)
+        validate_non_negative_parameter("noise_sigma_db", self.noise_sigma_db)
+        if not self.peak_times_s:
+            raise ValueError("peak_times_s は 1 件以上指定してください。")
+        seen: set[str] = set()
+        for beacon_id, peak_time in self.peak_times_s:
+            if beacon_id in seen:
+                raise ValueError(f"beacon_id が重複しています: {beacon_id}")
+            seen.add(beacon_id)
+            if not np.isfinite(peak_time):
+                raise ValueError("peak_times_s の時刻は有限な値を指定してください。")
+        if self.peak_rssi_dbm <= self.base_rssi_dbm:
+            raise ValueError(
+                "peak_rssi_dbm は base_rssi_dbm より大きい値を指定してください。"
+            )
+
+
+@dataclass(frozen=True)
 class OutputSettings:
     """CSV・図・particle 診断成果物の出力設定。"""
 
@@ -222,3 +302,4 @@ class PdrSettings:
     step: StepSettings = field(default_factory=StepSettings)
     heading: HeadingSettings = field(default_factory=HeadingSettings)
     motion_state: MotionStateSettings = field(default_factory=MotionStateSettings)
+    landmark: BleLandmarkSettings = field(default_factory=BleLandmarkSettings)
