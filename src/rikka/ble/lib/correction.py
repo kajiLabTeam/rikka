@@ -51,6 +51,8 @@ def apply_landmark_corrections(
     data_path: str,
 ) -> LandmarkCorrectionResult:
     """検出に従って軌跡を補正し、補正後の軌跡と履歴を返す。"""
+    if not trajectory:
+        raise ValueError("trajectory は 1 点以上必要です。")
     known = settings.landmark_map()
     assigned, discarded = assign_detections_to_steps(detections, t_at_steps)
     corrected: list[list[float]] = [list(trajectory[0])]
@@ -96,4 +98,5 @@ def apply_landmark_corrections(
         discarded_count=discarded,
         rssi_threshold_dbm=settings.rssi_threshold_dbm,
         data_path=data_path,
+        detections=detections,
     )

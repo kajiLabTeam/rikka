@@ -123,6 +123,11 @@ def run(
     """後方互換引数を設定へ変換し、解析と成果物保存を実行する。"""
     if (save_step_frames or save_path_comparison) and not use_particle_filter:
         raise ValueError("粒子可視化の保存には use_particle_filter=True が必要です。")
+    landmark_settings = BleLandmarkSettings(
+        enabled=ble_landmark and not use_particle_filter,
+        data_path=ble_data_path,
+        rssi_threshold_dbm=ble_rssi_threshold,
+    )
     pdr_settings = PdrSettings(
         sensor=SensorSettings(
             gyro_bias_method=(
@@ -154,11 +159,7 @@ def run(
             motion_estimation=motion_estimation,
             smoothing_mode=smoothing_mode,
         ),
-        landmark=BleLandmarkSettings(
-            enabled=ble_landmark,
-            data_path=ble_data_path,
-            rssi_threshold_dbm=ble_rssi_threshold,
-        ),
+        landmark=landmark_settings,
     )
     particle_settings = ParticleSettings(
         floormap_path=floormap_path,

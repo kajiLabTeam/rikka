@@ -150,6 +150,7 @@ BLE CSV は次の3列を持ちます。
 BLE 有効時は `output/<timestamp>/landmark_corrections.csv` に検出時刻、RSSI、
 補正前座標、ランドマーク座標、補正後座標を保存します。`trajectory.png` には
 補正前後の軌跡、ランドマーク、補正地点を重ねて描画します。
+最終歩より後で補正できなかった検出は `step=-1`、`applied=False` としてCSVに残ります。
 
 `rikka particle --ble-landmark` は警告を表示し、最終的な PF 軌跡には BLE 補正を
 適用しません。PF へ統合する場合は、座標上書きではなく観測尤度として別途設計します。

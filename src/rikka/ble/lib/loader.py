@@ -12,7 +12,6 @@
     CSV を読み、必須列と値域を検証し、時刻昇順に整列した観測列を返す。
 """
 
-from itertools import groupby
 from pathlib import Path
 
 import numpy as np
@@ -34,7 +33,12 @@ def load_ble_observations(
         raise ValueError(f"BLE データはファイルを指定してください: {path}")
     try:
         dataframe = pd.read_csv(path)
-    except (OSError, pd.errors.ParserError, UnicodeDecodeError) as exc:
+    except (
+        OSError,
+        pd.errors.EmptyDataError,
+        pd.errors.ParserError,
+        UnicodeDecodeError,
+    ) as exc:
         raise ValueError(f"BLE データを CSV として読み込めません: {path}") from exc
 
     missing = set(BLE_REQUIRED_COLUMNS) - set(dataframe.columns)
@@ -72,12 +76,17 @@ def load_ble_observations(
 
 def group_by_timestamp(
     observations: tuple[BleObservation, ...],
+    window_s: float = 0.0,
 ) -> tuple[tuple[float, tuple[BleObservation, ...]], ...]:
-    """同一時刻の観測をまとめた ``(timestamp_s, 観測列)`` の列を返す。"""
-    return tuple(
-        (timestamp, tuple(group))
-        for timestamp, group in groupby(
-            observations,
-            key=lambda observation: observation.timestamp_s,
-        )
-    )
+    """許容窓に収まる観測を同時受信としてまとめた列を返す。
+
+    ``window_s`` が 0 のときは時刻の完全一致でまとめる。実測 BLE のように
+    ビーコンごとに受信時刻がずれる場合は、窓幅を与えて同時受信として扱う。
+    """
+    groups: list[tuple[float, list[BleObservation]]] = []
+    for observation in observations:
+        if groups and observation.timestamp_s - groups[-1][0] <= window_s:
+            groups[-1][1].append(observation)
+            continue
+        groups.append((observation.timestamp_s, [observation]))
+    return tuple((timestamp, tuple(items)) for timestamp, items in groups)
