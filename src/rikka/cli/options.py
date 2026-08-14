@@ -20,6 +20,8 @@ from math import isfinite
 import click
 
 from ..common.config import (
+    BLE_DATA_PATH,
+    BLE_SAMPLE_SEED,
     DATA_DIR,
     FLOORMAP_ORIGIN_PX,
     FLOORMAP_PATH,
@@ -59,6 +61,8 @@ from ..common.lib.validation import (
 )
 
 _DATA_DIR_DEFAULT = DATA_DIR
+_BLE_DATA_DEFAULT = BLE_DATA_PATH
+_BLE_SAMPLE_SEED_DEFAULT = BLE_SAMPLE_SEED
 _FLOORMAP_DEFAULT = FLOORMAP_PATH
 _ORIGIN_DEFAULT = FLOORMAP_ORIGIN_PX
 _SCALE_DEFAULT = FLOORMAP_SCALE
@@ -637,6 +641,45 @@ def sensor(
         gyro_bias_method=gyro_bias_method,
         gyro_bias=gyro_bias,
     )
+
+
+@cli.command(name="ble-sample")
+@click.option(
+    "--data-dir",
+    "-d",
+    default=_DATA_DIR_DEFAULT,
+    type=click.Path(),
+    show_default=True,
+    help="時間軸の基準にする入力データフォルダ",
+)
+@click.option(
+    "--output",
+    "-o",
+    default=_BLE_DATA_DEFAULT,
+    type=click.Path(),
+    show_default=True,
+    help="生成する BLE RSSI CSV の保存先",
+)
+@click.option(
+    "--seed",
+    type=int,
+    default=_BLE_SAMPLE_SEED_DEFAULT,
+    show_default=True,
+    help="サンプル生成の乱数シード",
+)
+def ble_sample(data_dir: str, output: str, seed: int) -> None:
+    """歩行データと同じ時間軸のサンプル BLE RSSI CSV を生成する。"""
+    from ..ble.lib.sample import generate_sample_csv  # noqa: PLC0415
+    from ..common.lib.sensors import load_sensor_data  # noqa: PLC0415
+    from ..common.settings import BleSampleSettings  # noqa: PLC0415
+
+    df_acc, _ = load_sensor_data(data_dir)
+    path, rows = generate_sample_csv(
+        df_acc,
+        output,
+        BleSampleSettings(seed=seed),
+    )
+    print(f"Sample BLE RSSI saved to {path} ({rows} rows)")
 
 
 def main() -> None:
