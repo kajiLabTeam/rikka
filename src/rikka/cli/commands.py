@@ -16,6 +16,9 @@ import matplotlib.image as mpimg
 import pandas as pd
 
 from ..common.config import (
+    BLE_DATA_PATH,
+    BLE_LANDMARK_ENABLED,
+    BLE_RSSI_THRESHOLD_DBM,
     FLOORMAP_ORIGIN_PX,
     FLOORMAP_PATH,
     FLOORMAP_SCALE,
@@ -40,6 +43,7 @@ from ..common.config import (
 )
 from ..common.lib.models import FloorMap, GyroBiasResult, PreparedPdrSteps
 from ..common.settings import (
+    BleLandmarkSettings,
     HeadingSettings,
     MotionStateSettings,
     OutputSettings,
@@ -112,6 +116,9 @@ def run(
     smoothing_mode: str = SMOOTHING_MODE,
     motion_predictive_weight_power: float = PF_MOTION_PREDICTIVE_WEIGHT_POWER,
     pf_path_selection: str = PF_PATH_SELECTION,
+    ble_landmark: bool = BLE_LANDMARK_ENABLED,
+    ble_data_path: str | Path = BLE_DATA_PATH,
+    ble_rssi_threshold: float = BLE_RSSI_THRESHOLD_DBM,
 ) -> pd.DataFrame:
     """後方互換引数を設定へ変換し、解析と成果物保存を実行する。"""
     if (save_step_frames or save_path_comparison) and not use_particle_filter:
@@ -147,6 +154,11 @@ def run(
             motion_estimation=motion_estimation,
             smoothing_mode=smoothing_mode,
         ),
+        landmark=BleLandmarkSettings(
+            enabled=ble_landmark,
+            data_path=ble_data_path,
+            rssi_threshold_dbm=ble_rssi_threshold,
+        ),
     )
     particle_settings = ParticleSettings(
         floormap_path=floormap_path,
@@ -168,6 +180,8 @@ def run(
     )
     if use_particle_filter:
         _validate_particle_floormap(floormap_path, origin_px)
+        if ble_landmark:
+            print("警告: particle filter 使用時は BLE ランドマーク補正を適用しません。")
 
     result = run_pdr(pdr_settings, df_acc, df_gyro)
     if use_particle_filter:

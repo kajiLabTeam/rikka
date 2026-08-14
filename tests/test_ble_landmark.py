@@ -6,11 +6,18 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from rikka.ble.lib.correction import (
+    apply_landmark_corrections,
+    assign_detections_to_steps,
+)
 from rikka.ble.lib.detection import detect_landmarks
 from rikka.ble.lib.loader import group_by_timestamp, load_ble_observations
 from rikka.ble.lib.sample import generate_sample_observations, write_sample_csv
-from rikka.common.lib.models import BleObservation, Landmark
-from rikka.common.settings import BleLandmarkSettings, BleSampleSettings
+from rikka.ble.pipeline import run_landmark_correction
+from rikka.common.lib.models import BleObservation, Landmark, LandmarkDetection
+from rikka.common.lib.sensors import load_sensor_data
+from rikka.common.settings import BleLandmarkSettings, BleSampleSettings, PdrSettings
+from rikka.pdr.pipeline import run_pdr
 
 
 def _write_ble_csv(path: Path, rows: list[dict[str, object]]) -> Path:
@@ -194,3 +201,131 @@ def test_detect_landmarks_on_sample_data_detects_each_beacon_once(
         "beacon_2",
         "beacon_3",
     }
+
+
+def _detection(
+    timestamp_s: float,
+    beacon_id: str = "beacon_1",
+) -> LandmarkDetection:
+    return LandmarkDetection(timestamp_s, beacon_id, -50.0)
+
+
+def test_apply_landmark_corrections_moves_position_to_landmark() -> None:
+    """補正が起きた歩の座標がランドマーク座標に一致する。"""
+    result = apply_landmark_corrections(
+        [[0.0, 0.0], [1.0, 0.0]],
+        [1.0],
+        (_detection(1.0),),
+        _landmark_settings(),
+        "ble.csv",
+    )
+
+    assert result.trajectory[-1] == [1.0, 2.0]
+
+
+def test_apply_landmark_corrections_continues_from_corrected_position() -> None:
+    """補正後の歩は元 PDR の変位を保って補正座標から続く。"""
+    result = apply_landmark_corrections(
+        [[0.0, 0.0], [1.0, 0.0], [2.0, 0.0], [3.0, 0.0]],
+        [1.0, 2.0, 3.0],
+        (_detection(2.0),),
+        _landmark_settings(
+            landmarks=(Landmark("beacon_1", 10.0, 5.0),),
+        ),
+        "ble.csv",
+    )
+
+    assert result.trajectory == [
+        [0.0, 0.0],
+        [1.0, 0.0],
+        [10.0, 5.0],
+        [11.0, 5.0],
+    ]
+
+
+def test_apply_landmark_corrections_keeps_raw_trajectory() -> None:
+    """raw_trajectory が補正前を保持し、入力を破壊しない。"""
+    trajectory = [[0.0, 0.0], [1.0, 0.0]]
+
+    result = apply_landmark_corrections(
+        trajectory,
+        [1.0],
+        (_detection(1.0),),
+        _landmark_settings(),
+        "ble.csv",
+    )
+
+    assert result.raw_trajectory == [[0.0, 0.0], [1.0, 0.0]]
+    assert trajectory == [[0.0, 0.0], [1.0, 0.0]]
+
+
+def test_apply_landmark_corrections_without_detection_is_identity() -> None:
+    """検出が無い場合は元軌跡と一致する。"""
+    trajectory = [[0.0, 0.0], [1.0, 0.0]]
+
+    result = apply_landmark_corrections(
+        trajectory,
+        [1.0],
+        (),
+        _landmark_settings(),
+        "ble.csv",
+    )
+
+    assert result.trajectory == trajectory
+
+
+def test_assign_detections_to_steps_uses_first_step_at_or_after() -> None:
+    """検出時刻以降で最も早い歩に割り当てられる。"""
+    assigned, discarded = assign_detections_to_steps(
+        (_detection(1.5),),
+        [1.0, 2.0, 3.0],
+    )
+
+    assert assigned == {1: [_detection(1.5)]}
+    assert discarded == 0
+
+
+def test_assign_detections_to_steps_discards_after_last_step() -> None:
+    """最終歩より後の検出を破棄して件数を数える。"""
+    assigned, discarded = assign_detections_to_steps(
+        (_detection(4.0),),
+        [1.0, 2.0, 3.0],
+    )
+
+    assert assigned == {}
+    assert discarded == 1
+
+
+def test_apply_landmark_corrections_marks_last_detection_applied() -> None:
+    """同じ歩に複数検出があるとき最後だけ applied になる。"""
+    result = apply_landmark_corrections(
+        [[0.0, 0.0], [1.0, 0.0]],
+        [1.0],
+        (_detection(0.5, "beacon_1"), _detection(0.7, "beacon_2")),
+        _landmark_settings(),
+        "ble.csv",
+    )
+
+    assert [item.applied for item in result.corrections] == [False, True]
+    assert result.trajectory[-1] == [3.0, 4.0]
+
+
+def test_run_landmark_correction_returns_none_when_disabled() -> None:
+    """無効時は BLE ファイルを読まず None を返す。"""
+    result = run_landmark_correction(
+        [[0.0, 0.0]],
+        [],
+        BleLandmarkSettings(enabled=False, data_path="missing.csv"),
+    )
+
+    assert result is None
+
+
+def test_run_pdr_without_ble_matches_prepared_trajectory() -> None:
+    """BLE 無効時の run_pdr 軌跡が共有済み軌跡と一致する。"""
+    df_acc, df_gyro = load_sensor_data()
+
+    result = run_pdr(PdrSettings(), df_acc, df_gyro)
+
+    assert result.landmark is None
+    assert result.trajectory == result.prepared.trajectory
