@@ -332,6 +332,7 @@ class LandmarkCorrectionResult:
     discarded_count: int
     rssi_threshold_dbm: float
     data_path: str
+    detections: tuple[LandmarkDetection, ...] = ()
 
 
 @dataclass(frozen=True)

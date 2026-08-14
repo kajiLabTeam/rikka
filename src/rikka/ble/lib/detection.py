@@ -9,8 +9,8 @@
     ``ble.pipeline`` が座標補正の前段として呼び出す。座標や軌跡には依存しないため、
     将来 RSSI からの距離推定や確率的な観測モデルへ差し替えられる。
 処理フロー:
-    同一時刻ごとに登録済みビーコンの RSSI を比較し、ラッチ状態を考慮して最大 RSSI の
-    ビーコンを 1 件検出し、RSSI が解除水準を2観測連続で下回るとラッチを解除する。
+    同時受信窓ごとにビーコン別の最大 RSSI を比較し、ラッチ状態を考慮して最大 RSSI の
+    ビーコンを 1 件検出し、RSSI が解除水準を設定回数連続で下回るとラッチを解除する。
 """
 
 from ...common.lib.models import BleObservation, LandmarkDetection
@@ -26,6 +26,18 @@ def _select_strongest(candidates: list[BleObservation]) -> BleObservation:
     )
 
 
+def _reduce_by_beacon(
+    group: tuple[BleObservation, ...],
+) -> list[BleObservation]:
+    """同一窓内の観測をビーコンごとの最大 RSSI へ集約する。"""
+    strongest: dict[str, BleObservation] = {}
+    for observation in group:
+        current = strongest.get(observation.beacon_id)
+        if current is None or observation.rssi_dbm > current.rssi_dbm:
+            strongest[observation.beacon_id] = observation
+    return list(strongest.values())
+
+
 def detect_landmarks(
     observations: tuple[BleObservation, ...],
     settings: BleLandmarkSettings,
@@ -38,21 +50,22 @@ def detect_landmarks(
     release_streaks: dict[str, int] = {}
     detections: list[LandmarkDetection] = []
 
-    for timestamp, group in group_by_timestamp(observations):
+    for _, group in group_by_timestamp(observations, settings.sync_window_s):
+        reduced = _reduce_by_beacon(group)
         released: set[str] = set()
-        for observation in group:
+        for observation in reduced:
             if observation.beacon_id not in latched:
                 continue
             if observation.rssi_dbm < release:
                 streak = release_streaks.get(observation.beacon_id, 0) + 1
                 release_streaks[observation.beacon_id] = streak
-                if streak >= 2:
+                if streak >= settings.release_streak:
                     released.add(observation.beacon_id)
             else:
                 release_streaks[observation.beacon_id] = 0
         candidates = [
             observation
-            for observation in group
+            for observation in reduced
             if observation.beacon_id in known
             and observation.beacon_id not in latched
             and observation.rssi_dbm >= threshold
@@ -60,7 +73,7 @@ def detect_landmarks(
         if candidates:
             best = _select_strongest(candidates)
             detections.append(
-                LandmarkDetection(timestamp, best.beacon_id, best.rssi_dbm)
+                LandmarkDetection(best.timestamp_s, best.beacon_id, best.rssi_dbm)
             )
             latched.add(best.beacon_id)
             release_streaks[best.beacon_id] = 0

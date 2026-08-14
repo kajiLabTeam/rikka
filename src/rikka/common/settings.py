@@ -20,6 +20,7 @@ from .config import (
     BLE_LANDMARK_ENABLED,
     BLE_LANDMARKS,
     BLE_RSSI_RELEASE_MARGIN_DB,
+    BLE_RSSI_RELEASE_STREAK,
     BLE_RSSI_THRESHOLD_DBM,
     BLE_SAMPLE_BASE_RSSI_DBM,
     BLE_SAMPLE_INTERVAL_S,
@@ -29,6 +30,7 @@ from .config import (
     BLE_SAMPLE_PEAK_TIMES_S,
     BLE_SAMPLE_SEED,
     BLE_SAMPLE_SIGMA_S,
+    BLE_SYNC_WINDOW_S,
     FLOORMAP_ORIGIN_PX,
     FLOORMAP_PATH,
     FLOORMAP_SCALE,
@@ -212,6 +214,8 @@ class BleLandmarkSettings:
     data_path: str | Path = BLE_DATA_PATH
     rssi_threshold_dbm: float = BLE_RSSI_THRESHOLD_DBM
     release_margin_db: float = BLE_RSSI_RELEASE_MARGIN_DB
+    release_streak: int = BLE_RSSI_RELEASE_STREAK
+    sync_window_s: float = BLE_SYNC_WINDOW_S
     landmarks: tuple[Landmark, ...] = field(
         default_factory=lambda: tuple(
             Landmark(beacon_id=beacon_id, x=x, y=y)
@@ -223,6 +227,13 @@ class BleLandmarkSettings:
         if not np.isfinite(self.rssi_threshold_dbm):
             raise ValueError("rssi_threshold_dbm は有限な値を指定してください。")
         validate_non_negative_parameter("release_margin_db", self.release_margin_db)
+        if (
+            not isinstance(self.release_streak, int)
+            or isinstance(self.release_streak, bool)
+            or self.release_streak < 1
+        ):
+            raise ValueError("release_streak は 1 以上の整数を指定してください。")
+        validate_non_negative_parameter("sync_window_s", self.sync_window_s)
         validate_landmarks(
             tuple((item.beacon_id, item.x, item.y) for item in self.landmarks)
         )

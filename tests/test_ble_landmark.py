@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pytest
@@ -15,12 +16,15 @@ from rikka.ble.lib.detection import detect_landmarks
 from rikka.ble.lib.loader import group_by_timestamp, load_ble_observations
 from rikka.ble.lib.sample import generate_sample_observations, write_sample_csv
 from rikka.ble.pipeline import run_landmark_correction
+from rikka.cli.commands import run as run_command
 from rikka.cli.options import cli
 from rikka.common.lib.models import BleObservation, Landmark, LandmarkDetection
 from rikka.common.lib.sensors import load_sensor_data
 from rikka.common.settings import BleLandmarkSettings, BleSampleSettings, PdrSettings
 from rikka.pdr.pipeline import run_pdr
+from rikka.plot import pipeline as plot_pipeline
 from rikka.plot.lib.outputs import _build_landmark_corrections_dataframe
+from rikka.plot.lib.trajectory import plot_trajectory
 
 
 def _write_ble_csv(path: Path, rows: list[dict[str, object]]) -> Path:
@@ -86,6 +90,15 @@ def test_load_ble_observations_reports_missing_file(tmp_path: Path) -> None:
         load_ble_observations(tmp_path / "missing.csv")
 
 
+def test_load_ble_observations_wraps_empty_csv_error(tmp_path: Path) -> None:
+    """0バイトのCSVを日本語の ValueError として報告する。"""
+    path = tmp_path / "empty.csv"
+    path.touch()
+
+    with pytest.raises(ValueError, match="CSV として読み込めません"):
+        load_ble_observations(path)
+
+
 def test_group_by_timestamp_groups_same_time() -> None:
     """同一時刻の観測が 1 グループにまとまることを確認する。"""
     observations = (
@@ -97,6 +110,20 @@ def test_group_by_timestamp_groups_same_time() -> None:
     groups = group_by_timestamp(observations)
 
     assert [timestamp for timestamp, _ in groups] == [1.0, 2.0]
+    assert [len(group) for _, group in groups] == [2, 1]
+
+
+def test_group_by_timestamp_uses_window_start_as_anchor() -> None:
+    """許容窓が時刻差の連鎖で伸びないことを確認する。"""
+    observations = (
+        BleObservation(0.00, "b1", -50.0),
+        BleObservation(0.04, "b2", -60.0),
+        BleObservation(0.08, "b3", -70.0),
+    )
+
+    groups = group_by_timestamp(observations, window_s=0.05)
+
+    assert [timestamp for timestamp, _ in groups] == [0.00, 0.08]
     assert [len(group) for _, group in groups] == [2, 1]
 
 
@@ -139,6 +166,22 @@ def test_detect_landmarks_redetects_after_release() -> None:
     assert [item.timestamp_s for item in detections] == [0.0, 3.0]
 
 
+def test_detect_landmarks_release_streak_one_releases_immediately() -> None:
+    """release_streak=1 なら1サンプルの低下後に再検出できる。"""
+    detections = detect_landmarks(
+        _observations([-50, -59, -50]),
+        _landmark_settings(release_streak=1),
+    )
+
+    assert [item.timestamp_s for item in detections] == [0.0, 2.0]
+
+
+def test_landmark_settings_rejects_invalid_release_streak() -> None:
+    """解除連続回数は1以上の整数だけを受け付ける。"""
+    with pytest.raises(ValueError, match="release_streak"):
+        _landmark_settings(release_streak=0)
+
+
 def test_detect_landmarks_release_margin_prevents_chattering() -> None:
     """閾値直下で揺らぐ RSSI では再検出しないことを確認する。"""
     detections = detect_landmarks(
@@ -160,6 +203,31 @@ def test_detect_landmarks_selects_strongest_beacon() -> None:
     detections = detect_landmarks(observations, _landmark_settings())
 
     assert [item.beacon_id for item in detections] == ["beacon_2"]
+
+
+def test_detect_landmarks_selects_strongest_within_sync_window() -> None:
+    """受信時刻が数十 ms ずれても最大 RSSI のビーコンだけを検出する。"""
+    observations = (
+        BleObservation(10.000, "beacon_1", -52.0),
+        BleObservation(10.013, "beacon_2", -45.0),
+        BleObservation(10.027, "beacon_3", -70.0),
+    )
+
+    detections = detect_landmarks(observations, _landmark_settings())
+
+    assert detections == (LandmarkDetection(10.013, "beacon_2", -45.0),)
+
+
+def test_detect_landmarks_does_not_merge_separate_rounds() -> None:
+    """同期窓より離れた受信周期が別グループになることを確認する。"""
+    observations = (
+        BleObservation(1.0, "beacon_1", -50.0),
+        BleObservation(1.1, "beacon_2", -45.0),
+    )
+
+    detections = detect_landmarks(observations, _landmark_settings())
+
+    assert [item.beacon_id for item in detections] == ["beacon_1", "beacon_2"]
 
 
 def test_detect_landmarks_ignores_unregistered_beacon() -> None:
@@ -277,6 +345,12 @@ def test_apply_landmark_corrections_without_detection_is_identity() -> None:
     assert result.trajectory == trajectory
 
 
+def test_apply_landmark_corrections_rejects_empty_trajectory() -> None:
+    """空軌跡は日本語の ValueError にする。"""
+    with pytest.raises(ValueError, match="trajectory は 1 点以上"):
+        apply_landmark_corrections([], [], (), _landmark_settings(), "ble.csv")
+
+
 def test_assign_detections_to_steps_uses_first_step_at_or_after() -> None:
     """検出時刻以降で最も早い歩に割り当てられる。"""
     assigned, discarded = assign_detections_to_steps(
@@ -334,6 +408,49 @@ def test_run_pdr_without_ble_matches_prepared_trajectory() -> None:
     assert result.trajectory == result.prepared.trajectory
 
 
+def test_run_with_particle_filter_skips_ble_load(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PF 使用時は存在しない BLE パスを読み込まない。"""
+    map_path = tmp_path / "map.png"
+    plt.imsave(map_path, np.ones((8, 8)), cmap="gray", vmin=0.0, vmax=1.0)
+    times = np.arange(5, dtype=float) * 0.01
+    df_acc = pd.DataFrame(
+        {
+            "t": times,
+            "x": np.zeros(5),
+            "y": np.zeros(5),
+            "z": np.full(5, 9.8),
+        }
+    )
+    df_gyro = pd.DataFrame(
+        {
+            "t": times,
+            "x": np.zeros(5),
+            "y": np.zeros(5),
+            "z": np.zeros(5),
+        }
+    )
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    monkeypatch.setattr(plot_pipeline, "create_output_dir", lambda: output_dir)
+
+    run_command(
+        df_acc=df_acc,
+        df_gyro=df_gyro,
+        plot=False,
+        use_particle_filter=True,
+        floormap_path=map_path,
+        origin_px=(0, 0),
+        particle_seed=0,
+        ble_landmark=True,
+        ble_data_path=tmp_path / "missing.csv",
+    )
+
+    assert not (output_dir / "landmark_corrections.csv").exists()
+
+
 def test_build_landmark_corrections_dataframe_has_diagnostic_columns() -> None:
     """補正履歴が必要な診断列を持つ DataFrame になる。"""
     result = apply_landmark_corrections(
@@ -362,6 +479,52 @@ def test_build_landmark_corrections_dataframe_has_diagnostic_columns() -> None:
             "after_y": 2.0,
         }
     ]
+
+
+def test_build_landmark_corrections_dataframe_keeps_discarded_detection() -> None:
+    """最終歩より後の検出も未適用行として診断CSVに残す。"""
+    result = apply_landmark_corrections(
+        [[0.0, 0.0]],
+        [],
+        (_detection(4.0),),
+        _landmark_settings(),
+        "ble.csv",
+    )
+
+    dataframe = _build_landmark_corrections_dataframe(result)
+
+    assert len(dataframe) == 1
+    assert dataframe.loc[0, "step"] == -1
+    assert dataframe.loc[0, "applied"] == np.False_
+    assert pd.isna(dataframe.loc[0, "before_x"])
+
+
+def test_plot_trajectory_labels_corrected_path_with_landmark(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BLE補正時は補正後軌跡を凡例へ追加する。"""
+    map_path = tmp_path / "map.png"
+    plt.imsave(map_path, np.ones((8, 8)), cmap="gray", vmin=0.0, vmax=1.0)
+    landmark = apply_landmark_corrections(
+        [[0.0, 0.0], [1.0, 0.0]],
+        [1.0],
+        (_detection(1.0),),
+        _landmark_settings(),
+        "ble.csv",
+    )
+    monkeypatch.setattr(plt, "show", lambda: None)
+
+    plot_trajectory(
+        landmark.trajectory,
+        floormap_path=map_path,
+        output_dir=tmp_path,
+        landmark=landmark,
+    )
+
+    labels = [artist.get_label() for artist in plt.gcf().axes[0].collections]
+    assert "補正後軌跡" in labels
+    plt.close("all")
 
 
 def test_run_help_includes_ble_landmark_option() -> None:

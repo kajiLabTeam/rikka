@@ -297,6 +297,8 @@ def plot_trajectory(
     pts = np.column_stack([px, py]).reshape(-1, 1, 2)
     segments = np.concatenate([pts[:-1], pts[1:]], axis=1)
     lc = LineCollection(segments.tolist(), cmap=cmap, norm=norm, zorder=2)
+    if landmark is not None:
+        lc.set_label("補正後軌跡")
     lc.set_array(np.arange(n - 1))
     ax.add_collection(lc)
     # 各ステップ点を同じカラーマップで描画

@@ -12,6 +12,7 @@
     解析結果の配列長と時刻を揃え、角度や分類値を出力列へ変換して DataFrame を返す。
 """
 
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
@@ -391,7 +392,7 @@ def _build_landmark_corrections_dataframe(
         "after_x",
         "after_y",
     ]
-    rows = [
+    rows: list[dict[str, object]] = [
         {
             "step": correction.step_index,
             "timestamp_s": correction.timestamp_s,
@@ -408,6 +409,35 @@ def _build_landmark_corrections_dataframe(
         }
         for correction in landmark.corrections
     ]
+    corrected_detections = Counter(
+        (
+            correction.timestamp_s,
+            correction.beacon_id,
+            correction.rssi_dbm,
+        )
+        for correction in landmark.corrections
+    )
+    for detection in landmark.detections:
+        key = (detection.timestamp_s, detection.beacon_id, detection.rssi_dbm)
+        if corrected_detections[key] > 0:
+            corrected_detections[key] -= 1
+            continue
+        rows.append(
+            {
+                "step": -1,
+                "timestamp_s": detection.timestamp_s,
+                "beacon_id": detection.beacon_id,
+                "rssi_dbm": detection.rssi_dbm,
+                "detected": True,
+                "applied": False,
+                "before_x": np.nan,
+                "before_y": np.nan,
+                "landmark_x": np.nan,
+                "landmark_y": np.nan,
+                "after_x": np.nan,
+                "after_y": np.nan,
+            }
+        )
     return pd.DataFrame(rows, columns=columns)
 
 
