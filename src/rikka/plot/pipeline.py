@@ -187,12 +187,19 @@ def _render_trajectory(
     output_dir: Path,
 ) -> None:
     """通常PDRとPFで共通の引数を使って軌跡図を描画する。"""
-    plotter = (
-        plot_particle_filter_trajectory
-        if result.particle is not None
-        else plot_trajectory
-    )
-    plotter(
+    if result.particle is not None:
+        plot_particle_filter_trajectory(
+            result.trajectory,
+            gx_mean=result.prepared.gx_mean,
+            gz_mean=result.prepared.gz_mean,
+            floormap_path=settings.floormap_path,
+            origin_px=settings.origin_px,
+            scale=settings.scale,
+            output_dir=output_dir,
+            step_headings=result.step_headings,
+        )
+        return
+    plot_trajectory(
         result.trajectory,
         gx_mean=result.prepared.gx_mean,
         gz_mean=result.prepared.gz_mean,
@@ -201,6 +208,7 @@ def _render_trajectory(
         scale=settings.scale,
         output_dir=output_dir,
         step_headings=result.step_headings,
+        landmark=result.landmark,
     )
 
 

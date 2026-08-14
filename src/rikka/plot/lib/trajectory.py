@@ -2,7 +2,7 @@
 
 役割:
     メートル座標の軌跡をフロアマップのピクセル座標へ変換し、ステップ分類、方位、
-    始点・終点を重ねた画像として表示・保存する。
+    始点・終点、BLE ランドマーク補正を重ねた画像として表示・保存する。
 依存元:
     ``config`` から地図の既定値、``models`` から ``StepHeading`` を取得し、
     NumPy、Pandas、Matplotlib を座標変換と描画に利用する。
@@ -26,7 +26,7 @@ from matplotlib.colors import Normalize
 
 from ...common.config import FLOORMAP_ORIGIN_PX, FLOORMAP_PATH, FLOORMAP_SCALE
 from ...common.lib.floormap import compute_pixel_coords, pixel_vector_from_heading
-from ...common.lib.models import StepHeading
+from ...common.lib.models import LandmarkCorrectionResult, StepHeading
 from ...matplotlib_config import configure_japanese_font
 
 _compute_pixel_coords = compute_pixel_coords
@@ -178,6 +178,92 @@ def _plot_heading_overlay(
         )
 
 
+def _plot_landmark_overlay(
+    ax: Axes,
+    landmark: LandmarkCorrectionResult | None,
+    gx_mean: float,
+    gz_mean: float,
+    origin_px: tuple[int, int],
+    scale: float,
+) -> None:
+    """補正前軌跡、ランドマーク位置、補正発生地点を重ねて描画する。"""
+    if landmark is None:
+        return
+
+    raw = np.asarray(landmark.raw_trajectory, dtype=float)
+    if raw.ndim == 2 and raw.shape[1] == 2 and len(raw) >= 2:
+        raw_px, raw_py = _compute_pixel_coords(
+            raw[:, 0], raw[:, 1], gx_mean, gz_mean, origin_px, scale
+        )
+        ax.plot(
+            raw_px,
+            raw_py,
+            linestyle="--",
+            color="gray",
+            linewidth=1.4,
+            alpha=0.6,
+            zorder=1,
+            label="補正前軌跡",
+        )
+
+    applied = [item for item in landmark.corrections if item.applied]
+    if not applied:
+        return
+
+    landmark_x = np.array([item.landmark_x for item in applied], dtype=float)
+    landmark_y = np.array([item.landmark_y for item in applied], dtype=float)
+    lx, ly = _compute_pixel_coords(
+        landmark_x,
+        landmark_y,
+        gx_mean,
+        gz_mean,
+        origin_px,
+        scale,
+    )
+    ax.scatter(
+        lx,
+        ly,
+        marker="*",
+        s=260,
+        color="magenta",
+        edgecolors="black",
+        linewidths=0.8,
+        zorder=8,
+        label="ランドマーク",
+    )
+
+    before_x = np.array([item.before_x for item in applied], dtype=float)
+    before_y = np.array([item.before_y for item in applied], dtype=float)
+    bx, by = _compute_pixel_coords(
+        before_x,
+        before_y,
+        gx_mean,
+        gz_mean,
+        origin_px,
+        scale,
+    )
+    ax.scatter(
+        bx,
+        by,
+        marker="X",
+        s=110,
+        color="red",
+        edgecolors="black",
+        linewidths=0.8,
+        zorder=9,
+        label="ランドマーク補正",
+    )
+    for index in range(len(applied)):
+        ax.plot(
+            [bx[index], lx[index]],
+            [by[index], ly[index]],
+            color="red",
+            linewidth=1.0,
+            alpha=0.7,
+            zorder=8,
+        )
+
+
 def plot_trajectory(
     trajectory: list[list[float]],
     gx_mean: float = 0.0,
@@ -187,6 +273,7 @@ def plot_trajectory(
     scale: float = FLOORMAP_SCALE,
     output_dir: Path | None = None,
     step_headings: list[StepHeading] | None = None,
+    landmark: LandmarkCorrectionResult | None = None,
 ) -> None:
     """推定した2次元歩行軌跡をフロアマップ上にプロットする。"""
     configure_japanese_font()
@@ -221,6 +308,14 @@ def plot_trajectory(
         ax,
         trajectory,
         step_headings,
+        gx_mean,
+        gz_mean,
+        origin_px,
+        scale,
+    )
+    _plot_landmark_overlay(
+        ax,
+        landmark,
         gx_mean,
         gz_mean,
         origin_px,
