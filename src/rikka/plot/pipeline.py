@@ -30,6 +30,7 @@ from .lib.frames import (
 from .lib.outputs import (
     _build_direction_posteriors_dataframe,
     _build_gyro_bias_dataframe,
+    _build_landmark_corrections_dataframe,
     _build_motion_posteriors_dataframe,
     _build_step_headings_dataframe,
     _build_step_length_observations_dataframe,
@@ -105,6 +106,12 @@ def write_outputs(result: TrajectoryResult, output_dir: Path) -> pd.DataFrame:
             ),
             output_dir / "step_segments.csv",
             "Step segments",
+        )
+    if result.landmark is not None:
+        _write_csv(
+            _build_landmark_corrections_dataframe(result.landmark),
+            output_dir / "landmark_corrections.csv",
+            "Landmark corrections",
         )
     if result.particle is not None:
         columns = [field.name for field in fields(ParticleFilterStepDiagnostics)]

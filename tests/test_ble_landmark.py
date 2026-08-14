@@ -18,6 +18,7 @@ from rikka.common.lib.models import BleObservation, Landmark, LandmarkDetection
 from rikka.common.lib.sensors import load_sensor_data
 from rikka.common.settings import BleLandmarkSettings, BleSampleSettings, PdrSettings
 from rikka.pdr.pipeline import run_pdr
+from rikka.plot.lib.outputs import _build_landmark_corrections_dataframe
 
 
 def _write_ble_csv(path: Path, rows: list[dict[str, object]]) -> Path:
@@ -329,3 +330,33 @@ def test_run_pdr_without_ble_matches_prepared_trajectory() -> None:
 
     assert result.landmark is None
     assert result.trajectory == result.prepared.trajectory
+
+
+def test_build_landmark_corrections_dataframe_has_diagnostic_columns() -> None:
+    """補正履歴が必要な診断列を持つ DataFrame になる。"""
+    result = apply_landmark_corrections(
+        [[0.0, 0.0], [1.0, 0.0]],
+        [1.0],
+        (_detection(1.0),),
+        _landmark_settings(),
+        "ble.csv",
+    )
+
+    dataframe = _build_landmark_corrections_dataframe(result)
+
+    assert dataframe.to_dict("records") == [
+        {
+            "step": 0,
+            "timestamp_s": 1.0,
+            "beacon_id": "beacon_1",
+            "rssi_dbm": -50.0,
+            "detected": True,
+            "applied": True,
+            "before_x": 1.0,
+            "before_y": 0.0,
+            "landmark_x": 1.0,
+            "landmark_y": 2.0,
+            "after_x": 1.0,
+            "after_y": 2.0,
+        }
+    ]
