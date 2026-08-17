@@ -8,19 +8,33 @@ import pandas as pd
 import pytest
 from click.testing import CliRunner
 
-from rikka.ble.lib.correction import (
-    apply_landmark_corrections,
-    assign_detections_to_steps,
-)
 from rikka.ble.lib.detection import detect_landmarks
 from rikka.ble.lib.loader import group_by_timestamp, load_ble_observations
 from rikka.ble.lib.sample import generate_sample_observations, write_sample_csv
-from rikka.ble.pipeline import run_landmark_correction
+from rikka.ble.pipeline import run_ble_landmark_detection
+from rikka.cli import commands as cli_commands
 from rikka.cli.commands import run as run_command
 from rikka.cli.options import cli
-from rikka.common.lib.models import BleObservation, Landmark, LandmarkDetection
+from rikka.common.config import FLOORMAP_PATH
+from rikka.common.lib.floormap import compute_meter_coords, compute_pixel_coords
+from rikka.common.lib.models import (
+    BleObservation,
+    FloorMap,
+    Landmark,
+    LandmarkCorrectionResult,
+    LandmarkDetection,
+)
 from rikka.common.lib.sensors import load_sensor_data
-from rikka.common.settings import BleLandmarkSettings, BleSampleSettings, PdrSettings
+from rikka.common.settings import (
+    BleLandmarkSettings,
+    BleSampleSettings,
+    PdrSettings,
+)
+from rikka.landmark.lib.assignment import (
+    assign_detections_to_steps,
+    build_step_landmark_map,
+)
+from rikka.pdr.lib.landmark_correction import apply_landmark_corrections
 from rikka.pdr.pipeline import run_pdr
 from rikka.plot import pipeline as plot_pipeline
 from rikka.plot.lib.outputs import _build_landmark_corrections_dataframe
@@ -133,10 +147,35 @@ def _landmark_settings(**overrides: object) -> BleLandmarkSettings:
             Landmark("beacon_1", 1.0, 2.0),
             Landmark("beacon_2", 3.0, 4.0),
             Landmark("beacon_3", 5.0, 6.0),
-        )
+        ),
     }
     values.update(overrides)
     return BleLandmarkSettings(**values)  # type: ignore[arg-type]
+
+
+def _apply_corrections(
+    trajectory: list[list[float]],
+    t_at_steps: list[float],
+    detections: tuple[LandmarkDetection, ...],
+    settings: BleLandmarkSettings,
+    data_path: str,
+    gx_mean: float,
+    gz_mean: float,
+    *,
+    floormap: FloorMap | None = None,
+) -> LandmarkCorrectionResult:
+    """テスト設定をPDR固有のランドマーク補正境界へ展開する。"""
+    return apply_landmark_corrections(
+        trajectory,
+        t_at_steps,
+        detections=detections,
+        landmarks=settings.landmarks,
+        floormap=floormap or FloorMap("map.png", (0, 0), 1.0),
+        data_path=data_path,
+        rssi_threshold_dbm=settings.rssi_threshold_dbm,
+        gx_mean=gx_mean,
+        gz_mean=gz_mean,
+    )
 
 
 def _observations(rssi_values: list[float]) -> tuple[BleObservation, ...]:
@@ -180,6 +219,66 @@ def test_landmark_settings_rejects_invalid_release_streak() -> None:
     """解除連続回数は1以上の整数だけを受け付ける。"""
     with pytest.raises(ValueError, match="release_streak"):
         _landmark_settings(release_streak=0)
+
+
+def test_default_landmarks_are_walkable_map_pixels() -> None:
+    """既定ランドマークが実フロアマップの歩行可能画素にある。"""
+    map_gray = cli_commands._load_floormap_gray(FLOORMAP_PATH)
+    landmarks = BleLandmarkSettings().landmarks
+
+    assert landmarks == (
+        Landmark("beacon_1", 2056, 2400),
+        Landmark("beacon_2", 750, 1479),
+        Landmark("beacon_3", 2056, 700),
+    )
+    cli_commands._validate_landmark_pixels(map_gray, landmarks)
+
+
+@pytest.mark.parametrize(("gx_mean", "gz_mean"), [(0.0, 1.0), (0.0, -1.0)])
+def test_floormap_meter_conversion_is_pixel_conversion_inverse(
+    gx_mean: float,
+    gz_mean: float,
+) -> None:
+    """共有メートル変換が画素変換の逆変換になる。"""
+    xs = np.array([-2.0, 0.0, 3.5])
+    ys = np.array([1.0, -4.0, 2.5])
+    pixel_xs, pixel_ys = compute_pixel_coords(
+        xs,
+        ys,
+        gx_mean,
+        gz_mean,
+        origin_px=(100, 200),
+        scale=0.1,
+    )
+
+    actual_xs, actual_ys = compute_meter_coords(
+        pixel_xs,
+        pixel_ys,
+        gx_mean,
+        gz_mean,
+        origin_px=(100, 200),
+        scale=0.1,
+    )
+
+    np.testing.assert_allclose(actual_xs, xs)
+    np.testing.assert_allclose(actual_ys, ys)
+
+
+def test_landmark_pixel_validation_rejects_wall_and_out_of_bounds() -> None:
+    """壁上と地図範囲外のランドマークを拒否する。"""
+    map_gray = np.full((4, 4), 255.0)
+    map_gray[2, 2] = 0.0
+
+    with pytest.raises(ValueError, match=r"wall.*\(2.0, 2.0\)"):
+        cli_commands._validate_landmark_pixels(
+            map_gray,
+            (Landmark("wall", 2.0, 2.0),),
+        )
+    with pytest.raises(ValueError, match="outside"):
+        cli_commands._validate_landmark_pixels(
+            map_gray,
+            (Landmark("outside", 10.0, 10.0),),
+        )
 
 
 def test_detect_landmarks_release_margin_prevents_chattering() -> None:
@@ -282,21 +381,43 @@ def _detection(
 
 
 def test_apply_landmark_corrections_moves_position_to_landmark() -> None:
-    """補正が起きた歩の座標がランドマーク座標に一致する。"""
-    result = apply_landmark_corrections(
+    """補正が起きた歩の座標が変換後のランドマーク座標に一致する。"""
+    result = _apply_corrections(
         [[0.0, 0.0], [1.0, 0.0]],
         [1.0],
         (_detection(1.0),),
         _landmark_settings(),
         "ble.csv",
+        0.0,
+        1.0,
     )
 
     assert result.trajectory[-1] == [1.0, 2.0]
 
 
+def test_apply_landmark_corrections_converts_pixel_landmark_to_meter() -> None:
+    """ピクセル座標を起点・縮尺・画素Y方向でPDR座標へ変換する。"""
+    result = _apply_corrections(
+        [[0.0, 0.0], [1.0, 0.0]],
+        [1.0],
+        (_detection(1.0),),
+        _landmark_settings(
+            landmarks=(Landmark("beacon_1", 130.0, 160.0),),
+        ),
+        "ble.csv",
+        0.0,
+        -1.0,
+        floormap=FloorMap("map.png", (100, 200), 0.1),
+    )
+
+    assert result.trajectory[-1] == pytest.approx([3.0, 4.0])
+    assert result.corrections[0].landmark_x == pytest.approx(3.0)
+    assert result.corrections[0].landmark_y == pytest.approx(4.0)
+
+
 def test_apply_landmark_corrections_continues_from_corrected_position() -> None:
     """補正後の歩は元 PDR の変位を保って補正座標から続く。"""
-    result = apply_landmark_corrections(
+    result = _apply_corrections(
         [[0.0, 0.0], [1.0, 0.0], [2.0, 0.0], [3.0, 0.0]],
         [1.0, 2.0, 3.0],
         (_detection(2.0),),
@@ -304,6 +425,8 @@ def test_apply_landmark_corrections_continues_from_corrected_position() -> None:
             landmarks=(Landmark("beacon_1", 10.0, 5.0),),
         ),
         "ble.csv",
+        0.0,
+        1.0,
     )
 
     assert result.trajectory == [
@@ -318,12 +441,14 @@ def test_apply_landmark_corrections_keeps_raw_trajectory() -> None:
     """raw_trajectory が補正前を保持し、入力を破壊しない。"""
     trajectory = [[0.0, 0.0], [1.0, 0.0]]
 
-    result = apply_landmark_corrections(
+    result = _apply_corrections(
         trajectory,
         [1.0],
         (_detection(1.0),),
         _landmark_settings(),
         "ble.csv",
+        0.0,
+        1.0,
     )
 
     assert result.raw_trajectory == [[0.0, 0.0], [1.0, 0.0]]
@@ -334,12 +459,14 @@ def test_apply_landmark_corrections_without_detection_is_identity() -> None:
     """検出が無い場合は元軌跡と一致する。"""
     trajectory = [[0.0, 0.0], [1.0, 0.0]]
 
-    result = apply_landmark_corrections(
+    result = _apply_corrections(
         trajectory,
         [1.0],
         (),
         _landmark_settings(),
         "ble.csv",
+        0.0,
+        1.0,
     )
 
     assert result.trajectory == trajectory
@@ -348,7 +475,7 @@ def test_apply_landmark_corrections_without_detection_is_identity() -> None:
 def test_apply_landmark_corrections_rejects_empty_trajectory() -> None:
     """空軌跡は日本語の ValueError にする。"""
     with pytest.raises(ValueError, match="trajectory は 1 点以上"):
-        apply_landmark_corrections([], [], (), _landmark_settings(), "ble.csv")
+        _apply_corrections([], [], (), _landmark_settings(), "ble.csv", 0.0, 1.0)
 
 
 def test_assign_detections_to_steps_uses_first_step_at_or_after() -> None:
@@ -373,29 +500,60 @@ def test_assign_detections_to_steps_discards_after_last_step() -> None:
     assert discarded == 1
 
 
+def test_build_step_landmark_map_uses_one_based_last_registered_detection() -> None:
+    """PF用マップは1始まり歩番号で、同一歩の最後の登録済み検出を使う。"""
+    detections = (
+        _detection(0.5, "unknown"),
+        _detection(0.6, "beacon_1"),
+        _detection(0.7, "beacon_2"),
+    )
+
+    result = build_step_landmark_map(
+        detections,
+        [1.0],
+        {"beacon_1": (1.0, 2.0), "beacon_2": (3.0, 4.0)},
+    )
+
+    assert result == {1: _detection(0.7, "beacon_2")}
+
+
 def test_apply_landmark_corrections_marks_last_detection_applied() -> None:
     """同じ歩に複数検出があるとき最後だけ applied になる。"""
-    result = apply_landmark_corrections(
+    result = _apply_corrections(
         [[0.0, 0.0], [1.0, 0.0]],
         [1.0],
         (_detection(0.5, "beacon_1"), _detection(0.7, "beacon_2")),
         _landmark_settings(),
         "ble.csv",
+        0.0,
+        1.0,
     )
 
     assert [item.applied for item in result.corrections] == [False, True]
     assert result.trajectory[-1] == [3.0, 4.0]
 
 
-def test_run_landmark_correction_returns_none_when_disabled() -> None:
+def test_run_ble_landmark_detection_returns_none_when_disabled() -> None:
     """無効時は BLE ファイルを読まず None を返す。"""
-    result = run_landmark_correction(
-        [[0.0, 0.0]],
-        [],
+    result = run_ble_landmark_detection(
         BleLandmarkSettings(enabled=False, data_path="missing.csv"),
     )
 
     assert result is None
+
+
+def test_run_ble_landmark_detection_returns_detection_only(tmp_path: Path) -> None:
+    """BLE pipeline が軌跡に依存せず共有検出型だけを返す。"""
+    path = _write_ble_csv(
+        tmp_path / "ble.csv",
+        [{"timestamp_s": 1.0, "beacon_id": "beacon_1", "rssi_dbm": -50.0}],
+    )
+
+    result = run_ble_landmark_detection(
+        _landmark_settings(enabled=True, data_path=path)
+    )
+
+    assert result == (LandmarkDetection(1.0, "beacon_1", -50.0),)
 
 
 def test_run_pdr_without_ble_matches_prepared_trajectory() -> None:
@@ -406,6 +564,16 @@ def test_run_pdr_without_ble_matches_prepared_trajectory() -> None:
 
     assert result.landmark is None
     assert result.trajectory == result.prepared.trajectory
+
+
+def test_run_pdr_with_ble_requires_floormap() -> None:
+    """BLE補正有効時は共有地図設定を必須にする。"""
+    settings = PdrSettings(
+        landmark=BleLandmarkSettings(enabled=True, data_path="missing.csv")
+    )
+
+    with pytest.raises(ValueError, match="floormap が必要"):
+        run_pdr(settings, pd.DataFrame(), pd.DataFrame())
 
 
 def test_run_with_particle_filter_skips_ble_load(
@@ -453,12 +621,14 @@ def test_run_with_particle_filter_skips_ble_load(
 
 def test_build_landmark_corrections_dataframe_has_diagnostic_columns() -> None:
     """補正履歴が必要な診断列を持つ DataFrame になる。"""
-    result = apply_landmark_corrections(
+    result = _apply_corrections(
         [[0.0, 0.0], [1.0, 0.0]],
         [1.0],
         (_detection(1.0),),
         _landmark_settings(),
         "ble.csv",
+        0.0,
+        1.0,
     )
 
     dataframe = _build_landmark_corrections_dataframe(result)
@@ -483,12 +653,14 @@ def test_build_landmark_corrections_dataframe_has_diagnostic_columns() -> None:
 
 def test_build_landmark_corrections_dataframe_keeps_discarded_detection() -> None:
     """最終歩より後の検出も未適用行として診断CSVに残す。"""
-    result = apply_landmark_corrections(
+    result = _apply_corrections(
         [[0.0, 0.0]],
         [],
         (_detection(4.0),),
         _landmark_settings(),
         "ble.csv",
+        0.0,
+        1.0,
     )
 
     dataframe = _build_landmark_corrections_dataframe(result)
@@ -506,12 +678,14 @@ def test_plot_trajectory_labels_corrected_path_with_landmark(
     """BLE補正時は補正後軌跡を凡例へ追加する。"""
     map_path = tmp_path / "map.png"
     plt.imsave(map_path, np.ones((8, 8)), cmap="gray", vmin=0.0, vmax=1.0)
-    landmark = apply_landmark_corrections(
+    landmark = _apply_corrections(
         [[0.0, 0.0], [1.0, 0.0]],
         [1.0],
         (_detection(1.0),),
         _landmark_settings(),
         "ble.csv",
+        0.0,
+        1.0,
     )
     monkeypatch.setattr(plt, "show", lambda: None)
 

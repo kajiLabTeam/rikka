@@ -13,6 +13,7 @@
 from pathlib import Path
 
 import matplotlib.image as mpimg
+import numpy as np
 import pandas as pd
 
 from ..common.config import (
@@ -41,7 +42,8 @@ from ..common.config import (
     STEP_LENGTH_METHOD,
     USER_HEIGHT_M,
 )
-from ..common.lib.models import FloorMap, GyroBiasResult, PreparedPdrSteps
+from ..common.lib.floormap import is_walkable_cell
+from ..common.lib.models import FloorMap, GyroBiasResult, Landmark, PreparedPdrSteps
 from ..common.settings import (
     BleLandmarkSettings,
     HeadingSettings,
@@ -61,11 +63,8 @@ from ..pdr.pipeline import run_pdr
 from ..plot import pipeline as plot_pipeline
 
 
-def _validate_particle_floormap(
-    floormap_path: str | Path,
-    origin_px: tuple[int, int],
-) -> None:
-    """PF実行前にフロアマップと歩行可能な起点を検証する。"""
+def _load_floormap_gray(floormap_path: str | Path) -> np.ndarray:
+    """フロアマップを読み込み、0..255の2次元配列に正規化する。"""
     path = Path(floormap_path)
     if not path.exists():
         raise ValueError(f"フロアマップが存在しません: {path}")
@@ -79,7 +78,31 @@ def _validate_particle_floormap(
     map_gray = _normalize_floormap_gray(map_raw)
     if map_gray.ndim != 2 or map_gray.size == 0:
         raise ValueError(f"フロアマップ画像の形状が不正です: {path}")
+    return map_gray
+
+
+def _validate_particle_floormap(
+    floormap_path: str | Path,
+    origin_px: tuple[int, int],
+) -> None:
+    """PF実行前にフロアマップと歩行可能な起点を検証する。"""
+    map_gray = _load_floormap_gray(floormap_path)
     _validate_floormap_origin(map_gray, origin_px)
+
+
+def _validate_landmark_pixels(
+    map_gray: np.ndarray,
+    landmarks: tuple[Landmark, ...],
+) -> None:
+    """ランドマークが地図内の歩行可能画素にあることを検証する。"""
+    for landmark in landmarks:
+        pixel_x = int(np.floor(landmark.pixel_x + 0.5))
+        pixel_y = int(np.floor(landmark.pixel_y + 0.5))
+        if not is_walkable_cell(map_gray, pixel_x, pixel_y):
+            raise ValueError(
+                "ランドマークは歩行可能なマップ内画素を指定してください: "
+                f"{landmark.beacon_id} ({landmark.pixel_x}, {landmark.pixel_y})"
+            )
 
 
 def run(
@@ -123,6 +146,7 @@ def run(
     """後方互換引数を設定へ変換し、解析と成果物保存を実行する。"""
     if (save_step_frames or save_path_comparison) and not use_particle_filter:
         raise ValueError("粒子可視化の保存には use_particle_filter=True が必要です。")
+    floormap = FloorMap(str(floormap_path), origin_px, scale)
     landmark_settings = BleLandmarkSettings(
         enabled=ble_landmark and not use_particle_filter,
         data_path=ble_data_path,
@@ -183,12 +207,16 @@ def run(
         _validate_particle_floormap(floormap_path, origin_px)
         if ble_landmark:
             print("警告: particle filter 使用時は BLE ランドマーク補正を適用しません。")
+    elif landmark_settings.enabled:
+        map_gray = _load_floormap_gray(floormap_path)
+        _validate_floormap_origin(map_gray, origin_px)
+        _validate_landmark_pixels(map_gray, landmark_settings.landmarks)
 
-    result = run_pdr(pdr_settings, df_acc, df_gyro)
+    result = run_pdr(pdr_settings, df_acc, df_gyro, floormap)
     if use_particle_filter:
         result = run_particle(
             result.prepared,
-            FloorMap(str(floormap_path), origin_px, scale),
+            floormap,
             particle_settings,
         )
     _print_prepared_summary(result.prepared, pdr_settings)

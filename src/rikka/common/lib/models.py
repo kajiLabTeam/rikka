@@ -278,11 +278,11 @@ class FloorMap:
 
 @dataclass(frozen=True)
 class Landmark:
-    """既知座標に設置した BLE ビーコン 1 台分の定義。"""
+    """フロアマップの既知ピクセル座標に設置した BLE ビーコンの定義。"""
 
     beacon_id: str
-    x: float
-    y: float
+    pixel_x: float
+    pixel_y: float
 
 
 class BleObservation(NamedTuple):
