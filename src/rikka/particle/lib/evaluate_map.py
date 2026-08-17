@@ -12,6 +12,8 @@
     再標本化して次状態を確定する。
 """
 
+import sys
+
 import numpy as np
 
 from .landmark import meter_walkable_mask, reset_particles_to_landmark
@@ -102,8 +104,12 @@ def _reset_to_landmark(ctx: ParticleRuntime) -> None:
     if ctx.landmark_xy is None:
         raise RuntimeError("内部エラー: reset対象ランドマークがありません。")
 
+    if ctx.landmark_before_position is None:
+        raise RuntimeError("内部エラー: reset前の代表位置がありません。")
+    reset_origin = np.asarray(ctx.landmark_before_position, dtype=float)
+
     def is_walkable(points: np.ndarray) -> np.ndarray:
-        return meter_walkable_mask(
+        walkable = meter_walkable_mask(
             points,
             ctx.map_gray,
             ctx.gx_mean,
@@ -111,6 +117,10 @@ def _reset_to_landmark(ctx: ParticleRuntime) -> None:
             ctx.origin_px,
             ctx.scale,
         )
+        within_jump = (
+            np.linalg.norm(points - reset_origin, axis=1) <= ctx.landmark_max_jump_m
+        )
+        return np.asarray(walkable & within_jump, dtype=bool)
 
     ctx.particles = reset_particles_to_landmark(
         ctx.n_particles,
@@ -120,7 +130,14 @@ def _reset_to_landmark(ctx: ParticleRuntime) -> None:
         is_walkable,
     )
     ctx.heading_correction = ctx.proposed_correction
-    ctx.heading_drift = ctx.proposed_drift
+    ctx.heading_drift = _normalize_angle(
+        ctx.proposed_drift
+        + ctx.rng.normal(
+            0.0,
+            ctx.landmark_reset_heading_sigma,
+            ctx.n_particles,
+        )
+    )
     ctx.stride_scale = ctx.proposed_stride_scale
     ctx.motion_state = ctx.proposed_motion_state
     ctx.weights = np.full(ctx.n_particles, 1.0 / ctx.n_particles)
@@ -138,14 +155,62 @@ def _reset_to_landmark(ctx: ParticleRuntime) -> None:
     ctx.recovery_attempted = False
     ctx.recovery_mode = "landmark_reset"
     ctx.recovery_valid_count = ctx.valid_count
+    ctx.landmark_applied = True
+    ctx.landmark_reset_steps.add(ctx.step_number)
+
+
+def _landmark_reset_requested(ctx: ParticleRuntime) -> bool:
+    """現在のmodeと粒子群の広がりからresetが必要かを返す。"""
+    if ctx.landmark_mode == "reset":
+        return True
+    if ctx.landmark_mode != "hybrid":
+        return False
+    if (
+        ctx.landmark_before_position is None
+        or ctx.landmark_xy is None
+        or ctx.landmark_position_spread_rms_m is None
+    ):
+        return False
+    distance = float(
+        np.linalg.norm(
+            np.asarray(ctx.landmark_before_position) - np.asarray(ctx.landmark_xy)
+        )
+    )
+    spread = max(ctx.landmark_position_spread_rms_m, 1e-9)
+    return distance > ctx.landmark_reset_spread_ratio * spread
+
+
+def _landmark_reset_within_limit(ctx: ParticleRuntime) -> bool:
+    """reset先までの代表距離が安全上限以内かを返す。"""
+    if ctx.landmark_before_position is None or ctx.landmark_xy is None:
+        return False
+    distance = float(
+        np.linalg.norm(
+            np.asarray(ctx.landmark_before_position) - np.asarray(ctx.landmark_xy)
+        )
+    )
+    if distance <= ctx.landmark_max_jump_m:
+        return True
+    beacon_id = (
+        "unknown"
+        if ctx.landmark_detection is None
+        else ctx.landmark_detection.beacon_id
+    )
+    print(
+        f"警告: ランドマーク {beacon_id} へのreset距離 {distance:.2f}mが "
+        f"上限 {ctx.landmark_max_jump_m:.2f}mを超えたためスキップします。",
+        file=sys.stderr,
+    )
+    return False
 
 
 def resolve_map_constraints(ctx: ParticleRuntime) -> None:
     """地図制約違反を復旧し、通常粒子はESSに応じて再標本化する。"""
     _reset_recovery_diagnostics(ctx)
-    if ctx.landmark_mode == "reset" and ctx.landmark_detection is not None:
-        _reset_to_landmark(ctx)
-        return
+    if ctx.landmark_detection is not None and _landmark_reset_requested(ctx):
+        if _landmark_reset_within_limit(ctx):
+            _reset_to_landmark(ctx)
+            return
     if not ctx.recovery_attempted:
         _resample_or_keep(ctx)
         return

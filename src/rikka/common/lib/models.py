@@ -319,6 +319,8 @@ class LandmarkCorrection(NamedTuple):
     after_x: float
     after_y: float
     applied: bool
+    detection_distance_m: float | None = None
+    nearest_approach_delta_s: float | None = None
 
 
 @dataclass(frozen=True)

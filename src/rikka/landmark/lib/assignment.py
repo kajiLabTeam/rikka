@@ -25,7 +25,7 @@ def assign_detections_to_steps(
     t_at_steps: np.ndarray | Sequence[float],
 ) -> tuple[dict[int, list[LandmarkDetection]], int]:
     """検出時刻を0始まりの歩indexへ写像し、歩ごとの検出と破棄件数を返す。"""
-    if not t_at_steps:
+    if len(t_at_steps) == 0:
         return {}, len(detections)
     times = np.asarray(t_at_steps, dtype=float)
     assigned: dict[int, list[LandmarkDetection]] = {}

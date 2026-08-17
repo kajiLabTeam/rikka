@@ -10,7 +10,13 @@ from click.testing import CliRunner
 
 from rikka.ble.lib.detection import detect_landmarks
 from rikka.ble.lib.loader import group_by_timestamp, load_ble_observations
-from rikka.ble.lib.sample import generate_sample_observations, write_sample_csv
+from rikka.ble.lib.sample import (
+    build_sample_times,
+    generate_sample_observations,
+    map_truth_to_step_times,
+    resolve_walker_positions,
+    write_sample_csv,
+)
 from rikka.ble.pipeline import run_ble_landmark_detection
 from rikka.cli import commands as cli_commands
 from rikka.cli.commands import run as run_command
@@ -34,6 +40,7 @@ from rikka.landmark.lib.assignment import (
     assign_detections_to_steps,
     build_step_landmark_map,
 )
+from rikka.landmark.lib.timing import evaluate_landmark_timing
 from rikka.pdr.lib.landmark_correction import apply_landmark_corrections
 from rikka.pdr.pipeline import run_pdr
 from rikka.plot import pipeline as plot_pipeline
@@ -196,6 +203,53 @@ def test_detect_landmarks_triggers_once_per_approach() -> None:
     assert len(detections) == 1
 
 
+def test_detect_landmarks_reports_peak_timestamp_not_rising_edge() -> None:
+    """検出時刻には閾値の立ち上がりではなく区間内最大 RSSI の時刻を使う。"""
+    detections = detect_landmarks(
+        _observations([-60, -54, -50, -46, -50, -54, -60, -61]),
+        _landmark_settings(),
+    )
+
+    assert detections == (LandmarkDetection(3.0, "beacon_1", -46.0),)
+
+
+def test_detect_landmarks_flushes_latched_beacon_at_end_of_data() -> None:
+    """記録終端でラッチ中のビーコンも最大 RSSI 時刻で確定する。"""
+    detections = detect_landmarks(
+        _observations([-60, -54, -48, -46]),
+        _landmark_settings(),
+    )
+
+    assert detections == (LandmarkDetection(3.0, "beacon_1", -46.0),)
+
+
+def test_detect_landmarks_returns_time_sorted_detections() -> None:
+    """解除による確定順が前後しても検出列はピーク時刻順になる。"""
+    observations = (
+        BleObservation(0.0, "beacon_1", -50.0),
+        BleObservation(1.0, "beacon_2", -50.0),
+        BleObservation(2.0, "beacon_2", -60.0),
+        BleObservation(3.0, "beacon_2", -61.0),
+        BleObservation(4.0, "beacon_1", -60.0),
+        BleObservation(5.0, "beacon_1", -61.0),
+    )
+
+    detections = detect_landmarks(observations, _landmark_settings())
+
+    assert [item.beacon_id for item in detections] == ["beacon_1", "beacon_2"]
+
+
+def test_assign_detections_accepts_ndarray_step_times() -> None:
+    """歩時刻に ndarray を渡しても検出を割り当てられる。"""
+    assigned, discarded = assign_detections_to_steps(
+        (_detection(1.5),),
+        np.asarray([1.0, 2.0]),
+    )
+
+    assert assigned == {1: [_detection(1.5)]}
+    assert discarded == 0
+
+
 def test_detect_landmarks_redetects_after_release() -> None:
     """解除後に再び閾値以上になれば再検出することを確認する。"""
     detections = detect_landmarks(
@@ -354,7 +408,7 @@ def test_detect_landmarks_on_sample_data_detects_each_beacon_once(
     tmp_path: Path,
 ) -> None:
     """サンプル CSV で 3 ビーコンがそれぞれ 1 回だけ検出される。"""
-    sample_settings = BleSampleSettings()
+    sample_settings = BleSampleSettings(mode="time")
     observations = generate_sample_observations(
         np.arange(0.0, 72.3, sample_settings.interval_s),
         sample_settings,
@@ -372,6 +426,137 @@ def test_detect_landmarks_on_sample_data_detects_each_beacon_once(
         "beacon_2",
         "beacon_3",
     }
+
+
+def _distance_sample_settings(**overrides: object) -> BleSampleSettings:
+    values: dict[str, object] = {
+        "mode": "distance",
+        "sigma_m": 1.0,
+        "noise_sigma_db": 0.0,
+    }
+    values.update(overrides)
+    return BleSampleSettings(**values)  # type: ignore[arg-type]
+
+
+def test_distance_sample_peaks_when_walker_is_nearest() -> None:
+    """距離方式の RSSI 最大時刻はビーコンへの最接近時刻に一致する。"""
+    times = np.arange(5.0)
+    walker = np.column_stack((times, np.zeros_like(times)))
+
+    observations = generate_sample_observations(
+        times,
+        _distance_sample_settings(),
+        walker_positions=walker,
+        landmark_positions={"beacon_1": (2.0, 0.0)},
+    )
+
+    peak = max(observations, key=lambda item: item.rssi_dbm)
+    assert peak.timestamp_s == 2.0
+
+
+def test_build_sample_times_clamps_small_negative_sensor_start() -> None:
+    """センサー開始時刻が負でも BLE CSV の時刻は0以上にする。"""
+    times = build_sample_times(
+        pd.DataFrame({"t": [-0.003, 0.097, 0.197]}),
+        _distance_sample_settings(interval_s=0.1),
+    )
+
+    np.testing.assert_allclose(times, [0.0, 0.1])
+
+
+def test_distance_sample_creates_two_peaks_for_revisited_beacon() -> None:
+    """同じビーコンを再訪する軌跡では2回の検出が自然に生じる。"""
+    times = np.arange(6.0)
+    walker = np.asarray(
+        [[0.0, 0.0], [5.0, 0.0], [5.0, 0.0], [5.0, 0.0], [5.0, 0.0], [0.0, 0.0]]
+    )
+    observations = generate_sample_observations(
+        times,
+        _distance_sample_settings(),
+        walker_positions=walker,
+        landmark_positions={"beacon_1": (0.0, 0.0)},
+    )
+
+    detections = detect_landmarks(observations, _landmark_settings())
+
+    assert [item.timestamp_s for item in detections] == [0.0, 5.0]
+
+
+def test_distance_sample_yields_no_detection_for_far_beacon() -> None:
+    """軌跡が近づかないビーコンの RSSI は検出閾値を超えない。"""
+    times = np.arange(5.0)
+    walker = np.zeros((len(times), 2))
+    observations = generate_sample_observations(
+        times,
+        _distance_sample_settings(),
+        walker_positions=walker,
+        landmark_positions={"beacon_1": (100.0, 0.0)},
+    )
+
+    assert detect_landmarks(observations, _landmark_settings()) == ()
+
+
+def test_distance_sample_is_deterministic_for_same_seed() -> None:
+    """距離方式も同一 seed と入力から同一観測列を生成する。"""
+    times = np.arange(5.0)
+    walker = np.column_stack((times, np.zeros_like(times)))
+    kwargs = {
+        "walker_positions": walker,
+        "landmark_positions": {"beacon_1": (2.0, 0.0)},
+    }
+
+    first = generate_sample_observations(
+        times,
+        _distance_sample_settings(noise_sigma_db=1.5, seed=7),
+        **kwargs,  # type: ignore[arg-type]
+    )
+    second = generate_sample_observations(
+        times,
+        _distance_sample_settings(noise_sigma_db=1.5, seed=7),
+        **kwargs,  # type: ignore[arg-type]
+    )
+
+    assert first == second
+
+
+def test_resolve_walker_positions_interpolates_step_trajectory() -> None:
+    """歩間の BLE サンプル位置を線形補間する。"""
+    actual = resolve_walker_positions(
+        np.asarray([0.0, 0.5, 1.0, 1.5, 2.0]),
+        [[0.0, 0.0], [1.0, 0.0], [1.0, 2.0]],
+        [1.0, 2.0],
+    )
+
+    np.testing.assert_allclose(
+        actual,
+        [[0.0, 0.0], [0.5, 0.0], [1.0, 0.0], [1.0, 1.0], [1.0, 2.0]],
+    )
+
+
+def test_map_truth_to_step_times_uses_normalized_arclength() -> None:
+    """正解軌跡を参照軌跡の正規化弧長位置へ写像する。"""
+    mapped, times = map_truth_to_step_times(
+        np.asarray([[0.0, 0.0], [0.0, 10.0]]),
+        [1.0, 2.0],
+        [[0.0, 0.0], [1.0, 0.0], [3.0, 0.0]],
+    )
+
+    np.testing.assert_allclose(mapped, [[0.0, 0.0], [0.0, 10.0 / 3.0], [0.0, 10.0]])
+    assert times == [0.0, 1.0, 2.0]
+
+
+def test_landmark_timing_matches_nearest_revisited_approach() -> None:
+    """同一ランドマーク再訪時は検出時刻に近い局所最接近と対応付ける。"""
+    metrics = evaluate_landmark_timing(
+        [[0.0, 0.0], [5.0, 0.0], [0.0, 0.0]],
+        [5.0, 10.0],
+        9.8,
+        (0.0, 0.0),
+    )
+
+    assert metrics.nearest_approach_time_s == 10.0
+    assert metrics.nearest_approach_delta_s == pytest.approx(-0.2)
+    assert metrics.detection_distance_m == pytest.approx(0.2)
 
 
 def _detection(
@@ -644,6 +829,8 @@ def test_build_landmark_corrections_dataframe_has_diagnostic_columns() -> None:
             "landmark_y": 2.0,
             "after_x": 1.0,
             "after_y": 2.0,
+            "detection_distance_m": 2.0,
+            "nearest_approach_delta_s": 0.0,
         }
     ]
 
@@ -751,9 +938,12 @@ def test_particle_help_includes_ble_landmark_option() -> None:
 
 
 def test_ble_sample_help_lists_options() -> None:
-    """ble-sample --help が output と seed を表示する。"""
+    """ble-sample --help が生成方式・位置ソース・出力設定を表示する。"""
     result = CliRunner().invoke(cli, ["ble-sample", "--help"])
 
     assert result.exit_code == 0
+    assert "--mode" in result.output
+    assert "--source" in result.output
+    assert "--truth-csv" in result.output
     assert "--output" in result.output
     assert "--seed" in result.output

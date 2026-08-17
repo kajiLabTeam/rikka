@@ -25,10 +25,12 @@ from .config import (
     BLE_SAMPLE_BASE_RSSI_DBM,
     BLE_SAMPLE_INTERVAL_S,
     BLE_SAMPLE_MIN_RSSI_DBM,
+    BLE_SAMPLE_MODE,
     BLE_SAMPLE_NOISE_SIGMA_DB,
     BLE_SAMPLE_PEAK_RSSI_DBM,
     BLE_SAMPLE_PEAK_TIMES_S,
     BLE_SAMPLE_SEED,
+    BLE_SAMPLE_SIGMA_M,
     BLE_SAMPLE_SIGMA_S,
     BLE_SYNC_WINDOW_S,
     FLOORMAP_ORIGIN_PX,
@@ -40,8 +42,11 @@ from .config import (
     INITIAL_DIRECTION,
     MOTION_ESTIMATION,
     PF_LANDMARK_LIKELIHOOD_FLOOR,
+    PF_LANDMARK_MAX_JUMP_M,
     PF_LANDMARK_MODE,
+    PF_LANDMARK_RESET_HEADING_SIGMA,
     PF_LANDMARK_RESET_SIGMA_M,
+    PF_LANDMARK_RESET_SPREAD_RATIO,
     PF_LANDMARK_SIGMA_M,
     PF_MOTION_PREDICTIVE_WEIGHT_POWER,
     PF_NUM_PARTICLES,
@@ -59,6 +64,7 @@ from .config import (
 )
 from .lib.models import Landmark
 from .lib.validation import (
+    BLE_SAMPLE_MODES,
     FORWARD_HEADING_SOURCES,
     GYRO_BIAS_METHODS,
     HEADING_METHODS,
@@ -199,6 +205,9 @@ class ParticleSettings:
     landmark_sigma_m: float = PF_LANDMARK_SIGMA_M
     landmark_likelihood_floor: float = PF_LANDMARK_LIKELIHOOD_FLOOR
     landmark_reset_sigma_m: float = PF_LANDMARK_RESET_SIGMA_M
+    landmark_max_jump_m: float = PF_LANDMARK_MAX_JUMP_M
+    landmark_reset_spread_ratio: float = PF_LANDMARK_RESET_SPREAD_RATIO
+    landmark_reset_heading_sigma: float = PF_LANDMARK_RESET_HEADING_SIGMA
 
     def __post_init__(self) -> None:
         validate_scale(self.scale)
@@ -218,6 +227,15 @@ class ParticleSettings:
         validate_positive_parameter(
             "landmark_reset_sigma_m",
             self.landmark_reset_sigma_m,
+        )
+        validate_positive_parameter("landmark_max_jump_m", self.landmark_max_jump_m)
+        validate_positive_parameter(
+            "landmark_reset_spread_ratio",
+            self.landmark_reset_spread_ratio,
+        )
+        validate_non_negative_parameter(
+            "landmark_reset_heading_sigma",
+            self.landmark_reset_heading_sigma,
         )
         if not 0.0 <= self.landmark_likelihood_floor < 1.0:
             raise ValueError(
@@ -273,20 +291,24 @@ class BleLandmarkSettings:
 class BleSampleSettings:
     """サンプル BLE RSSI 生成の条件。本番のランドマーク測位では使用しない。"""
 
+    mode: str = BLE_SAMPLE_MODE
     peak_times_s: tuple[tuple[str, float], ...] = BLE_SAMPLE_PEAK_TIMES_S
     interval_s: float = BLE_SAMPLE_INTERVAL_S
     base_rssi_dbm: float = BLE_SAMPLE_BASE_RSSI_DBM
     peak_rssi_dbm: float = BLE_SAMPLE_PEAK_RSSI_DBM
     sigma_s: float = BLE_SAMPLE_SIGMA_S
+    sigma_m: float = BLE_SAMPLE_SIGMA_M
     noise_sigma_db: float = BLE_SAMPLE_NOISE_SIGMA_DB
     min_rssi_dbm: float = BLE_SAMPLE_MIN_RSSI_DBM
     seed: int = BLE_SAMPLE_SEED
 
     def __post_init__(self) -> None:
+        validate_choice("ble_sample_mode", self.mode, BLE_SAMPLE_MODES)
         validate_positive_parameter("interval_s", self.interval_s)
         validate_positive_parameter("sigma_s", self.sigma_s)
+        validate_positive_parameter("sigma_m", self.sigma_m)
         validate_non_negative_parameter("noise_sigma_db", self.noise_sigma_db)
-        if not self.peak_times_s:
+        if self.mode == "time" and not self.peak_times_s:
             raise ValueError("peak_times_s は 1 件以上指定してください。")
         seen: set[str] = set()
         for beacon_id, peak_time in self.peak_times_s:

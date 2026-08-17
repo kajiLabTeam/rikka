@@ -391,6 +391,8 @@ def _build_landmark_corrections_dataframe(
         "landmark_y",
         "after_x",
         "after_y",
+        "detection_distance_m",
+        "nearest_approach_delta_s",
     ]
     rows: list[dict[str, object]] = [
         {
@@ -406,6 +408,8 @@ def _build_landmark_corrections_dataframe(
             "landmark_y": correction.landmark_y,
             "after_x": correction.after_x,
             "after_y": correction.after_y,
+            "detection_distance_m": correction.detection_distance_m,
+            "nearest_approach_delta_s": correction.nearest_approach_delta_s,
         }
         for correction in landmark.corrections
     ]
@@ -436,6 +440,8 @@ def _build_landmark_corrections_dataframe(
                 "landmark_y": np.nan,
                 "after_x": np.nan,
                 "after_y": np.nan,
+                "detection_distance_m": np.nan,
+                "nearest_approach_delta_s": np.nan,
             }
         )
     return pd.DataFrame(rows, columns=columns)

@@ -36,9 +36,7 @@ def finalize(
     np.ndarray,
     list[StepHeading],
 ]:
-    allowed_jump_steps = (
-        set(ctx.landmark_by_step) if ctx.landmark_mode == "reset" else None
-    )
+    allowed_jump_steps = ctx.landmark_reset_steps or None
     ctx.all_particles = np.stack(ctx.all_particles_list)
     ctx.particle_paths = _reconstruct_particle_paths(
         ctx.position_history, ctx.parent_history
@@ -148,6 +146,16 @@ def finalize(
             )
         )
         ctx.selected_mode = "current"
+    if allowed_jump_steps:
+        for step in allowed_jump_steps:
+            jump_distance = float(
+                np.linalg.norm(ctx.selected_path[step] - ctx.selected_path[step - 1])
+            )
+            if jump_distance > ctx.landmark_max_jump_m + 1e-9:
+                raise RuntimeError(
+                    "ランドマークreset後の代表軌跡がジャンプ上限を超えました: "
+                    f"step={step} distance={jump_distance:.3f}m"
+                )
     if ctx.recorder.paths_enabled:
         ctx.recorder.paths.append(
             ParticlePathComparison(

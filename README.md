@@ -126,7 +126,18 @@ particle filter にランドマーク位置を反映できます。BLE 測位自
 ```sh
 uv run rikka ble-sample
 uv run rikka run --ble-landmark --no-plot
-uv run rikka particle --ble-landmark --pf-landmark-mode observation --no-plot
+uv run rikka particle --ble-landmark --no-plot
+```
+
+`ble-sample` は既定で、対象データのPDR軌跡とビーコンの距離からRSSIを生成します。
+評価用に正解軌跡を使う場合は次のように指定します。従来の固定ピーク時刻方式は
+`--mode time` で利用できます。
+
+```sh
+uv run rikka ble-sample \
+  -d input/sensor_data/natsuki/1turn_rightsidestep_3turn_leftsidestep \
+  --source truth \
+  --truth-csv "input/correct_path/1turn_rightsidestep_3turn_leftsidestep/walk_trace (3).csv"
 ```
 
 BLE CSV は次の3列を持ちます。
@@ -150,31 +161,37 @@ BLE CSV は次の3列を持ちます。
 実測値へ差し替える場合は、同じ3列と経過秒の時間軸へ整形し、
 `--ble-data <実測CSV>` を指定します。絶対時刻だけの場合は、phyphox の
 `meta/time.csv` にある START の `system time` を引いて経過秒へ変換してください。
+検出時刻には、RSSIが閾値を超えた区間の立ち上がりではなく最大RSSIの時刻を使います。
 
 BLE 有効時は `output/<timestamp>/landmark_corrections.csv` に検出時刻、RSSI、
-補正前座標、ランドマーク座標、補正後座標を保存します。`trajectory.png` には
+補正前座標、ランドマーク座標、補正後座標、検出距離、最接近時間差を保存します。
+`trajectory.png` には
 補正前後の軌跡、ランドマーク、補正地点を重ねて描画します。
 最終歩より後で補正できなかった検出は `step=-1`、`applied=False` としてCSVに残ります。
 
 particle filter では `--pf-landmark-mode` で反映方式を選びます。
 
 - `none`: 検出を軌跡へ反映しない。BLE 無効時と固定 seed の結果が一致します。
-- `observation`（既定）: ランドマーク距離の下限付きガウス尤度を粒子重みと
+- `observation`: ランドマーク距離の下限付きガウス尤度を粒子重みと
   sequence 経路スコアへ加えます。
 - `reset`: ランドマーク周辺の歩行可能位置へ粒子を再配置します。比較実験用で、
   位置以外の heading drift・stride scale・motion state は引き継ぎます。祖先経路が
   不連続になるため、reset 使用時の代表軌跡は `pf-path-selection` にかかわらず
   時点別の current 経路を使います。
+- `hybrid`（既定）: ランドマーク距離が粒子群の広がりの4倍以内ならobservation、
+  それより遠ければresetを使います。reset距離が5mを超える検出は安全のため
+  再配置せず、通常のPF更新を続けます。
 
-観測尤度の既定値は `sigma=3.0m`、`floor=0.05` です。実測 BLE がないため仮値で、
-実測データ取得後に再校正が必要です。PF の `landmark_corrections.csv` にある
+観測尤度の既定値は `sigma=1.0m`、`floor=0.05` です。合成BLEと対応する正解軌跡の
+6 seed評価で選んだ値なので、実測BLE取得後には再校正が必要です。PF の
+`landmark_corrections.csv` にある
 `before/after` は反映前後の粒子重み付き平均、`raw_trajectory` の描画は同じ歩列から
 作った通常 PDR 軌跡を表します。
 
 ランドマーク測位は推定方式ごとに責務を分離しています。
 
 - `ble/`: BLE CSV、RSSI 判定、サンプル生成
-- `landmark/lib/`: 検出元や推定方式に依存しない座標変換と歩割り当て
+- `landmark/lib/`: 検出元や推定方式に依存しない座標変換、歩割り当て、時間整合評価
 - `pdr/lib/landmark_correction.py`: 通常 PDR 固有の完全座標補正
 - `particle/lib/landmark.py`: PF 固有の観測尤度と reset 再配置
 - `common/lib/models.py`: PDR / PF が共有できる `LandmarkDetection` などの境界型

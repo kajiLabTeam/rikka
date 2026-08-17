@@ -229,11 +229,13 @@ BLE_LANDMARKS_PX: tuple[tuple[str, float, float], ...] = (
 )
 
 # particle filter へのランドマーク反映方式
-# "none" は無効、"observation" は観測尤度、"reset" は粒子再配置。
-PF_LANDMARK_MODE = "observation"
+# "none" は無効、"observation" は観測尤度、"reset" は粒子再配置、
+# "hybrid" は粒子群の広がりに応じて観測尤度と再配置を切り替える。
+PF_LANDMARK_MODE = "hybrid"
 
-# ランドマーク観測尤度の距離標準偏差 [m]。実測 BLE で未校正の仮値。
-PF_LANDMARK_SIGMA_M = 3.0
+# ランドマーク観測尤度の距離標準偏差 [m]。合成BLEの6 seed評価で選定した値。
+# 実測BLEへ差し替えた場合は再校正すること。
+PF_LANDMARK_SIGMA_M = 1.0
 
 # 全粒子が遠い場合も全重み0を避ける観測尤度の下限 [0, 1)
 PF_LANDMARK_LIKELIHOOD_FLOOR = 0.05
@@ -241,8 +243,18 @@ PF_LANDMARK_LIKELIHOOD_FLOOR = 0.05
 # reset 方式でランドマーク周辺へ粒子を再配置する標準偏差 [m]
 PF_LANDMARK_RESET_SIGMA_M = 1.0
 
+# resetの異常な位置ジャンプを防ぐ上限と、hybridがresetへ切り替える距離比。
+PF_LANDMARK_MAX_JUMP_M = 5.0
+PF_LANDMARK_RESET_SPREAD_RATIO = 4.0
+
+# reset後に位置と従来方位が矛盾した場合の折り返しを避ける方位多様化 [rad]。
+PF_LANDMARK_RESET_HEADING_SIGMA = 0.20
+
 # サンプル BLE RSSI 生成条件
 # 本番のランドマーク測位では使用せず、`rikka ble-sample` だけが参照する。
+# "distance" は歩行者とビーコンの距離、"time" は従来の固定時刻で生成する。
+BLE_SAMPLE_MODE = "distance"
+BLE_SAMPLE_SIGMA_M = 4.0
 BLE_SAMPLE_PEAK_TIMES_S: tuple[tuple[str, float], ...] = (
     ("beacon_1", 20.0),
     ("beacon_2", 45.0),
@@ -255,3 +267,6 @@ BLE_SAMPLE_SIGMA_S = 6.0
 BLE_SAMPLE_NOISE_SIGMA_DB = 1.5
 BLE_SAMPLE_MIN_RSSI_DBM = -99.0
 BLE_SAMPLE_SEED = 0
+BLE_SAMPLE_TRUTH_PATH = (
+    "input/correct_path/1turn_rightsidestep_3turn_leftsidestep/walk_trace (3).csv"
+)
