@@ -20,6 +20,10 @@ from ...common.config import (
     FLOORMAP_SCALE,
     FORWARD_HEADING_SOURCE,
     PF_HEADING_DRIFT_RETENTION,
+    PF_LANDMARK_LIKELIHOOD_FLOOR,
+    PF_LANDMARK_MODE,
+    PF_LANDMARK_RESET_SIGMA_M,
+    PF_LANDMARK_SIGMA_M,
     PF_MOTION_PREDICTIVE_WEIGHT_POWER,
     PF_NUM_PARTICLES,
     PF_PATH_SELECTION,
@@ -44,6 +48,9 @@ from ...common.config import (
     SIDESTEP_SUSPECT_MODE,
 )
 from ...common.lib.models import (
+    Landmark,
+    LandmarkCorrection,
+    LandmarkDetection,
     StepHeading,
     StepMotionEvidence,
     StepMotionPosterior,
@@ -120,6 +127,13 @@ def run_particle_steps(
     preserve_recovery_branches: bool = False,
     motion_predictive_weight_power: float = PF_MOTION_PREDICTIVE_WEIGHT_POWER,
     path_selection: str = PF_PATH_SELECTION,
+    landmark_detections: tuple[LandmarkDetection, ...] = (),
+    landmarks: tuple[Landmark, ...] = (),
+    landmark_mode: str = PF_LANDMARK_MODE,
+    landmark_sigma_m: float = PF_LANDMARK_SIGMA_M,
+    landmark_likelihood_floor: float = PF_LANDMARK_LIKELIHOOD_FLOOR,
+    landmark_reset_sigma_m: float = PF_LANDMARK_RESET_SIGMA_M,
+    landmark_events_collector: list[LandmarkCorrection] | None = None,
 ) -> ParticleStepsResult:
     """準備済み歩列を受け、元と同じ順序でPF段階を実行する。"""
     ctx = ParticleRuntime(
@@ -165,6 +179,13 @@ def run_particle_steps(
         preserve_recovery_branches=preserve_recovery_branches,
         motion_predictive_weight_power=motion_predictive_weight_power,
         path_selection=path_selection,
+        landmark_detections=landmark_detections,
+        landmarks=landmarks,
+        landmark_mode=landmark_mode,
+        landmark_sigma_m=landmark_sigma_m,
+        landmark_likelihood_floor=landmark_likelihood_floor,
+        landmark_reset_sigma_m=landmark_reset_sigma_m,
+        landmark_events_collector=landmark_events_collector,
     )
     setup(ctx)
     initialize(ctx)

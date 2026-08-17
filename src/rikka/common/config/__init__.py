@@ -228,6 +228,19 @@ BLE_LANDMARKS_PX: tuple[tuple[str, float, float], ...] = (
     ("beacon_3", 2056, 700),
 )
 
+# particle filter へのランドマーク反映方式
+# "none" は無効、"observation" は観測尤度、"reset" は粒子再配置。
+PF_LANDMARK_MODE = "observation"
+
+# ランドマーク観測尤度の距離標準偏差 [m]。実測 BLE で未校正の仮値。
+PF_LANDMARK_SIGMA_M = 3.0
+
+# 全粒子が遠い場合も全重み0を避ける観測尤度の下限 [0, 1)
+PF_LANDMARK_LIKELIHOOD_FLOOR = 0.05
+
+# reset 方式でランドマーク周辺へ粒子を再配置する標準偏差 [m]
+PF_LANDMARK_RESET_SIGMA_M = 1.0
+
 # サンプル BLE RSSI 生成条件
 # 本番のランドマーク測位では使用せず、`rikka ble-sample` だけが参照する。
 BLE_SAMPLE_PEAK_TIMES_S: tuple[tuple[str, float], ...] = (

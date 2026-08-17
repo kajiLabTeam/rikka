@@ -54,6 +54,10 @@ def _build_step_diagnostics(**values: Any) -> ParticleFilterStepDiagnostics:
     recovery_replay_steps = values["recovery_replay_steps"]
     recovery_candidate_branch_count = values["recovery_candidate_branch_count"]
     recovery_selected_branch_count = values["recovery_selected_branch_count"]
+    landmark_detection = values.get("landmark_detection")
+    landmark_before_position = values.get("landmark_before_position")
+    landmark_xy = values.get("landmark_xy")
+    landmark_likelihood_mean = values.get("landmark_likelihood_mean")
     unique_position_count = int(
         np.unique(np.round(particles, decimals=9), axis=0).shape[0]
     )
@@ -97,6 +101,22 @@ def _build_step_diagnostics(**values: Any) -> ParticleFilterStepDiagnostics:
     )
     parent_states = motion_state_before[parent_indices]
     motion_state_transition_count = int(np.count_nonzero(motion_state != parent_states))
+    computed_landmark_distance_m = (
+        float(
+            np.linalg.norm(
+                np.asarray(landmark_before_position, dtype=float)
+                - np.asarray(landmark_xy, dtype=float)
+            )
+        )
+        if landmark_before_position is not None and landmark_xy is not None
+        else None
+    )
+    landmark_beacon_id = values.get("landmark_beacon_id")
+    if landmark_beacon_id is None and landmark_detection is not None:
+        landmark_beacon_id = landmark_detection.beacon_id
+    landmark_distance_m = values.get(
+        "landmark_distance_m", computed_landmark_distance_m
+    )
     return ParticleFilterStepDiagnostics(
         step=step_number,
         timestamp_s=float(step_time),
@@ -126,6 +146,9 @@ def _build_step_diagnostics(**values: Any) -> ParticleFilterStepDiagnostics:
         motion_state_transition_count=motion_state_transition_count,
         motion_reliability=motion_evidence.motion_reliability,
         calibration_reliability=(motion_evidence.calibration_reliability),
+        landmark_beacon_id=landmark_beacon_id,
+        landmark_distance_m=landmark_distance_m,
+        landmark_likelihood_mean=landmark_likelihood_mean,
         resampled=resampled,
         recovery_attempted=recovery_attempted,
         recovery_mode=recovery_mode,

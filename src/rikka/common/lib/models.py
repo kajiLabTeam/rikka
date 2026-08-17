@@ -323,7 +323,11 @@ class LandmarkCorrection(NamedTuple):
 
 @dataclass(frozen=True)
 class LandmarkCorrectionResult:
-    """BLE ランドマーク補正の結果と診断情報。"""
+    """BLE ランドマーク反映の結果と診断情報。
+
+    通常PDRの ``raw_trajectory`` は補正前PDR、PFでは同じ準備済み歩列の
+    通常PDR軌跡を表し、PFをランドマークなしで再実行した軌跡ではない。
+    """
 
     trajectory: list[list[float]]
     raw_trajectory: list[list[float]]

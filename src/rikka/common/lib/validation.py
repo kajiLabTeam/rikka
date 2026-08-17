@@ -32,6 +32,7 @@ DEVICE_ORIENTATION_MODES = (
 MOTION_ESTIMATION_METHODS = ("legacy", "adaptive", "robust")
 SMOOTHING_MODES = ("causal", "offline")
 PF_PATH_SELECTION_METHODS = ("current", "sequence")
+PF_LANDMARK_MODES = ("none", "observation", "reset")
 STEP_LENGTH_METHODS = ("weinberg", "forward")
 STEP_DETECTION_METHODS = ("peak", "paper_vertical_threshold")
 GYRO_BIAS_METHODS = (

@@ -7,12 +7,14 @@
 利用先:
     particle/lib/runner が提案・重み計算の後に呼び出す。
 処理フロー:
-    地図違反時は局所復旧、checkpoint再生、fallback、位置保持を順に試し、
-    通常経路ではESSに基づいて再標本化して次状態を確定する。
+    reset方式のランドマーク歩では位置を再配置する。それ以外の地図違反時は局所復旧、
+    checkpoint再生、fallback、位置保持を順に試し、通常経路ではESSに基づいて
+    再標本化して次状態を確定する。
 """
 
 import numpy as np
 
+from .landmark import meter_walkable_mask, reset_particles_to_landmark
 from .proposal import _normalize_angle
 from .recovery.apply import (
     _apply_checkpoint_replay,
@@ -95,9 +97,55 @@ def _resample_or_keep(ctx: ParticleRuntime) -> None:
     ctx.next_path_log_scores = ctx.candidate_path_log_scores
 
 
+def _reset_to_landmark(ctx: ParticleRuntime) -> None:
+    """現在歩のランドマーク周辺へ位置だけを再配置し、履歴重みを初期化する。"""
+    if ctx.landmark_xy is None:
+        raise RuntimeError("内部エラー: reset対象ランドマークがありません。")
+
+    def is_walkable(points: np.ndarray) -> np.ndarray:
+        return meter_walkable_mask(
+            points,
+            ctx.map_gray,
+            ctx.gx_mean,
+            ctx.gz_mean,
+            ctx.origin_px,
+            ctx.scale,
+        )
+
+    ctx.particles = reset_particles_to_landmark(
+        ctx.n_particles,
+        ctx.landmark_xy,
+        ctx.landmark_reset_sigma_m,
+        ctx.rng,
+        is_walkable,
+    )
+    ctx.heading_correction = ctx.proposed_correction
+    ctx.heading_drift = ctx.proposed_drift
+    ctx.stride_scale = ctx.proposed_stride_scale
+    ctx.motion_state = ctx.proposed_motion_state
+    ctx.weights = np.full(ctx.n_particles, 1.0 / ctx.n_particles)
+    ctx.posterior_weights = ctx.weights.copy()
+    ctx.parent_indices = np.arange(ctx.n_particles, dtype=int)
+    ctx.next_path_log_scores = np.zeros(ctx.n_particles, dtype=float)
+    ctx.valid_transition = is_walkable(ctx.particles)
+    ctx.valid_count = int(np.count_nonzero(ctx.valid_transition))
+    ctx.valid_weight_mask = ctx.valid_transition.copy()
+    ctx.valid_weight_count = ctx.valid_count
+    ctx.valid_weight_mass = 1.0
+    ctx.ess_after_observation = float(ctx.n_particles)
+    ctx.effective_step_lengths_for_diagnostics = ctx.sl.copy()
+    ctx.resampled = True
+    ctx.recovery_attempted = False
+    ctx.recovery_mode = "landmark_reset"
+    ctx.recovery_valid_count = ctx.valid_count
+
+
 def resolve_map_constraints(ctx: ParticleRuntime) -> None:
     """地図制約違反を復旧し、通常粒子はESSに応じて再標本化する。"""
     _reset_recovery_diagnostics(ctx)
+    if ctx.landmark_mode == "reset" and ctx.landmark_detection is not None:
+        _reset_to_landmark(ctx)
+        return
     if not ctx.recovery_attempted:
         _resample_or_keep(ctx)
         return

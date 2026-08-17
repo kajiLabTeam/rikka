@@ -25,9 +25,14 @@ from matplotlib.colors import Normalize
 
 from ...common.config import FLOORMAP_ORIGIN_PX, FLOORMAP_PATH, FLOORMAP_SCALE
 from ...common.lib.floormap import compute_pixel_coords
-from ...common.lib.models import StepHeading
+from ...common.lib.models import LandmarkCorrectionResult, StepHeading
 from ...matplotlib_config import configure_japanese_font
-from .trajectory import _plot_heading_overlay as plot_heading_overlay
+from .trajectory import (
+    _plot_heading_overlay as plot_heading_overlay,
+)
+from .trajectory import (
+    _plot_landmark_overlay as plot_landmark_overlay,
+)
 
 
 def plot_particle_filter_trajectory(
@@ -39,6 +44,7 @@ def plot_particle_filter_trajectory(
     scale: float = FLOORMAP_SCALE,
     output_dir: Path | None = None,
     step_headings: list[StepHeading] | None = None,
+    landmark: LandmarkCorrectionResult | None = None,
 ) -> None:
     """PF の平均優先・壁際祖先フォールバック軌跡を描画する。
 
@@ -67,6 +73,8 @@ def plot_particle_filter_trajectory(
     pts = np.column_stack([px, py]).reshape(-1, 1, 2)
     segments = np.concatenate([pts[:-1], pts[1:]], axis=1)
     lc = LineCollection(segments.tolist(), cmap=cmap, norm=norm, zorder=2)
+    if landmark is not None:
+        lc.set_label("ランドマーク反映後軌跡")
     lc.set_array(np.arange(n - 1))
     ax.add_collection(lc)
     sc = ax.scatter(px, py, c=np.arange(n), cmap=cmap, norm=norm, s=20, zorder=3)
@@ -76,6 +84,14 @@ def plot_particle_filter_trajectory(
         ax,
         trajectory,
         step_headings,
+        gx_mean,
+        gz_mean,
+        origin_px,
+        scale,
+    )
+    plot_landmark_overlay(
+        ax,
+        landmark,
         gx_mean,
         gz_mean,
         origin_px,

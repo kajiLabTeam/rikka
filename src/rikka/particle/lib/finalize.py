@@ -36,11 +36,37 @@ def finalize(
     np.ndarray,
     list[StepHeading],
 ]:
+    allowed_jump_steps = (
+        set(ctx.landmark_by_step) if ctx.landmark_mode == "reset" else None
+    )
     ctx.all_particles = np.stack(ctx.all_particles_list)
     ctx.particle_paths = _reconstruct_particle_paths(
         ctx.position_history, ctx.parent_history
     )
-    if ctx.path_selection == "sequence" or ctx.recorder.paths_enabled:
+    if allowed_jump_steps:
+        ctx.current_path, ctx.current_modes, ctx.current_sources = (
+            _select_reachable_cluster_path(
+                ctx.position_history,
+                ctx.weight_history,
+                ctx.parent_history,
+                ctx.map_gray,
+                ctx.gx_mean,
+                ctx.gz_mean,
+                ctx.origin_px,
+                ctx.scale,
+                allowed_jump_steps,
+            )
+        )
+        ctx.sequence_path = ctx.current_path.copy()
+        ctx.sequence_modes = ["reset_current"] * len(ctx.current_path)
+        ctx.sequence_sources = list(ctx.current_sources)
+        ctx.current_reversals = 0
+        ctx.sequence_reversals = 0
+        ctx.selected_path = ctx.current_path
+        ctx.trajectory_modes = ctx.current_modes
+        ctx.trajectory_sources = ctx.current_sources
+        ctx.selected_mode = "current"
+    elif ctx.path_selection == "sequence" or ctx.recorder.paths_enabled:
         ctx.sensor_headings = np.asarray(
             [heading.selected_heading for heading in ctx.step_headings],
             dtype=float,
@@ -72,6 +98,7 @@ def finalize(
                 ctx.scale,
                 ctx.sensor_headings,
                 ctx.turning_evidence,
+                allowed_jump_steps,
             )
         )
         ctx.current_path, ctx.current_modes, ctx.current_sources = (
@@ -84,6 +111,7 @@ def finalize(
                 ctx.gz_mean,
                 ctx.origin_px,
                 ctx.scale,
+                allowed_jump_steps,
             )
         )
         ctx.sequence_reversals = _unsupported_reversal_count(
@@ -116,6 +144,7 @@ def finalize(
                 ctx.gz_mean,
                 ctx.origin_px,
                 ctx.scale,
+                allowed_jump_steps,
             )
         )
         ctx.selected_mode = "current"

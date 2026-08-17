@@ -33,6 +33,7 @@ from ..common.config import (
     HEADING_METHOD,
     INITIAL_DIRECTION,
     MOTION_ESTIMATION,
+    PF_LANDMARK_MODE,
     PF_MOTION_PREDICTIVE_WEIGHT_POWER,
     PF_NUM_PARTICLES,
     PF_PATH_SELECTION,
@@ -53,6 +54,7 @@ from ..common.lib.validation import (
     HEADING_METHODS,
     MOTION_ESTIMATION_METHODS,
     MOTION_HEADING_CORRECTION_METHODS,
+    PF_LANDMARK_MODES,
     PF_PATH_SELECTION_METHODS,
     SIDESTEP_HEADING_SOURCES,
     SIDESTEP_SMOOTHING_METHODS,
@@ -97,6 +99,8 @@ _MOTION_ESTIMATION_CHOICES = MOTION_ESTIMATION_METHODS
 _SMOOTHING_MODE_DEFAULT = SMOOTHING_MODE
 _SMOOTHING_MODE_CHOICES = SMOOTHING_MODES
 _PF_MOTION_PREDICTIVE_WEIGHT_POWER_DEFAULT = PF_MOTION_PREDICTIVE_WEIGHT_POWER
+_PF_LANDMARK_MODE_DEFAULT = PF_LANDMARK_MODE
+_PF_LANDMARK_MODE_CHOICES = PF_LANDMARK_MODES
 _PF_NUM_PARTICLES_DEFAULT = PF_NUM_PARTICLES
 _PF_PATH_SELECTION_DEFAULT = PF_PATH_SELECTION
 _PF_PATH_SELECTION_CHOICES = PF_PATH_SELECTION_METHODS
@@ -488,6 +492,13 @@ cli.add_command(run, name="pdr")
 
 @cli.command()
 @click.option(
+    "--pf-landmark-mode",
+    type=click.Choice(_PF_LANDMARK_MODE_CHOICES),
+    default=_PF_LANDMARK_MODE_DEFAULT,
+    show_default=True,
+    help="particle filter へのランドマーク反映方式",
+)
+@click.option(
     "--pf-path-selection",
     type=click.Choice(_PF_PATH_SELECTION_CHOICES),
     default=_PF_PATH_SELECTION_DEFAULT,
@@ -592,6 +603,7 @@ def particle(
     pf_seed: int | None,
     motion_predictive_weight_power: float,
     pf_path_selection: str,
+    pf_landmark_mode: str,
 ) -> None:
     """パーティクルフィルタ + マップマッチングで歩行軌跡を推定する。"""
     from ..common.lib.sensors import load_sensor_data  # noqa: PLC0415
@@ -633,6 +645,7 @@ def particle(
         particle_count=pf_particles,
         motion_predictive_weight_power=motion_predictive_weight_power,
         pf_path_selection=pf_path_selection,
+        pf_landmark_mode=pf_landmark_mode,
         ble_landmark=ble_landmark,
         ble_data_path=ble_data_path,
         ble_rssi_threshold=ble_rssi_threshold,

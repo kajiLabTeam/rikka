@@ -71,6 +71,7 @@ def record_checkpoint_replay(ctx: ParticleRuntime) -> None:
                 axis=1,
             )
             collector_index = ctx.diagnostics_start_index + history_step - 1
+            previous_diagnostic = recorder.diagnostics[collector_index]
             recorder.diagnostics[collector_index] = _build_step_diagnostics(
                 step_number=history_step,
                 step_time=ctx.t_at_steps[history_step - 1],
@@ -107,6 +108,9 @@ def record_checkpoint_replay(ctx: ParticleRuntime) -> None:
                 recovery_selected_branch_count=int(
                     np.unique(ctx.recovery.route_branch_ids).size
                 ),
+                landmark_beacon_id=previous_diagnostic.landmark_beacon_id,
+                landmark_distance_m=previous_diagnostic.landmark_distance_m,
+                landmark_likelihood_mean=(previous_diagnostic.landmark_likelihood_mean),
             )
 
     if recorder.stages_enabled:

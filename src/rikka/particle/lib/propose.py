@@ -17,6 +17,7 @@ from ...common.config import (
     SIDESTEP_LENGTH_SCALE,
     TURNING_LENGTH_SCALE,
 )
+from ...particle.lib.landmark import landmark_likelihood
 from ...particle.lib.map_constraints import (
     _evaluate_particle_transitions,
 )
@@ -31,6 +32,41 @@ from ...particle.lib.resampling import (
 )
 from ...particle.lib.weighting import weight
 from .state import ParticleRuntime
+
+
+def _resolve_landmark_observation(ctx: ParticleRuntime) -> None:
+    """現在歩のランドマークと、observation方式の尤度・診断値を解決する。"""
+    ctx.landmark_detection = None
+    ctx.landmark_xy = None
+    ctx.landmark_likelihood = None
+    ctx.landmark_likelihood_mean = None
+    ctx.landmark_before_position = None
+    if ctx.landmark_mode == "none":
+        return
+    ctx.landmark_detection = ctx.landmark_by_step.get(ctx.step_number)
+    if ctx.landmark_detection is None:
+        return
+    ctx.landmark_xy = ctx.landmark_meters[ctx.landmark_detection.beacon_id]
+    base_weights = weight(
+        ctx.weights_before,
+        ctx.valid_transition,
+        ctx.stride_observation_likelihood,
+        ctx.state_predictive_likelihoods,
+        ctx.motion_predictive_weight_power,
+    )
+    base_mass = float(base_weights.sum())
+    normalized = base_weights / base_mass if base_mass > 0.0 else ctx.weights_before
+    center = np.average(ctx.proposed_particles, axis=0, weights=normalized)
+    ctx.landmark_before_position = (float(center[0]), float(center[1]))
+    if ctx.landmark_mode != "observation":
+        return
+    ctx.landmark_likelihood = landmark_likelihood(
+        ctx.proposed_particles,
+        ctx.landmark_xy,
+        ctx.landmark_sigma_m,
+        ctx.landmark_likelihood_floor,
+    )
+    ctx.landmark_likelihood_mean = float(np.sum(normalized * ctx.landmark_likelihood))
 
 
 def propose(ctx: ParticleRuntime) -> None:
@@ -149,12 +185,14 @@ def propose(ctx: ParticleRuntime) -> None:
                 / ctx.stride_prior_sigma
             )
         )
+    _resolve_landmark_observation(ctx)
     ctx.posterior_weights = weight(
         ctx.weights_before,
         ctx.valid_transition,
         ctx.stride_observation_likelihood,
         ctx.state_predictive_likelihoods,
         ctx.motion_predictive_weight_power,
+        ctx.landmark_likelihood,
     )
     ctx.posterior_weights_for_stages = (
         ctx.posterior_weights.copy() if ctx.recorder.stages_enabled else None
@@ -166,6 +204,8 @@ def propose(ctx: ParticleRuntime) -> None:
                 ctx.motion_predictive_weight_power
                 * np.log(ctx.state_predictive_likelihoods)
             )
+        if ctx.landmark_likelihood is not None:
+            ctx.observation_log_likelihood += np.log(ctx.landmark_likelihood)
     ctx.candidate_path_log_scores = np.where(
         ctx.valid_transition,
         ctx.path_log_scores_before + ctx.observation_log_likelihood,

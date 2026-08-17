@@ -27,6 +27,7 @@ def _select_reachable_cluster_path(
     gz_mean: float,
     origin_px: tuple[int, int],
     scale: float,
+    allowed_jump_steps: set[int] | None = None,
 ) -> tuple[np.ndarray, list[str], list[int | None]]:
     """各時点の有力クラスタ平均から、壁を横切らない軌跡を構成する。"""
     if not position_history:
@@ -130,6 +131,8 @@ def _select_reachable_cluster_path(
                 origin_px,
                 scale,
             )
+            if allowed_jump_steps and time_index in allowed_jump_steps:
+                reachable_to_mean[:] = True
             predecessor_costs = np.where(reachable_to_mean, costs, np.inf)
             best_predecessor = int(np.argmin(predecessor_costs))
             if np.isfinite(predecessor_costs[best_predecessor]):
@@ -164,6 +167,8 @@ def _select_reachable_cluster_path(
             origin_px,
             scale,
         )
+        if allowed_jump_steps and time_index in allowed_jump_steps:
+            mean_to_particles[:] = True
         enter_costs = costs[0] + deviations + cluster_penalties
         enter_from_mean = (
             positive_memberships[time_index]
@@ -200,9 +205,8 @@ def _select_reachable_cluster_path(
             modes.append("particle_fallback")
             sources.append(particle_index)
 
-    if (
-        n_times > 1
-        and not _evaluate_particle_transitions(
+    if n_times > 1:
+        valid_transitions = _evaluate_particle_transitions(
             selected_path[:-1],
             selected_path[1:],
             map_gray,
@@ -210,7 +214,15 @@ def _select_reachable_cluster_path(
             gz_mean,
             origin_px,
             scale,
-        ).all()
-    ):
-        raise RuntimeError("構成したクラスタ軌跡に壁またはマップ外遷移が含まれます")
+        )
+        if allowed_jump_steps:
+            jump_indices = np.asarray(
+                [step - 1 for step in allowed_jump_steps], dtype=int
+            )
+            jump_indices = jump_indices[
+                (jump_indices >= 0) & (jump_indices < len(valid_transitions))
+            ]
+            valid_transitions[jump_indices] = True
+        if not valid_transitions.all():
+            raise RuntimeError("構成したクラスタ軌跡に壁またはマップ外遷移が含まれます")
     return selected_path, modes, sources

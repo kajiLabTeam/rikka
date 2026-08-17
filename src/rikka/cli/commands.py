@@ -10,12 +10,14 @@
     設定構築、通常PDR、任意のPF、コンソール要約、成果物保存の順に実行する。
 """
 
+from dataclasses import replace
 from pathlib import Path
 
 import matplotlib.image as mpimg
 import numpy as np
 import pandas as pd
 
+from ..ble.pipeline import run_ble_landmark_detection
 from ..common.config import (
     BLE_DATA_PATH,
     BLE_LANDMARK_ENABLED,
@@ -28,6 +30,7 @@ from ..common.config import (
     HEADING_METHOD,
     INITIAL_DIRECTION,
     MOTION_ESTIMATION,
+    PF_LANDMARK_MODE,
     PF_MOTION_PREDICTIVE_WEIGHT_POWER,
     PF_NUM_PARTICLES,
     PF_PATH_SELECTION,
@@ -139,6 +142,7 @@ def run(
     smoothing_mode: str = SMOOTHING_MODE,
     motion_predictive_weight_power: float = PF_MOTION_PREDICTIVE_WEIGHT_POWER,
     pf_path_selection: str = PF_PATH_SELECTION,
+    pf_landmark_mode: str = PF_LANDMARK_MODE,
     ble_landmark: bool = BLE_LANDMARK_ENABLED,
     ble_data_path: str | Path = BLE_DATA_PATH,
     ble_rssi_threshold: float = BLE_RSSI_THRESHOLD_DBM,
@@ -148,7 +152,7 @@ def run(
         raise ValueError("粒子可視化の保存には use_particle_filter=True が必要です。")
     floormap = FloorMap(str(floormap_path), origin_px, scale)
     landmark_settings = BleLandmarkSettings(
-        enabled=ble_landmark and not use_particle_filter,
+        enabled=ble_landmark,
         data_path=ble_data_path,
         rssi_threshold_dbm=ble_rssi_threshold,
     )
@@ -183,7 +187,11 @@ def run(
             motion_estimation=motion_estimation,
             smoothing_mode=smoothing_mode,
         ),
-        landmark=landmark_settings,
+        landmark=(
+            replace(landmark_settings, enabled=False)
+            if use_particle_filter
+            else landmark_settings
+        ),
     )
     particle_settings = ParticleSettings(
         floormap_path=floormap_path,
@@ -193,6 +201,7 @@ def run(
         count=particle_count,
         motion_predictive_weight_power=motion_predictive_weight_power,
         path_selection=pf_path_selection,
+        landmark_mode=pf_landmark_mode,
     )
     output_settings = OutputSettings(
         plot=plot,
@@ -206,18 +215,24 @@ def run(
     if use_particle_filter:
         _validate_particle_floormap(floormap_path, origin_px)
         if ble_landmark:
-            print("警告: particle filter 使用時は BLE ランドマーク補正を適用しません。")
+            map_gray = _load_floormap_gray(floormap_path)
+            _validate_landmark_pixels(map_gray, landmark_settings.landmarks)
     elif landmark_settings.enabled:
         map_gray = _load_floormap_gray(floormap_path)
         _validate_floormap_origin(map_gray, origin_px)
         _validate_landmark_pixels(map_gray, landmark_settings.landmarks)
 
+    particle_detections = (
+        run_ble_landmark_detection(landmark_settings) if use_particle_filter else None
+    )
     result = run_pdr(pdr_settings, df_acc, df_gyro, floormap)
     if use_particle_filter:
         result = run_particle(
             result.prepared,
             floormap,
             particle_settings,
+            detections=particle_detections,
+            landmark_settings=landmark_settings,
         )
     _print_prepared_summary(result.prepared, pdr_settings)
     output_dir = plot_pipeline.create_output_dir()
