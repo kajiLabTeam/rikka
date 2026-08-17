@@ -133,11 +133,14 @@ BLE CSV は次の3列を持ちます。
 | 列 | 内容 |
 |---|---|
 | `timestamp_s` | phyphox の実験開始からの経過秒 |
-| `beacon_id` | `BLE_LANDMARKS` に登録するビーコン識別子 |
+| `beacon_id` | `BLE_LANDMARKS_PX` に登録するビーコン識別子 |
 | `rssi_dbm` | 受信 RSSI [dBm] |
 
-ランドマーク座標は `src/rikka/common/config/__init__.py` の `BLE_LANDMARKS` に
-`(beacon_id, x_m, y_m)` で設定します。既定の検出下限は -55 dBm です。
+ランドマーク座標は `src/rikka/common/config/__init__.py` の
+`BLE_LANDMARKS_PX` に `(beacon_id, pixel_x, pixel_y)` で設定します。
+`pixel_x` と `pixel_y` は `--origin-px` と同じ、フロアマップ画像の左上を
+`(0, 0)` とするピクセル座標です。補正時に `--origin-px` と `--scale` を
+使って PDR のメートル座標へ変換します。既定の検出下限は -55 dBm です。
 
 - `--ble-landmark`: BLE 補正を有効化
 - `--ble-data PATH`: BLE CSV を指定
@@ -154,6 +157,16 @@ BLE 有効時は `output/<timestamp>/landmark_corrections.csv` に検出時刻�
 
 `rikka particle --ble-landmark` は警告を表示し、最終的な PF 軌跡には BLE 補正を
 適用しません。PF へ統合する場合は、座標上書きではなく観測尤度として別途設計します。
+
+ランドマーク測位は将来の PF 統合に向けて責務を分離しています。
+
+- `ble/`: BLE CSV、RSSI 判定、サンプル生成
+- `landmark/lib/`: 検出元や推定方式に依存しない座標変換と歩割り当て
+- `pdr/lib/landmark_correction.py`: 通常 PDR 固有の完全座標補正
+- `common/lib/models.py`: PDR / PF が共有できる `LandmarkDetection` などの境界型
+
+`ble.pipeline.run_ble_landmark_detection()` は軌跡を変更せず、検出列だけを返します。
+現在は通常 PDR がこれを座標補正に使い、PF はまだ使用しません。
 
 ## データフロー
 
@@ -189,7 +202,10 @@ flowchart TD
     sidestep --> prepared["prepare_pdr_steps_with_settings()\nPreparedPdrSteps"]
 
     prepared --> pdr_branch{"コマンド"}
-    pdr_branch -->|rikka run / pdr| det_traj["TrajectoryResult\n通常 PDR 軌跡"]
+    ble_csv["input/ble/*.csv"] --> ble_pipeline["ble.pipeline.run_ble_landmark_detection()\nLandmarkDetection 列"]
+    pdr_branch -->|rikka run / pdr| pdr_landmark["pdr.lib.landmark_correction\n通常PDRの完全座標補正"]
+    ble_pipeline --> pdr_landmark
+    pdr_landmark --> det_traj["TrajectoryResult\n通常 PDR 軌跡"]
     pdr_branch -->|rikka particle| particle_pipeline["particle.pipeline.run_particle()"]
     particle_pipeline --> pf["particle.lib.runner.run_particle_steps()\n地図拘束 / 重み / 再標本化 / recovery"]
 

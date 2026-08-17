@@ -219,13 +219,13 @@ BLE_RSSI_RELEASE_STREAK = 2
 # 観測を同時受信として扱い、最も強い RSSI のビーコンを 1 件だけ採用する
 BLE_SYNC_WINDOW_S = 0.05
 
-# ランドマークとして扱う BLE ビーコンの既知座標
-# (beacon_id, x [m], y [m]) の並び。座標系は PDR 軌跡と同じで、原点は歩行開始位置。
-# 既定値は既定データの PDR 推定座標から 1〜2 m ずらした値。
-BLE_LANDMARKS: tuple[tuple[str, float, float], ...] = (
-    ("beacon_1", 2.0, 20.0),
-    ("beacon_2", -13.0, 9.0),
-    ("beacon_3", 1.0, 3.0),
+# ランドマークとして扱う BLE ビーコンのフロアマップ上の既知座標
+# (beacon_id, pixel_x, pixel_y) の並び。--origin-px と同じ画像左上原点の
+# ピクセル座標で設定する。既定値は各廊下の中心付近に置いた歩行可能画素。
+BLE_LANDMARKS_PX: tuple[tuple[str, float, float], ...] = (
+    ("beacon_1", 2056, 2400),
+    ("beacon_2", 750, 1479),
+    ("beacon_3", 2056, 700),
 )
 
 # サンプル BLE RSSI 生成条件

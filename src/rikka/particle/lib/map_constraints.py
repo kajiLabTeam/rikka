@@ -14,7 +14,11 @@
 import numpy as np
 from scipy.ndimage import distance_transform_edt
 
-from ...common.lib.floormap import compute_pixel_coords, pixel_y_sign
+from ...common.lib.floormap import (
+    compute_meter_coords,
+    compute_pixel_coords,
+    is_walkable_cell,
+)
 
 
 def _normalize_floormap_gray(map_raw: np.ndarray) -> np.ndarray:
@@ -29,34 +33,13 @@ def _normalize_floormap_gray(map_raw: np.ndarray) -> np.ndarray:
     return np.asarray(np.clip(map_arr, 0.0, 255.0), dtype=float)
 
 
-def _compute_meter_coords(
-    px: np.ndarray,
-    py: np.ndarray,
-    gx_mean: float,
-    gz_mean: float,
-    origin_px: tuple[int, int],
-    scale: float,
-) -> tuple[np.ndarray, np.ndarray]:
-    """フロアマップのピクセル座標をメートル座標へ戻す。"""
-    y_sign = pixel_y_sign(gx_mean, gz_mean)
-    xs = (px - origin_px[0]) * scale
-    ys = (py - origin_px[1]) * scale / y_sign
-    return xs, ys
-
-
-def _is_walkable_cell(map_gray: np.ndarray, x: int, y: int) -> bool:
-    """指定画素がマップ内の歩行可能画素かを返す。"""
-    map_h, map_w = map_gray.shape
-    return 0 <= x < map_w and 0 <= y < map_h and bool(map_gray[y, x] > 128)
-
-
 def _validate_floormap_origin(
     map_gray: np.ndarray,
     origin_px: tuple[int, int],
 ) -> None:
     """起点が検証済み2次元マップ内の歩行可能画素であることを検証する。"""
     origin_x, origin_y = origin_px
-    if not _is_walkable_cell(map_gray, origin_x, origin_y):
+    if not is_walkable_cell(map_gray, origin_x, origin_y):
         raise ValueError("origin_px は歩行可能なマップ内画素を指定してください")
 
 
@@ -81,7 +64,7 @@ def _segment_crosses_only_walkable_cells(
     cell_y = int(np.floor(y0 + 0.5))
     end_x = int(np.floor(x1 + 0.5))
     end_y = int(np.floor(y1 + 0.5))
-    if not _is_walkable_cell(map_gray, cell_x, cell_y):
+    if not is_walkable_cell(map_gray, cell_x, cell_y):
         return False
     if cell_x == end_x and cell_y == end_y:
         return True
@@ -105,9 +88,9 @@ def _segment_crosses_only_walkable_cells(
             next_x = cell_x + step_x
             next_y = cell_y + step_y
             # 画素角に触れる遷移は、隣接する両画素も通過したものとして扱う。
-            if not _is_walkable_cell(map_gray, next_x, cell_y):
+            if not is_walkable_cell(map_gray, next_x, cell_y):
                 return False
-            if not _is_walkable_cell(map_gray, cell_x, next_y):
+            if not is_walkable_cell(map_gray, cell_x, next_y):
                 return False
             cell_x = next_x
             cell_y = next_y
@@ -119,7 +102,7 @@ def _segment_crosses_only_walkable_cells(
         else:
             cell_y += step_y
             t_max_y += t_delta_y
-        if not _is_walkable_cell(map_gray, cell_x, cell_y):
+        if not is_walkable_cell(map_gray, cell_x, cell_y):
             return False
     return False
 
@@ -210,7 +193,7 @@ def _snap_trajectory_to_walkable_pixels(
     snap_x[needs_snap] = nearest_x[query_y[needs_snap], query_x[needs_snap]]
     snap_y[needs_snap] = nearest_y[query_y[needs_snap], query_x[needs_snap]]
 
-    xs, ys = _compute_meter_coords(
+    xs, ys = compute_meter_coords(
         snap_x.astype(float),
         snap_y.astype(float),
         gx_mean,
