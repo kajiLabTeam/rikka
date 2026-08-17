@@ -15,6 +15,9 @@ from pathlib import Path
 import matplotlib.image as mpimg
 import numpy as np
 
+from ...common.lib.models import FloorMap
+from ...landmark.lib.assignment import build_step_landmark_map
+from ...landmark.lib.coordinates import build_landmark_meter_map
 from ...particle.lib.map_constraints import (
     _normalize_floormap_gray,
     _validate_floormap_origin,
@@ -26,6 +29,7 @@ from ...particle.lib.proposal import (
 from ...particle.lib.recorder import (
     ParticleRecorder,
 )
+from .landmark import meter_walkable_mask
 from .state import ParticleRuntime
 
 
@@ -138,3 +142,29 @@ def initialize(ctx: ParticleRuntime) -> None:
     ctx.effective_heading_rejuvenation_sigma = _adaptive_heading_rejuvenation_sigma(
         ctx.rejuvenation_sigma_heading, ctx.recording_motion_reliability
     )
+    ctx.landmark_meters = build_landmark_meter_map(
+        ctx.landmarks,
+        ctx.gx_mean,
+        ctx.gz_mean,
+        FloorMap(str(ctx.floormap_path), ctx.origin_px, ctx.scale),
+    )
+    ctx.landmark_by_step = build_step_landmark_map(
+        ctx.landmark_detections,
+        ctx.raw_step_times,
+        ctx.landmark_meters,
+    )
+    ctx.landmark_events = (
+        [] if ctx.landmark_events_collector is None else ctx.landmark_events_collector
+    )
+    if ctx.landmark_mode != "none":
+        for beacon_id, landmark_xy in ctx.landmark_meters.items():
+            walkable = meter_walkable_mask(
+                np.asarray([landmark_xy], dtype=float),
+                ctx.map_gray,
+                ctx.gx_mean,
+                ctx.gz_mean,
+                ctx.origin_px,
+                ctx.scale,
+            )
+            if not bool(walkable[0]):
+                print(f"警告: ランドマーク {beacon_id} が歩行不可画素にあります。")

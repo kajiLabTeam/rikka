@@ -7,7 +7,7 @@
 利用先:
     particle runner の観測更新段階から呼び出す。
 処理フロー:
-    事前重みへ3種類の尤度を既存順で乗算して返す。
+    事前重みへ既存3因子を同じ順で乗算し、指定時だけランドマーク尤度を掛ける。
 """
 
 import numpy as np
@@ -19,12 +19,15 @@ def weight(
     stride_likelihood: np.ndarray,
     state_likelihood: np.ndarray,
     state_power: float,
+    landmark_likelihood: np.ndarray | None = None,
 ) -> np.ndarray:
     """正規化前の事後重みを返す。"""
-    return np.asarray(
+    posterior = (
         prior
         * valid_transition.astype(float)
         * stride_likelihood
-        * np.power(state_likelihood, state_power),
-        dtype=float,
+        * np.power(state_likelihood, state_power)
     )
+    if landmark_likelihood is not None:
+        posterior = posterior * landmark_likelihood
+    return np.asarray(posterior, dtype=float)

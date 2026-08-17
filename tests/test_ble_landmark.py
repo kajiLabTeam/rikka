@@ -37,6 +37,7 @@ from rikka.landmark.lib.assignment import (
 from rikka.pdr.lib.landmark_correction import apply_landmark_corrections
 from rikka.pdr.pipeline import run_pdr
 from rikka.plot import pipeline as plot_pipeline
+from rikka.plot.lib.animation import plot_particle_filter_trajectory
 from rikka.plot.lib.outputs import _build_landmark_corrections_dataframe
 from rikka.plot.lib.trajectory import plot_trajectory
 
@@ -576,13 +577,11 @@ def test_run_pdr_with_ble_requires_floormap() -> None:
         run_pdr(settings, pd.DataFrame(), pd.DataFrame())
 
 
-def test_run_with_particle_filter_skips_ble_load(
+def test_run_with_particle_filter_loads_ble_observations(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """PF 使用時は存在しない BLE パスを読み込まない。"""
-    map_path = tmp_path / "map.png"
-    plt.imsave(map_path, np.ones((8, 8)), cmap="gray", vmin=0.0, vmax=1.0)
+    """PF のランドマーク有効時も BLE CSV を検出入力として読み込む。"""
     times = np.arange(5, dtype=float) * 0.01
     df_acc = pd.DataFrame(
         {
@@ -604,19 +603,17 @@ def test_run_with_particle_filter_skips_ble_load(
     output_dir.mkdir()
     monkeypatch.setattr(plot_pipeline, "create_output_dir", lambda: output_dir)
 
-    run_command(
-        df_acc=df_acc,
-        df_gyro=df_gyro,
-        plot=False,
-        use_particle_filter=True,
-        floormap_path=map_path,
-        origin_px=(0, 0),
-        particle_seed=0,
-        ble_landmark=True,
-        ble_data_path=tmp_path / "missing.csv",
-    )
-
-    assert not (output_dir / "landmark_corrections.csv").exists()
+    with pytest.raises(ValueError, match="BLE データが存在しません"):
+        run_command(
+            df_acc=df_acc,
+            df_gyro=df_gyro,
+            plot=False,
+            use_particle_filter=True,
+            floormap_path=FLOORMAP_PATH,
+            particle_seed=0,
+            ble_landmark=True,
+            ble_data_path=tmp_path / "missing.csv",
+        )
 
 
 def test_build_landmark_corrections_dataframe_has_diagnostic_columns() -> None:
@@ -701,6 +698,37 @@ def test_plot_trajectory_labels_corrected_path_with_landmark(
     plt.close("all")
 
 
+def test_plot_particle_trajectory_overlays_landmark_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PF軌跡図にも通常PDRと同じランドマーク診断を重ねる。"""
+    map_path = tmp_path / "map.png"
+    plt.imsave(map_path, np.ones((8, 8)), cmap="gray", vmin=0.0, vmax=1.0)
+    landmark = _apply_corrections(
+        [[0.0, 0.0], [1.0, 0.0]],
+        [1.0],
+        (_detection(1.0),),
+        _landmark_settings(),
+        "ble.csv",
+        0.0,
+        1.0,
+    )
+    monkeypatch.setattr(plt, "show", lambda: None)
+
+    plot_particle_filter_trajectory(
+        landmark.trajectory,
+        floormap_path=map_path,
+        output_dir=tmp_path,
+        landmark=landmark,
+    )
+
+    labels = [artist.get_label() for artist in plt.gcf().axes[0].collections]
+    assert "ランドマーク反映後軌跡" in labels
+    assert (tmp_path / "pf_trajectory.png").exists()
+    plt.close("all")
+
+
 def test_run_help_includes_ble_landmark_option() -> None:
     """run --help に BLE ランドマークのオプションが出る。"""
     result = CliRunner().invoke(cli, ["run", "--help"])
@@ -719,6 +747,7 @@ def test_particle_help_includes_ble_landmark_option() -> None:
     assert "--ble-landmark" in result.output
     assert "--ble-data" in result.output
     assert "--ble-rssi-threshold" in result.output
+    assert "--pf-landmark-mode" in result.output
 
 
 def test_ble_sample_help_lists_options() -> None:

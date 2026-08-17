@@ -13,6 +13,8 @@
     未登録検出を除き、同一歩の最後の検出を1始まり歩番号へ対応付ける。
 """
 
+from collections.abc import Sequence
+
 import numpy as np
 
 from ...common.lib.models import LandmarkDetection
@@ -20,7 +22,7 @@ from ...common.lib.models import LandmarkDetection
 
 def assign_detections_to_steps(
     detections: tuple[LandmarkDetection, ...],
-    t_at_steps: list[float],
+    t_at_steps: np.ndarray | Sequence[float],
 ) -> tuple[dict[int, list[LandmarkDetection]], int]:
     """検出時刻を0始まりの歩indexへ写像し、歩ごとの検出と破棄件数を返す。"""
     if not t_at_steps:
@@ -39,7 +41,7 @@ def assign_detections_to_steps(
 
 def build_step_landmark_map(
     detections: tuple[LandmarkDetection, ...],
-    t_at_steps: list[float],
+    t_at_steps: np.ndarray | Sequence[float],
     landmark_meters: dict[str, tuple[float, float]],
 ) -> dict[int, LandmarkDetection]:
     """PFの1始まり歩番号からその歩で反映する最後の登録済み検出への辞書を返す。"""

@@ -69,6 +69,7 @@ def _select_sequence_map_path(
     scale: float,
     sensor_headings: np.ndarray | None = None,
     turning_evidence: np.ndarray | None = None,
+    allowed_jump_steps: set[int] | None = None,
 ) -> tuple[np.ndarray, list[str], list[int | None]]:
     """累積事後スコア最大の合法な単一祖先経路を返す。"""
     if particle_paths.ndim != 3 or particle_paths.shape[2:] != (2,):
@@ -103,9 +104,8 @@ def _select_sequence_map_path(
 
     for selected_index in np.argsort(-penalized_scores, kind="stable"):
         selected_path = particle_paths[int(selected_index)]
-        if (
-            n_times > 1
-            and not _evaluate_particle_transitions(
+        if n_times > 1:
+            valid_transitions = _evaluate_particle_transitions(
                 selected_path[:-1],
                 selected_path[1:],
                 map_gray,
@@ -113,9 +113,17 @@ def _select_sequence_map_path(
                 gz_mean,
                 origin_px,
                 scale,
-            ).all()
-        ):
-            continue
+            )
+            if allowed_jump_steps:
+                jump_indices = np.asarray(
+                    [step - 1 for step in allowed_jump_steps], dtype=int
+                )
+                jump_indices = jump_indices[
+                    (jump_indices >= 0) & (jump_indices < len(valid_transitions))
+                ]
+                valid_transitions[jump_indices] = True
+            if not valid_transitions.all():
+                continue
         return (
             selected_path.copy(),
             ["sequence_map_ancestry"] * n_times,

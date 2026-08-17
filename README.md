@@ -118,14 +118,15 @@ uv run rikka sensor
 
 ## BLE ランドマーク補正
 
-既知座標に置いた BLE ビーコンの RSSI が閾値以上になったとき、通常 PDR の位置を
-ランドマーク座標へ補正できます。既定では無効で、particle filter には適用しません。
+既知座標に置いた BLE ビーコンの RSSI が閾値以上になったとき、通常 PDR または
+particle filter にランドマーク位置を反映できます。BLE 測位自体は既定で無効です。
 
 実測データがない場合は、センサー CSV と同じ時間軸のサンプルを先に生成します。
 
 ```sh
 uv run rikka ble-sample
 uv run rikka run --ble-landmark --no-plot
+uv run rikka particle --ble-landmark --pf-landmark-mode observation --no-plot
 ```
 
 BLE CSV は次の3列を持ちます。
@@ -155,18 +156,31 @@ BLE 有効時は `output/<timestamp>/landmark_corrections.csv` に検出時刻�
 補正前後の軌跡、ランドマーク、補正地点を重ねて描画します。
 最終歩より後で補正できなかった検出は `step=-1`、`applied=False` としてCSVに残ります。
 
-`rikka particle --ble-landmark` は警告を表示し、最終的な PF 軌跡には BLE 補正を
-適用しません。PF へ統合する場合は、座標上書きではなく観測尤度として別途設計します。
+particle filter では `--pf-landmark-mode` で反映方式を選びます。
 
-ランドマーク測位は将来の PF 統合に向けて責務を分離しています。
+- `none`: 検出を軌跡へ反映しない。BLE 無効時と固定 seed の結果が一致します。
+- `observation`（既定）: ランドマーク距離の下限付きガウス尤度を粒子重みと
+  sequence 経路スコアへ加えます。
+- `reset`: ランドマーク周辺の歩行可能位置へ粒子を再配置します。比較実験用で、
+  位置以外の heading drift・stride scale・motion state は引き継ぎます。祖先経路が
+  不連続になるため、reset 使用時の代表軌跡は `pf-path-selection` にかかわらず
+  時点別の current 経路を使います。
+
+観測尤度の既定値は `sigma=3.0m`、`floor=0.05` です。実測 BLE がないため仮値で、
+実測データ取得後に再校正が必要です。PF の `landmark_corrections.csv` にある
+`before/after` は反映前後の粒子重み付き平均、`raw_trajectory` の描画は同じ歩列から
+作った通常 PDR 軌跡を表します。
+
+ランドマーク測位は推定方式ごとに責務を分離しています。
 
 - `ble/`: BLE CSV、RSSI 判定、サンプル生成
 - `landmark/lib/`: 検出元や推定方式に依存しない座標変換と歩割り当て
 - `pdr/lib/landmark_correction.py`: 通常 PDR 固有の完全座標補正
+- `particle/lib/landmark.py`: PF 固有の観測尤度と reset 再配置
 - `common/lib/models.py`: PDR / PF が共有できる `LandmarkDetection` などの境界型
 
 `ble.pipeline.run_ble_landmark_detection()` は軌跡を変更せず、検出列だけを返します。
-現在は通常 PDR がこれを座標補正に使い、PF はまだ使用しません。
+通常 PDR は検出を完全座標補正に使い、PF は同じ検出を観測尤度または再配置へ使います。
 
 ## データフロー
 
@@ -207,6 +221,7 @@ flowchart TD
     ble_pipeline --> pdr_landmark
     pdr_landmark --> det_traj["TrajectoryResult\n通常 PDR 軌跡"]
     pdr_branch -->|rikka particle| particle_pipeline["particle.pipeline.run_particle()"]
+    ble_pipeline --> particle_pipeline
     particle_pipeline --> pf["particle.lib.runner.run_particle_steps()\n地図拘束 / 重み / 再標本化 / recovery"]
 
     floormap["input/Floormap_building14_5floor.png"] --> pf_map["FloorMap\n通路/壁判定"]

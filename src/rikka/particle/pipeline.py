@@ -1,7 +1,8 @@
 """PreparedPdrSteps を地図制約付き代表軌跡へ変換する pipeline。
 
 役割:
-    通常 PDR で確定した歩列だけを受け、particle filter を実行する。
+    通常 PDR で確定した歩列と任意のランドマーク検出を受け、particle filter を
+    実行して共有結果型へまとめる。
 依存元:
     ``common`` の共有型・設定と既存互換 runner の数値実装を使用する。
 利用先:
@@ -12,11 +13,15 @@
 
 from ..common.lib.models import (
     FloorMap,
+    LandmarkCorrection,
+    LandmarkCorrectionResult,
+    LandmarkDetection,
     ParticleFilterResult,
     PreparedPdrSteps,
     TrajectoryResult,
 )
-from ..common.settings import ParticleSettings
+from ..common.settings import BleLandmarkSettings, ParticleSettings
+from ..landmark.lib.assignment import assign_detections_to_steps
 from .lib.recorder import (
     ParticleFilterStepDiagnostics,
     ParticlePathComparison,
@@ -29,11 +34,16 @@ def run_particle(
     prepared: PreparedPdrSteps,
     floormap: FloorMap,
     settings: ParticleSettings,
+    *,
+    detections: tuple[LandmarkDetection, ...] | None = None,
+    landmark_settings: BleLandmarkSettings | None = None,
 ) -> TrajectoryResult:
     """準備済みの歩列へ地図拘束を適用する。"""
     diagnostics: list[ParticleFilterStepDiagnostics] = []
     stages: list[ParticleStepStages] = []
     path_comparisons: list[ParticlePathComparison] = []
+    landmark_events: list[LandmarkCorrection] = []
+    runtime_detections = () if detections is None else detections
     trajectory, lengths, times, all_particles, headings = run_particle_steps(
         prepared.gx_mean,
         prepared.gz_mean,
@@ -53,6 +63,13 @@ def run_particle(
         diagnostics_collector=diagnostics,
         stage_collector=stages,
         path_comparison_collector=path_comparisons,
+        landmark_detections=runtime_detections,
+        landmarks=(() if landmark_settings is None else landmark_settings.landmarks),
+        landmark_mode=settings.landmark_mode,
+        landmark_sigma_m=settings.landmark_sigma_m,
+        landmark_likelihood_floor=settings.landmark_likelihood_floor,
+        landmark_reset_sigma_m=settings.landmark_reset_sigma_m,
+        landmark_events_collector=landmark_events,
     )
     particle = ParticleFilterResult(
         trajectory=trajectory,
@@ -61,6 +78,22 @@ def run_particle(
         stages=tuple(stages),
         path_comparisons=tuple(path_comparisons),
     )
+    landmark = None
+    if detections is not None and landmark_settings is not None:
+        _, discarded_count = assign_detections_to_steps(
+            detections,
+            prepared.t_at_steps,
+        )
+        landmark = LandmarkCorrectionResult(
+            trajectory=trajectory,
+            raw_trajectory=[list(point) for point in prepared.trajectory],
+            corrections=tuple(landmark_events),
+            detection_count=len(detections),
+            discarded_count=discarded_count,
+            rssi_threshold_dbm=landmark_settings.rssi_threshold_dbm,
+            data_path=str(landmark_settings.data_path),
+            detections=detections,
+        )
     return TrajectoryResult(
         trajectory=trajectory,
         step_lengths=lengths,
@@ -68,4 +101,5 @@ def run_particle(
         step_headings=headings,
         prepared=prepared,
         particle=particle,
+        landmark=landmark,
     )

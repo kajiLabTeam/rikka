@@ -197,6 +197,7 @@ def _render_trajectory(
             scale=settings.scale,
             output_dir=output_dir,
             step_headings=result.step_headings,
+            landmark=result.landmark,
         )
         return
     plot_trajectory(

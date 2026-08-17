@@ -39,6 +39,10 @@ from .config import (
     HEADING_METHOD,
     INITIAL_DIRECTION,
     MOTION_ESTIMATION,
+    PF_LANDMARK_LIKELIHOOD_FLOOR,
+    PF_LANDMARK_MODE,
+    PF_LANDMARK_RESET_SIGMA_M,
+    PF_LANDMARK_SIGMA_M,
     PF_MOTION_PREDICTIVE_WEIGHT_POWER,
     PF_NUM_PARTICLES,
     PF_PATH_SELECTION,
@@ -60,6 +64,7 @@ from .lib.validation import (
     HEADING_METHODS,
     MOTION_ESTIMATION_METHODS,
     MOTION_HEADING_CORRECTION_METHODS,
+    PF_LANDMARK_MODES,
     PF_PATH_SELECTION_METHODS,
     SIDESTEP_HEADING_SOURCES,
     SIDESTEP_SMOOTHING_METHODS,
@@ -190,6 +195,10 @@ class ParticleSettings:
     count: int = PF_NUM_PARTICLES
     motion_predictive_weight_power: float = PF_MOTION_PREDICTIVE_WEIGHT_POWER
     path_selection: str = PF_PATH_SELECTION
+    landmark_mode: str = PF_LANDMARK_MODE
+    landmark_sigma_m: float = PF_LANDMARK_SIGMA_M
+    landmark_likelihood_floor: float = PF_LANDMARK_LIKELIHOOD_FLOOR
+    landmark_reset_sigma_m: float = PF_LANDMARK_RESET_SIGMA_M
 
     def __post_init__(self) -> None:
         validate_scale(self.scale)
@@ -204,6 +213,16 @@ class ParticleSettings:
             self.path_selection,
             PF_PATH_SELECTION_METHODS,
         )
+        validate_choice("pf_landmark_mode", self.landmark_mode, PF_LANDMARK_MODES)
+        validate_positive_parameter("landmark_sigma_m", self.landmark_sigma_m)
+        validate_positive_parameter(
+            "landmark_reset_sigma_m",
+            self.landmark_reset_sigma_m,
+        )
+        if not 0.0 <= self.landmark_likelihood_floor < 1.0:
+            raise ValueError(
+                "landmark_likelihood_floor は 0 以上 1 未満を指定してください。"
+            )
 
 
 @dataclass(frozen=True)
