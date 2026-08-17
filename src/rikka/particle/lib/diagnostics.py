@@ -117,6 +117,7 @@ def _build_step_diagnostics(**values: Any) -> ParticleFilterStepDiagnostics:
     landmark_distance_m = values.get(
         "landmark_distance_m", computed_landmark_distance_m
     )
+    landmark_nearest_delta_s = values.get("landmark_nearest_delta_s")
     return ParticleFilterStepDiagnostics(
         step=step_number,
         timestamp_s=float(step_time),
@@ -148,6 +149,7 @@ def _build_step_diagnostics(**values: Any) -> ParticleFilterStepDiagnostics:
         calibration_reliability=(motion_evidence.calibration_reliability),
         landmark_beacon_id=landmark_beacon_id,
         landmark_distance_m=landmark_distance_m,
+        landmark_nearest_delta_s=landmark_nearest_delta_s,
         landmark_likelihood_mean=landmark_likelihood_mean,
         resampled=resampled,
         recovery_attempted=recovery_attempted,

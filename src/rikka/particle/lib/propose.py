@@ -40,7 +40,9 @@ def _resolve_landmark_observation(ctx: ParticleRuntime) -> None:
     ctx.landmark_xy = None
     ctx.landmark_likelihood = None
     ctx.landmark_likelihood_mean = None
+    ctx.landmark_position_spread_rms_m = None
     ctx.landmark_before_position = None
+    ctx.landmark_applied = False
     if ctx.landmark_mode == "none":
         return
     ctx.landmark_detection = ctx.landmark_by_step.get(ctx.step_number)
@@ -58,7 +60,14 @@ def _resolve_landmark_observation(ctx: ParticleRuntime) -> None:
     normalized = base_weights / base_mass if base_mass > 0.0 else ctx.weights_before
     center = np.average(ctx.proposed_particles, axis=0, weights=normalized)
     ctx.landmark_before_position = (float(center[0]), float(center[1]))
-    if ctx.landmark_mode != "observation":
+    ctx.landmark_position_spread_rms_m = float(
+        np.sqrt(
+            np.sum(
+                normalized * np.sum(np.square(ctx.proposed_particles - center), axis=1)
+            )
+        )
+    )
+    if ctx.landmark_mode not in {"observation", "hybrid"}:
         return
     ctx.landmark_likelihood = landmark_likelihood(
         ctx.proposed_particles,
@@ -67,6 +76,7 @@ def _resolve_landmark_observation(ctx: ParticleRuntime) -> None:
         ctx.landmark_likelihood_floor,
     )
     ctx.landmark_likelihood_mean = float(np.sum(normalized * ctx.landmark_likelihood))
+    ctx.landmark_applied = True
 
 
 def propose(ctx: ParticleRuntime) -> None:

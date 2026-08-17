@@ -49,6 +49,7 @@ class ParticleFilterStepDiagnostics:
     calibration_reliability: float
     landmark_beacon_id: str | None
     landmark_distance_m: float | None
+    landmark_nearest_delta_s: float | None
     landmark_likelihood_mean: float | None
     resampled: bool
     recovery_attempted: bool

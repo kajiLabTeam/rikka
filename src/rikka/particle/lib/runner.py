@@ -21,8 +21,11 @@ from ...common.config import (
     FORWARD_HEADING_SOURCE,
     PF_HEADING_DRIFT_RETENTION,
     PF_LANDMARK_LIKELIHOOD_FLOOR,
+    PF_LANDMARK_MAX_JUMP_M,
     PF_LANDMARK_MODE,
+    PF_LANDMARK_RESET_HEADING_SIGMA,
     PF_LANDMARK_RESET_SIGMA_M,
+    PF_LANDMARK_RESET_SPREAD_RATIO,
     PF_LANDMARK_SIGMA_M,
     PF_MOTION_PREDICTIVE_WEIGHT_POWER,
     PF_NUM_PARTICLES,
@@ -133,6 +136,9 @@ def run_particle_steps(
     landmark_sigma_m: float = PF_LANDMARK_SIGMA_M,
     landmark_likelihood_floor: float = PF_LANDMARK_LIKELIHOOD_FLOOR,
     landmark_reset_sigma_m: float = PF_LANDMARK_RESET_SIGMA_M,
+    landmark_max_jump_m: float = PF_LANDMARK_MAX_JUMP_M,
+    landmark_reset_spread_ratio: float = PF_LANDMARK_RESET_SPREAD_RATIO,
+    landmark_reset_heading_sigma: float = PF_LANDMARK_RESET_HEADING_SIGMA,
     landmark_events_collector: list[LandmarkCorrection] | None = None,
 ) -> ParticleStepsResult:
     """準備済み歩列を受け、元と同じ順序でPF段階を実行する。"""
@@ -185,6 +191,9 @@ def run_particle_steps(
         landmark_sigma_m=landmark_sigma_m,
         landmark_likelihood_floor=landmark_likelihood_floor,
         landmark_reset_sigma_m=landmark_reset_sigma_m,
+        landmark_max_jump_m=landmark_max_jump_m,
+        landmark_reset_spread_ratio=landmark_reset_spread_ratio,
+        landmark_reset_heading_sigma=landmark_reset_heading_sigma,
         landmark_events_collector=landmark_events_collector,
     )
     setup(ctx)

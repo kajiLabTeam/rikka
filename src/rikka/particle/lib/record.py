@@ -46,7 +46,7 @@ def _record_landmark_event(ctx: ParticleRuntime) -> None:
             landmark_y=ctx.landmark_xy[1],
             after_x=float(after[0]),
             after_y=float(after[1]),
-            applied=True,
+            applied=ctx.landmark_applied,
         )
     )
 

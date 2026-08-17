@@ -554,6 +554,7 @@ def test_particle_filter_diagnostics_field_order_is_stable() -> None:
         "calibration_reliability",
         "landmark_beacon_id",
         "landmark_distance_m",
+        "landmark_nearest_delta_s",
         "landmark_likelihood_mean",
         "resampled",
         "recovery_attempted",

@@ -110,6 +110,7 @@ def record_checkpoint_replay(ctx: ParticleRuntime) -> None:
                 ),
                 landmark_beacon_id=previous_diagnostic.landmark_beacon_id,
                 landmark_distance_m=previous_diagnostic.landmark_distance_m,
+                landmark_nearest_delta_s=(previous_diagnostic.landmark_nearest_delta_s),
                 landmark_likelihood_mean=(previous_diagnostic.landmark_likelihood_mean),
             )
 

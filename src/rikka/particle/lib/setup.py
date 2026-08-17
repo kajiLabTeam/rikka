@@ -107,6 +107,15 @@ def setup(ctx: ParticleRuntime) -> None:
     ctx.landmark_reset_sigma_m = validate_positive_parameter(
         "landmark_reset_sigma_m", ctx.landmark_reset_sigma_m
     )
+    ctx.landmark_max_jump_m = validate_positive_parameter(
+        "landmark_max_jump_m", ctx.landmark_max_jump_m
+    )
+    ctx.landmark_reset_spread_ratio = validate_positive_parameter(
+        "landmark_reset_spread_ratio", ctx.landmark_reset_spread_ratio
+    )
+    ctx.landmark_reset_heading_sigma = validate_non_negative_parameter(
+        "landmark_reset_heading_sigma", ctx.landmark_reset_heading_sigma
+    )
     if not 0.0 <= ctx.landmark_likelihood_floor < 1.0:
         raise ValueError(
             "landmark_likelihood_floor は 0 以上 1 未満を指定してください。"

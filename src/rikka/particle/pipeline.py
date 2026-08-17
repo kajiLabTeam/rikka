@@ -11,6 +11,8 @@
     診断収集器を用意し、準備済み歩列をrunnerへ渡して共有結果型へまとめる。
 """
 
+from dataclasses import replace
+
 from ..common.lib.models import (
     FloorMap,
     LandmarkCorrection,
@@ -21,13 +23,77 @@ from ..common.lib.models import (
     TrajectoryResult,
 )
 from ..common.settings import BleLandmarkSettings, ParticleSettings
-from ..landmark.lib.assignment import assign_detections_to_steps
+from ..landmark.lib.assignment import (
+    assign_detections_to_steps,
+    build_step_landmark_map,
+)
+from ..landmark.lib.coordinates import build_landmark_meter_map
+from ..landmark.lib.timing import evaluate_landmark_timing
 from .lib.recorder import (
     ParticleFilterStepDiagnostics,
     ParticlePathComparison,
     ParticleStepStages,
 )
 from .lib.runner import run_particle_steps
+
+
+def _attach_landmark_timing(
+    prepared: PreparedPdrSteps,
+    floormap: FloorMap,
+    landmark_settings: BleLandmarkSettings,
+    detections: tuple[LandmarkDetection, ...],
+    diagnostics: list[ParticleFilterStepDiagnostics],
+    events: list[LandmarkCorrection],
+) -> tuple[list[ParticleFilterStepDiagnostics], list[LandmarkCorrection]]:
+    """PF診断と補正履歴へ共通の最接近時刻指標を付ける。"""
+    landmark_meters = build_landmark_meter_map(
+        landmark_settings.landmarks,
+        prepared.gx_mean,
+        prepared.gz_mean,
+        floormap,
+    )
+    by_step = build_step_landmark_map(
+        detections,
+        prepared.t_at_steps,
+        landmark_meters,
+    )
+    timing_by_detection: dict[LandmarkDetection, float] = {}
+    for detection in detections:
+        landmark_xy = landmark_meters.get(detection.beacon_id)
+        if landmark_xy is None:
+            continue
+        timing_by_detection[detection] = evaluate_landmark_timing(
+            prepared.trajectory,
+            prepared.t_at_steps,
+            detection.timestamp_s,
+            landmark_xy,
+        ).nearest_approach_delta_s
+
+    updated_diagnostics: list[ParticleFilterStepDiagnostics] = []
+    for diagnostic in diagnostics:
+        step_detection = by_step.get(diagnostic.step)
+        updated_diagnostics.append(
+            replace(
+                diagnostic,
+                landmark_nearest_delta_s=timing_by_detection.get(step_detection),
+            )
+            if step_detection is not None
+            else diagnostic
+        )
+    updated_events = [
+        event._replace(
+            detection_distance_m=(
+                (event.before_x - event.landmark_x) ** 2
+                + (event.before_y - event.landmark_y) ** 2
+            )
+            ** 0.5,
+            nearest_approach_delta_s=timing_by_detection.get(
+                LandmarkDetection(event.timestamp_s, event.beacon_id, event.rssi_dbm)
+            ),
+        )
+        for event in events
+    ]
+    return updated_diagnostics, updated_events
 
 
 def run_particle(
@@ -69,8 +135,20 @@ def run_particle(
         landmark_sigma_m=settings.landmark_sigma_m,
         landmark_likelihood_floor=settings.landmark_likelihood_floor,
         landmark_reset_sigma_m=settings.landmark_reset_sigma_m,
+        landmark_max_jump_m=settings.landmark_max_jump_m,
+        landmark_reset_spread_ratio=settings.landmark_reset_spread_ratio,
+        landmark_reset_heading_sigma=settings.landmark_reset_heading_sigma,
         landmark_events_collector=landmark_events,
     )
+    if detections is not None and landmark_settings is not None:
+        diagnostics, landmark_events = _attach_landmark_timing(
+            prepared,
+            floormap,
+            landmark_settings,
+            detections,
+            diagnostics,
+            landmark_events,
+        )
     particle = ParticleFilterResult(
         trajectory=trajectory,
         all_particles=[item for item in all_particles],

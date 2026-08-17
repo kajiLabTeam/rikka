@@ -23,7 +23,9 @@ from ..common.config import (
     BLE_DATA_PATH,
     BLE_LANDMARK_ENABLED,
     BLE_RSSI_THRESHOLD_DBM,
+    BLE_SAMPLE_MODE,
     BLE_SAMPLE_SEED,
+    BLE_SAMPLE_TRUTH_PATH,
     DATA_DIR,
     FLOORMAP_ORIGIN_PX,
     FLOORMAP_PATH,
@@ -49,6 +51,8 @@ from ..common.config import (
     USER_HEIGHT_M,
 )
 from ..common.lib.validation import (
+    BLE_SAMPLE_MODES,
+    BLE_SAMPLE_SOURCES,
     FORWARD_HEADING_SOURCES,
     GYRO_BIAS_METHODS,
     HEADING_METHODS,
@@ -69,6 +73,8 @@ _BLE_DATA_DEFAULT = BLE_DATA_PATH
 _BLE_LANDMARK_DEFAULT = BLE_LANDMARK_ENABLED
 _BLE_RSSI_THRESHOLD_DEFAULT = BLE_RSSI_THRESHOLD_DBM
 _BLE_SAMPLE_SEED_DEFAULT = BLE_SAMPLE_SEED
+_BLE_SAMPLE_MODE_DEFAULT = BLE_SAMPLE_MODE
+_BLE_SAMPLE_TRUTH_DEFAULT = BLE_SAMPLE_TRUTH_PATH
 _FLOORMAP_DEFAULT = FLOORMAP_PATH
 _ORIGIN_DEFAULT = FLOORMAP_ORIGIN_PX
 _SCALE_DEFAULT = FLOORMAP_SCALE
@@ -702,6 +708,27 @@ def sensor(
 
 @cli.command(name="ble-sample")
 @click.option(
+    "--mode",
+    type=click.Choice(BLE_SAMPLE_MODES),
+    default=_BLE_SAMPLE_MODE_DEFAULT,
+    show_default=True,
+    help="RSSI生成方式",
+)
+@click.option(
+    "--source",
+    type=click.Choice(BLE_SAMPLE_SOURCES),
+    default="pdr",
+    show_default=True,
+    help="distance方式で使う歩行者位置の取得元",
+)
+@click.option(
+    "--truth-csv",
+    default=_BLE_SAMPLE_TRUTH_DEFAULT,
+    type=click.Path(),
+    show_default=True,
+    help="source=truth で使う正解軌跡CSV",
+)
+@click.option(
     "--data-dir",
     "-d",
     default=_DATA_DIR_DEFAULT,
@@ -724,17 +751,68 @@ def sensor(
     show_default=True,
     help="サンプル生成の乱数シード",
 )
-def ble_sample(data_dir: str, output: str, seed: int) -> None:
+def ble_sample(
+    mode: str,
+    source: str,
+    truth_csv: str,
+    data_dir: str,
+    output: str,
+    seed: int,
+) -> None:
     """歩行データと同じ時間軸のサンプル BLE RSSI CSV を生成する。"""
-    from ..ble.lib.sample import generate_sample_csv  # noqa: PLC0415
-    from ..common.lib.sensors import load_sensor_data  # noqa: PLC0415
-    from ..common.settings import BleSampleSettings  # noqa: PLC0415
+    import numpy as np  # noqa: PLC0415
 
-    df_acc, _ = load_sensor_data(data_dir)
+    from ..ble.lib.sample import (  # noqa: PLC0415
+        generate_sample_csv,
+        load_truth_trajectory,
+        map_truth_to_step_times,
+    )
+    from ..common.config import (  # noqa: PLC0415
+        FLOORMAP_ORIGIN_PX,
+        FLOORMAP_SCALE,
+    )
+    from ..common.lib.floormap import compute_meter_coords  # noqa: PLC0415
+    from ..common.lib.sensors import load_sensor_data  # noqa: PLC0415
+    from ..common.settings import (  # noqa: PLC0415
+        BleLandmarkSettings,
+        BleSampleSettings,
+        PdrSettings,
+    )
+    from ..pdr.pipeline import run_pdr  # noqa: PLC0415
+
+    df_acc, df_gyro = load_sensor_data(data_dir)
+    pdr_result = run_pdr(PdrSettings(), df_acc, df_gyro)
+    trajectory: list[list[float]] | np.ndarray = pdr_result.trajectory
+    trajectory_times: list[float] | np.ndarray = pdr_result.t_at_steps
+    if mode == "distance" and source == "truth":
+        truth_xy = load_truth_trajectory(truth_csv)
+        mapped, mapped_times = map_truth_to_step_times(
+            truth_xy,
+            pdr_result.t_at_steps,
+            pdr_result.trajectory,
+        )
+        trajectory = mapped
+        trajectory_times = mapped_times[1:]
+    landmarks = BleLandmarkSettings().landmarks
+    meter_xs, meter_ys = compute_meter_coords(
+        np.asarray([item.pixel_x for item in landmarks]),
+        np.asarray([item.pixel_y for item in landmarks]),
+        pdr_result.prepared.gx_mean,
+        pdr_result.prepared.gz_mean,
+        FLOORMAP_ORIGIN_PX,
+        FLOORMAP_SCALE,
+    )
+    landmark_positions = {
+        item.beacon_id: (float(x), float(y))
+        for item, x, y in zip(landmarks, meter_xs, meter_ys, strict=True)
+    }
     path, rows = generate_sample_csv(
         df_acc,
         output,
-        BleSampleSettings(seed=seed),
+        BleSampleSettings(mode=mode, seed=seed),
+        trajectory=trajectory,
+        t_at_steps=trajectory_times,
+        landmark_positions=landmark_positions,
     )
     print(f"Sample BLE RSSI saved to {path} ({rows} rows)")
 

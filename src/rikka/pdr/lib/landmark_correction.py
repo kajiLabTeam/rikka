@@ -23,6 +23,7 @@ from ...common.lib.models import (
 )
 from ...landmark.lib.assignment import assign_detections_to_steps
 from ...landmark.lib.coordinates import build_landmark_meter_map
+from ...landmark.lib.timing import evaluate_landmark_timing
 
 
 def apply_landmark_corrections(
@@ -67,6 +68,12 @@ def apply_landmark_corrections(
             landmark_x, landmark_y = landmark_position
             is_last = order == len(registered) - 1
             before_x, before_y = position_x, position_y
+            timing = evaluate_landmark_timing(
+                trajectory,
+                t_at_steps,
+                detection.timestamp_s,
+                landmark_position,
+            )
             if is_last:
                 position_x, position_y = landmark_x, landmark_y
             corrections.append(
@@ -82,6 +89,11 @@ def apply_landmark_corrections(
                     after_x=position_x,
                     after_y=position_y,
                     applied=is_last,
+                    detection_distance_m=(
+                        (before_x - landmark_x) ** 2 + (before_y - landmark_y) ** 2
+                    )
+                    ** 0.5,
+                    nearest_approach_delta_s=timing.nearest_approach_delta_s,
                 )
             )
         corrected.append([position_x, position_y])
