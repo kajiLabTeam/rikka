@@ -393,6 +393,10 @@ def _build_landmark_corrections_dataframe(
         "after_y",
         "detection_distance_m",
         "nearest_approach_delta_s",
+        "anchor_position_sigma_m",
+        "anchor_heading_deg",
+        "anchor_heading_sigma_deg",
+        "anchor_heading_bidirectional",
     ]
     rows: list[dict[str, object]] = [
         {
@@ -410,6 +414,10 @@ def _build_landmark_corrections_dataframe(
             "after_y": correction.after_y,
             "detection_distance_m": correction.detection_distance_m,
             "nearest_approach_delta_s": correction.nearest_approach_delta_s,
+            "anchor_position_sigma_m": correction.anchor_position_sigma_m,
+            "anchor_heading_deg": correction.anchor_heading_deg,
+            "anchor_heading_sigma_deg": correction.anchor_heading_sigma_deg,
+            "anchor_heading_bidirectional": correction.anchor_heading_bidirectional,
         }
         for correction in landmark.corrections
     ]
@@ -442,6 +450,10 @@ def _build_landmark_corrections_dataframe(
                 "after_y": np.nan,
                 "detection_distance_m": np.nan,
                 "nearest_approach_delta_s": np.nan,
+                "anchor_position_sigma_m": np.nan,
+                "anchor_heading_deg": np.nan,
+                "anchor_heading_sigma_deg": np.nan,
+                "anchor_heading_bidirectional": False,
             }
         )
     return pd.DataFrame(rows, columns=columns)

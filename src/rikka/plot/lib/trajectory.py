@@ -26,7 +26,11 @@ from matplotlib.colors import Normalize
 
 from ...common.config import FLOORMAP_ORIGIN_PX, FLOORMAP_PATH, FLOORMAP_SCALE
 from ...common.lib.floormap import compute_pixel_coords, pixel_vector_from_heading
-from ...common.lib.models import LandmarkCorrectionResult, StepHeading
+from ...common.lib.models import (
+    LandmarkCorrection,
+    LandmarkCorrectionResult,
+    StepHeading,
+)
 from ...matplotlib_config import configure_japanese_font
 
 _compute_pixel_coords = compute_pixel_coords
@@ -210,26 +214,67 @@ def _plot_landmark_overlay(
     if not applied:
         return
 
+    unique = list(
+        {
+            (item.beacon_id, item.landmark_x, item.landmark_y): item for item in applied
+        }.values()
+    )
+    groups = (
+        (
+            [item for item in unique if item.anchor_position_sigma_m is None],
+            "*",
+            260,
+            "magenta",
+            "ランドマーク",
+        ),
+        (
+            [
+                item
+                for item in unique
+                if item.anchor_position_sigma_m is not None
+                and item.anchor_heading_deg is None
+            ],
+            "D",
+            130,
+            "cyan",
+            "確定ランドマーク（位置）",
+        ),
+        (
+            [item for item in unique if item.anchor_heading_deg is not None],
+            "P",
+            170,
+            "orange",
+            "確定ランドマーク（位置・方位）",
+        ),
+    )
+    for items, marker, size, color, label in groups:
+        if not items:
+            continue
+        item_x, item_y = _compute_pixel_coords(
+            np.asarray([item.landmark_x for item in items], dtype=float),
+            np.asarray([item.landmark_y for item in items], dtype=float),
+            gx_mean,
+            gz_mean,
+            origin_px,
+            scale,
+        )
+        ax.scatter(
+            item_x,
+            item_y,
+            marker=marker,
+            s=size,
+            color=color,
+            edgecolors="black",
+            linewidths=0.8,
+            zorder=8,
+            label=label,
+        )
+    _plot_anchor_heading_arrows(ax, unique, gx_mean, gz_mean, origin_px, scale)
+
     landmark_x = np.array([item.landmark_x for item in applied], dtype=float)
     landmark_y = np.array([item.landmark_y for item in applied], dtype=float)
     lx, ly = _compute_pixel_coords(
-        landmark_x,
-        landmark_y,
-        gx_mean,
-        gz_mean,
-        origin_px,
-        scale,
-    )
-    ax.scatter(
-        lx,
-        ly,
-        marker="*",
-        s=260,
-        color="magenta",
-        edgecolors="black",
-        linewidths=0.8,
-        zorder=8,
-        label="ランドマーク",
+        landmark_x, landmark_y, gx_mean, gz_mean, origin_px, scale
     )
 
     before_x = np.array([item.before_x for item in applied], dtype=float)
@@ -261,6 +306,73 @@ def _plot_landmark_overlay(
             linewidth=1.0,
             alpha=0.7,
             zorder=8,
+        )
+
+
+def _plot_anchor_heading_arrows(
+    ax: Axes,
+    corrections: list[LandmarkCorrection],
+    gx_mean: float,
+    gz_mean: float,
+    origin_px: tuple[int, int],
+    scale: float,
+) -> None:
+    """方位確定ランドマークへ設定方位を示す矢印を描く。"""
+    heading_items = [
+        item for item in corrections if item.anchor_heading_deg is not None
+    ]
+    if not heading_items:
+        return
+    xs, ys = _compute_pixel_coords(
+        np.asarray([item.landmark_x for item in heading_items], dtype=float),
+        np.asarray([item.landmark_y for item in heading_items], dtype=float),
+        gx_mean,
+        gz_mean,
+        origin_px,
+        scale,
+    )
+    vectors = np.asarray(
+        [
+            _pixel_vector_from_heading(
+                np.radians(item.anchor_heading_deg),
+                1.0,
+                gx_mean,
+                gz_mean,
+                scale,
+            )
+            for item in heading_items
+            if item.anchor_heading_deg is not None
+        ],
+        dtype=float,
+    )
+    ax.quiver(
+        xs,
+        ys,
+        vectors[:, 0],
+        vectors[:, 1],
+        angles="xy",
+        scale_units="xy",
+        scale=1.0,
+        color="darkorange",
+        width=0.006,
+        zorder=9,
+        label="確定方位",
+    )
+    bidirectional = np.asarray(
+        [item.anchor_heading_bidirectional for item in heading_items], dtype=bool
+    )
+    if np.any(bidirectional):
+        ax.quiver(
+            xs[bidirectional],
+            ys[bidirectional],
+            -vectors[bidirectional, 0],
+            -vectors[bidirectional, 1],
+            angles="xy",
+            scale_units="xy",
+            scale=1.0,
+            color="darkorange",
+            width=0.006,
+            zorder=9,
         )
 
 
