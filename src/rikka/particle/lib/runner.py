@@ -24,6 +24,7 @@ from ...common.config import (
     PF_LANDMARK_MAX_JUMP_M,
     PF_LANDMARK_MODE,
     PF_LANDMARK_RESET_HEADING_SIGMA,
+    PF_LANDMARK_RESET_MIN_DISTANCE_M,
     PF_LANDMARK_RESET_SIGMA_M,
     PF_LANDMARK_RESET_SPREAD_RATIO,
     PF_LANDMARK_SIGMA_M,
@@ -138,6 +139,7 @@ def run_particle_steps(
     landmark_reset_sigma_m: float = PF_LANDMARK_RESET_SIGMA_M,
     landmark_max_jump_m: float = PF_LANDMARK_MAX_JUMP_M,
     landmark_reset_spread_ratio: float = PF_LANDMARK_RESET_SPREAD_RATIO,
+    landmark_reset_min_distance_m: float = PF_LANDMARK_RESET_MIN_DISTANCE_M,
     landmark_reset_heading_sigma: float = PF_LANDMARK_RESET_HEADING_SIGMA,
     landmark_events_collector: list[LandmarkCorrection] | None = None,
 ) -> ParticleStepsResult:
@@ -193,6 +195,7 @@ def run_particle_steps(
         landmark_reset_sigma_m=landmark_reset_sigma_m,
         landmark_max_jump_m=landmark_max_jump_m,
         landmark_reset_spread_ratio=landmark_reset_spread_ratio,
+        landmark_reset_min_distance_m=landmark_reset_min_distance_m,
         landmark_reset_heading_sigma=landmark_reset_heading_sigma,
         landmark_events_collector=landmark_events_collector,
     )

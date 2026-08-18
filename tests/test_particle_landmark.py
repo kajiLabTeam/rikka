@@ -11,6 +11,7 @@ from rikka.common.config import (
     PF_LANDMARK_MAX_JUMP_M,
     PF_LANDMARK_MODE,
     PF_LANDMARK_RESET_HEADING_SIGMA,
+    PF_LANDMARK_RESET_MIN_DISTANCE_M,
     PF_LANDMARK_RESET_SIGMA_M,
     PF_LANDMARK_RESET_SPREAD_RATIO,
     PF_LANDMARK_SIGMA_M,
@@ -90,6 +91,30 @@ def particle_landmark_results() -> dict[str, TrajectoryResult]:
             floormap,
             ParticleSettings(landmark_mode="reset", **base_settings),
             detections=(far_detection,),
+            landmark_settings=landmark_settings,
+        ),
+        "hybrid_near": run_particle(
+            prepared,
+            floormap,
+            ParticleSettings(
+                landmark_mode="hybrid",
+                landmark_reset_min_distance_m=1000.0,
+                count=120,
+                seed=0,
+            ),
+            detections=(hybrid_detection,),
+            landmark_settings=landmark_settings,
+        ),
+        "reset_near": run_particle(
+            prepared,
+            floormap,
+            ParticleSettings(
+                landmark_mode="reset",
+                landmark_reset_min_distance_m=1000.0,
+                count=120,
+                seed=0,
+            ),
+            detections=(detection,),
             landmark_settings=landmark_settings,
         ),
     }
@@ -192,6 +217,11 @@ def test_particle_landmark_settings_have_provisional_defaults() -> None:
     assert settings.landmark_max_jump_m == PF_LANDMARK_MAX_JUMP_M == 5.0
     assert settings.landmark_reset_spread_ratio == PF_LANDMARK_RESET_SPREAD_RATIO == 4.0
     assert (
+        settings.landmark_reset_min_distance_m
+        == PF_LANDMARK_RESET_MIN_DISTANCE_M
+        == 2.0
+    )
+    assert (
         settings.landmark_reset_heading_sigma == PF_LANDMARK_RESET_HEADING_SIGMA == 0.20
     )
 
@@ -208,6 +238,7 @@ def test_particle_landmark_settings_have_provisional_defaults() -> None:
         ({"landmark_reset_sigma_m": 0.0}, "landmark_reset_sigma_m"),
         ({"landmark_max_jump_m": 0.0}, "landmark_max_jump_m"),
         ({"landmark_reset_spread_ratio": 0.0}, "landmark_reset_spread_ratio"),
+        ({"landmark_reset_min_distance_m": -0.1}, "landmark_reset_min_distance_m"),
         ({"landmark_reset_heading_sigma": -0.1}, "landmark_reset_heading_sigma"),
     ],
 )
@@ -331,6 +362,37 @@ def test_hybrid_resets_when_landmark_exceeds_particle_spread(
 
     assert event.applied
     assert diagnostic.recovery_mode == "landmark_reset"
+
+
+def test_hybrid_keeps_observation_for_near_landmark(
+    particle_landmark_results: dict[str, TrajectoryResult],
+) -> None:
+    """ばら撒き幅より誤差が小さいランドマークはresetせず観測尤度で扱う。"""
+    result = particle_landmark_results["hybrid_near"]
+    assert result.landmark is not None
+    assert result.particle is not None
+    event = result.landmark.corrections[0]
+    diagnostic = result.particle.diagnostics[event.step_index]
+    points = np.asarray(result.trajectory, dtype=float)
+    steps = np.linalg.norm(np.diff(points, axis=0), axis=1)
+
+    assert diagnostic.recovery_mode == "none"
+    assert not diagnostic.resampled or diagnostic.recovery_mode == "none"
+    assert steps[event.step_index] <= 2.0 * float(np.median(steps))
+
+
+def test_reset_skips_when_error_is_smaller_than_scatter(
+    particle_landmark_results: dict[str, TrajectoryResult],
+) -> None:
+    """reset方式でも誤差が撒き直し幅以下ならresetせず不確かさを増やさない。"""
+    result = particle_landmark_results["reset_near"]
+    assert result.landmark is not None
+    assert result.particle is not None
+    event = result.landmark.corrections[0]
+    diagnostic = result.particle.diagnostics[event.step_index]
+
+    assert diagnostic.recovery_mode == "none"
+    assert not event.applied
 
 
 def test_reset_over_max_jump_is_skipped(

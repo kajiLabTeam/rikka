@@ -108,7 +108,12 @@ def resolve_walker_positions(
         raise ValueError("sample_times は1件以上必要です。")
     if len(step_times) > 1 and np.any(np.diff(step_times) <= 0.0):
         raise ValueError("t_at_steps は狭義単調増加である必要があります。")
-    trajectory_times = np.concatenate(([float(sample_times[0])], step_times))
+    # 起点は最初のサンプル時刻と最初の歩時刻の早いほうへ置く。サンプル開始が
+    # 最初の歩より後になると時刻列が単調増加でなくなり、補間が黙って壊れるため。
+    initial_time = float(sample_times[0])
+    if len(step_times) > 0:
+        initial_time = min(initial_time, float(step_times[0]))
+    trajectory_times = np.concatenate(([initial_time], step_times))
     return np.asarray(
         np.column_stack(
             (

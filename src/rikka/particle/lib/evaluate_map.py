@@ -160,22 +160,28 @@ def _reset_to_landmark(ctx: ParticleRuntime) -> None:
 
 
 def _landmark_reset_requested(ctx: ParticleRuntime) -> bool:
-    """現在のmodeと粒子群の広がりからresetが必要かを返す。"""
-    if ctx.landmark_mode == "reset":
-        return True
-    if ctx.landmark_mode != "hybrid":
+    """現在のmodeと粒子群の広がりからresetが必要かを返す。
+
+    reset と hybrid のどちらも「reset のばら撒き幅より誤差が十分大きい」ことを求める。
+    誤差が ``landmark_reset_sigma_m`` と同程度のときに撒き直すと不確かさが増え、
+    代表軌跡が往復して折り返す。hybrid はさらに「観測尤度では届かないほど遠い」
+    ことも求め、粒子群の広がりで届く範囲は observation に任せる。
+    """
+    if ctx.landmark_mode not in {"reset", "hybrid"}:
         return False
-    if (
-        ctx.landmark_before_position is None
-        or ctx.landmark_xy is None
-        or ctx.landmark_position_spread_rms_m is None
-    ):
+    if ctx.landmark_before_position is None or ctx.landmark_xy is None:
         return False
     distance = float(
         np.linalg.norm(
             np.asarray(ctx.landmark_before_position) - np.asarray(ctx.landmark_xy)
         )
     )
+    if distance <= ctx.landmark_reset_min_distance_m:
+        return False
+    if ctx.landmark_mode == "reset":
+        return True
+    if ctx.landmark_position_spread_rms_m is None:
+        return False
     spread = max(ctx.landmark_position_spread_rms_m, 1e-9)
     return distance > ctx.landmark_reset_spread_ratio * spread
 

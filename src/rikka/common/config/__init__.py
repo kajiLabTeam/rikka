@@ -247,6 +247,12 @@ PF_LANDMARK_RESET_SIGMA_M = 1.0
 PF_LANDMARK_MAX_JUMP_M = 5.0
 PF_LANDMARK_RESET_SPREAD_RATIO = 4.0
 
+# hybrid が reset を選ぶ最小の代表距離 [m]
+# reset は PF_LANDMARK_RESET_SIGMA_M の幅で粒子を撒き直すため、誤差がその幅と
+# 同程度なら撒き直すほうが不確かさを増やす。距離比だけで判定すると、粒子群が
+# 収束している序盤に小さな誤差でも reset が発火して軌跡が折り返す。
+PF_LANDMARK_RESET_MIN_DISTANCE_M = 2.0
+
 # reset後に位置と従来方位が矛盾した場合の折り返しを避ける方位多様化 [rad]。
 PF_LANDMARK_RESET_HEADING_SIGMA = 0.20
 

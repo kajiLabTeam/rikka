@@ -137,6 +137,7 @@ def run_particle(
         landmark_reset_sigma_m=settings.landmark_reset_sigma_m,
         landmark_max_jump_m=settings.landmark_max_jump_m,
         landmark_reset_spread_ratio=settings.landmark_reset_spread_ratio,
+        landmark_reset_min_distance_m=settings.landmark_reset_min_distance_m,
         landmark_reset_heading_sigma=settings.landmark_reset_heading_sigma,
         landmark_events_collector=landmark_events,
     )

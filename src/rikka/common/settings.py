@@ -45,6 +45,7 @@ from .config import (
     PF_LANDMARK_MAX_JUMP_M,
     PF_LANDMARK_MODE,
     PF_LANDMARK_RESET_HEADING_SIGMA,
+    PF_LANDMARK_RESET_MIN_DISTANCE_M,
     PF_LANDMARK_RESET_SIGMA_M,
     PF_LANDMARK_RESET_SPREAD_RATIO,
     PF_LANDMARK_SIGMA_M,
@@ -207,6 +208,7 @@ class ParticleSettings:
     landmark_reset_sigma_m: float = PF_LANDMARK_RESET_SIGMA_M
     landmark_max_jump_m: float = PF_LANDMARK_MAX_JUMP_M
     landmark_reset_spread_ratio: float = PF_LANDMARK_RESET_SPREAD_RATIO
+    landmark_reset_min_distance_m: float = PF_LANDMARK_RESET_MIN_DISTANCE_M
     landmark_reset_heading_sigma: float = PF_LANDMARK_RESET_HEADING_SIGMA
 
     def __post_init__(self) -> None:
@@ -232,6 +234,10 @@ class ParticleSettings:
         validate_positive_parameter(
             "landmark_reset_spread_ratio",
             self.landmark_reset_spread_ratio,
+        )
+        validate_non_negative_parameter(
+            "landmark_reset_min_distance_m",
+            self.landmark_reset_min_distance_m,
         )
         validate_non_negative_parameter(
             "landmark_reset_heading_sigma",
