@@ -1,5 +1,7 @@
 """particle filter のランドマーク観測・再配置テスト。"""
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -37,6 +39,15 @@ def particle_landmark_results() -> dict[str, TrajectoryResult]:
     prepared = run_pdr(PdrSettings(), df_acc, df_gyro).prepared
     floormap = FloorMap(FLOORMAP_PATH, FLOORMAP_ORIGIN_PX, FLOORMAP_SCALE)
     landmark_settings = BleLandmarkSettings()
+    anchor_settings = replace(
+        landmark_settings,
+        landmarks=tuple(
+            replace(item, position_sigma_m=0.3)
+            if item.beacon_id == "beacon_2"
+            else item
+            for item in landmark_settings.landmarks
+        ),
+    )
     detection = LandmarkDetection(
         prepared.t_at_steps[20],
         "beacon_1",
@@ -117,6 +128,17 @@ def particle_landmark_results() -> dict[str, TrajectoryResult]:
             ),
             detections=(detection,),
             landmark_settings=landmark_settings,
+        ),
+        "anchor_far": run_particle(
+            prepared,
+            floormap,
+            ParticleSettings(
+                landmark_mode="observation",
+                count=120,
+                seed=0,
+            ),
+            detections=(far_detection,),
+            landmark_settings=anchor_settings,
         ),
     }
 
@@ -412,3 +434,39 @@ def test_reset_over_max_jump_is_skipped(
     assert not event.applied
     assert diagnostic.recovery_mode == "none"
     np.testing.assert_array_equal(result.trajectory, baseline.trajectory)
+
+
+def test_anchor_collapses_particles_regardless_of_distance(
+    particle_landmark_results: dict[str, TrajectoryResult],
+) -> None:
+    """確定ランドマークは通常resetの距離上限を超えても反映する。"""
+    result = particle_landmark_results["anchor_far"]
+    assert result.landmark is not None
+    assert result.particle is not None
+    event = result.landmark.corrections[0]
+    diagnostic = result.particle.diagnostics[event.step_index]
+    before_distance = float(
+        np.hypot(event.before_x - event.landmark_x, event.before_y - event.landmark_y)
+    )
+    after_distance = float(
+        np.hypot(event.after_x - event.landmark_x, event.after_y - event.landmark_y)
+    )
+
+    assert before_distance > PF_LANDMARK_MAX_JUMP_M
+    assert event.applied
+    assert diagnostic.recovery_mode == "landmark_anchor"
+    assert after_distance < 0.3
+
+
+def test_anchor_uses_landmark_position_sigma(
+    particle_landmark_results: dict[str, TrajectoryResult],
+) -> None:
+    """確定後の粒子分布はランドマーク固有の位置σに従う。"""
+    result = particle_landmark_results["anchor_far"]
+    assert result.landmark is not None
+    assert result.particle is not None
+    event = result.landmark.corrections[0]
+    diagnostic = result.particle.diagnostics[event.step_index]
+
+    assert 0.1 < diagnostic.position_spread_rms_m < 0.6
+    assert diagnostic.recovery_mode == "landmark_anchor"

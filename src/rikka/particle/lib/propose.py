@@ -69,6 +69,8 @@ def _resolve_landmark_observation(ctx: ParticleRuntime) -> None:
             )
         )
     )
+    if ctx.landmark_definition.position_sigma_m is not None:
+        return
     if ctx.landmark_mode not in {"observation", "hybrid"}:
         return
     ctx.landmark_likelihood = landmark_likelihood(
