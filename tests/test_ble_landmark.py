@@ -1,5 +1,6 @@
 """BLE ランドマーク測位の単体テスト。"""
 
+from dataclasses import replace
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -873,6 +874,10 @@ def test_build_landmark_corrections_dataframe_has_diagnostic_columns() -> None:
             "after_y": 2.0,
             "detection_distance_m": 2.0,
             "nearest_approach_delta_s": 0.0,
+            "anchor_position_sigma_m": None,
+            "anchor_heading_deg": None,
+            "anchor_heading_sigma_deg": None,
+            "anchor_heading_bidirectional": False,
         }
     ]
 
@@ -955,6 +960,47 @@ def test_plot_particle_trajectory_overlays_landmark_result(
     labels = [artist.get_label() for artist in plt.gcf().axes[0].collections]
     assert "ランドマーク反映後軌跡" in labels
     assert (tmp_path / "pf_trajectory.png").exists()
+    plt.close("all")
+
+
+def test_plot_particle_trajectory_distinguishes_heading_anchor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """方位付き確定ランドマークを専用マーカーと矢印で描く。"""
+    map_path = tmp_path / "map.png"
+    plt.imsave(map_path, np.ones((8, 8)), cmap="gray", vmin=0.0, vmax=1.0)
+    landmark = _apply_corrections(
+        [[0.0, 0.0], [1.0, 0.0]],
+        [1.0],
+        (_detection(1.0),),
+        _landmark_settings(),
+        "ble.csv",
+        0.0,
+        1.0,
+    )
+    landmark = replace(
+        landmark,
+        corrections=(
+            landmark.corrections[0]._replace(
+                anchor_position_sigma_m=0.3,
+                anchor_heading_deg=90.0,
+                anchor_heading_sigma_deg=10.0,
+                anchor_heading_bidirectional=True,
+            ),
+        ),
+    )
+    monkeypatch.setattr(plt, "show", lambda: None)
+
+    plot_particle_filter_trajectory(
+        landmark.trajectory,
+        floormap_path=map_path,
+        landmark=landmark,
+    )
+
+    labels = [artist.get_label() for artist in plt.gcf().axes[0].collections]
+    assert "確定ランドマーク（位置・方位）" in labels
+    assert "確定方位" in labels
     plt.close("all")
 
 

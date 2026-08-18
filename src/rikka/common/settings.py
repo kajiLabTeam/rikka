@@ -350,6 +350,10 @@ class BleLandmarkSettings:
                 raise ValueError(
                     f"{item.beacon_id}.heading_deg は有限な値を指定してください。"
                 )
+            if item.heading_deg is not None and item.position_sigma_m is None:
+                raise ValueError(
+                    f"{item.beacon_id}.heading_deg には position_sigma_m が必要です。"
+                )
             validate_non_negative_parameter(
                 f"{item.beacon_id}.heading_sigma_deg",
                 item.heading_sigma_deg,

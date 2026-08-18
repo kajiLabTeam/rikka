@@ -29,6 +29,9 @@ from ...common.lib.floormap import compute_pixel_coords
 from ...common.lib.models import LandmarkCorrectionResult, StepHeading
 from ...matplotlib_config import configure_japanese_font
 from .trajectory import (
+    _plot_anchor_heading_arrows as plot_anchor_heading_arrows,
+)
+from .trajectory import (
     _plot_heading_overlay as plot_heading_overlay,
 )
 from .trajectory import (
@@ -125,24 +128,60 @@ def _draw_animation_landmarks(
     if not applied:
         return
 
-    unique_targets = dict.fromkeys(
-        (item.landmark_x, item.landmark_y) for item in applied
+    unique = list(
+        {
+            (item.beacon_id, item.landmark_x, item.landmark_y): item for item in applied
+        }.values()
     )
-    target = np.asarray(list(unique_targets), dtype=float)
-    target_px, target_py = compute_pixel_coords(
-        target[:, 0], target[:, 1], gx_mean, gz_mean, origin_px, scale
+    groups = (
+        (
+            [item for item in unique if item.anchor_position_sigma_m is None],
+            "*",
+            260,
+            "magenta",
+            "ランドマーク",
+        ),
+        (
+            [
+                item
+                for item in unique
+                if item.anchor_position_sigma_m is not None
+                and item.anchor_heading_deg is None
+            ],
+            "D",
+            130,
+            "cyan",
+            "確定ランドマーク（位置）",
+        ),
+        (
+            [item for item in unique if item.anchor_heading_deg is not None],
+            "P",
+            170,
+            "orange",
+            "確定ランドマーク（位置・方位）",
+        ),
     )
-    ax.scatter(
-        target_px,
-        target_py,
-        marker="*",
-        s=260,
-        color="magenta",
-        edgecolors="black",
-        linewidths=0.8,
-        zorder=6,
-        label="ランドマーク",
-    )
+    for items, marker, size, color, label in groups:
+        if not items:
+            continue
+        target = np.asarray(
+            [(item.landmark_x, item.landmark_y) for item in items], dtype=float
+        )
+        target_px, target_py = compute_pixel_coords(
+            target[:, 0], target[:, 1], gx_mean, gz_mean, origin_px, scale
+        )
+        ax.scatter(
+            target_px,
+            target_py,
+            marker=marker,
+            s=size,
+            color=color,
+            edgecolors="black",
+            linewidths=0.8,
+            zorder=6,
+            label=label,
+        )
+    plot_anchor_heading_arrows(ax, unique, gx_mean, gz_mean, origin_px, scale)
 
     done = [item for item in applied if item.step_index + 1 <= frame]
     if not done:

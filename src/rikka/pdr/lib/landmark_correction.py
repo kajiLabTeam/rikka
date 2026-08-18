@@ -47,6 +47,7 @@ def apply_landmark_corrections(
         gz_mean,
         floormap,
     )
+    definitions = {item.beacon_id: item for item in landmarks}
     assigned, discarded = assign_detections_to_steps(detections, t_at_steps)
     corrected: list[list[float]] = [list(trajectory[0])]
     corrections: list[LandmarkCorrection] = []
@@ -66,6 +67,7 @@ def apply_landmark_corrections(
             if landmark_position is None:  # pragma: no cover - 上の絞り込みとの型境界
                 raise RuntimeError("内部エラー: 登録済みランドマーク座標がありません。")
             landmark_x, landmark_y = landmark_position
+            landmark = definitions[detection.beacon_id]
             is_last = order == len(registered) - 1
             before_x, before_y = position_x, position_y
             timing = evaluate_landmark_timing(
@@ -94,6 +96,14 @@ def apply_landmark_corrections(
                     )
                     ** 0.5,
                     nearest_approach_delta_s=timing.nearest_approach_delta_s,
+                    anchor_position_sigma_m=landmark.position_sigma_m,
+                    anchor_heading_deg=landmark.heading_deg,
+                    anchor_heading_sigma_deg=(
+                        landmark.heading_sigma_deg
+                        if landmark.position_sigma_m is not None
+                        else None
+                    ),
+                    anchor_heading_bidirectional=landmark.heading_bidirectional,
                 )
             )
         corrected.append([position_x, position_y])

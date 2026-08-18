@@ -574,4 +574,8 @@ def test_anchor_heading_integration_sets_diagnostic_mode(
     diagnostic = result.particle.diagnostics[event.step_index]
 
     assert event.applied
+    assert event.anchor_position_sigma_m == 0.3
+    assert event.anchor_heading_deg == 90.0
+    assert event.anchor_heading_sigma_deg == 10.0
+    assert not event.anchor_heading_bidirectional
     assert diagnostic.recovery_mode == "landmark_anchor_heading"

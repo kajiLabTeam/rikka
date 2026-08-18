@@ -329,6 +329,10 @@ class LandmarkCorrection(NamedTuple):
     applied: bool
     detection_distance_m: float | None = None
     nearest_approach_delta_s: float | None = None
+    anchor_position_sigma_m: float | None = None
+    anchor_heading_deg: float | None = None
+    anchor_heading_sigma_deg: float | None = None
+    anchor_heading_bidirectional: bool = False
 
 
 @dataclass(frozen=True)

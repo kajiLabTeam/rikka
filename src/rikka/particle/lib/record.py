@@ -34,6 +34,7 @@ def _record_landmark_event(ctx: ParticleRuntime) -> None:
         return
     after = np.average(ctx.particles, axis=0, weights=ctx.weights)
     detection = ctx.landmark_detection
+    landmark = ctx.landmark_definition
     ctx.landmark_events.append(
         LandmarkCorrection(
             step_index=ctx.step_number - 1,
@@ -47,6 +48,18 @@ def _record_landmark_event(ctx: ParticleRuntime) -> None:
             after_x=float(after[0]),
             after_y=float(after[1]),
             applied=ctx.landmark_applied,
+            anchor_position_sigma_m=(
+                None if landmark is None else landmark.position_sigma_m
+            ),
+            anchor_heading_deg=None if landmark is None else landmark.heading_deg,
+            anchor_heading_sigma_deg=(
+                None
+                if landmark is None or landmark.position_sigma_m is None
+                else landmark.heading_sigma_deg
+            ),
+            anchor_heading_bidirectional=(
+                False if landmark is None else landmark.heading_bidirectional
+            ),
         )
     )
 
