@@ -16,7 +16,11 @@ import sys
 
 import numpy as np
 
-from .landmark import meter_walkable_mask, reset_particles_to_landmark
+from .landmark import (
+    meter_walkable_mask,
+    reset_particles_to_landmark,
+    resolve_anchor_heading,
+)
 from .proposal import _normalize_angle
 from .recovery.apply import (
     _apply_checkpoint_replay,
@@ -247,6 +251,57 @@ def _anchor_to_landmark(ctx: ParticleRuntime) -> None:
     ctx.landmark_applied = True
     ctx.landmark_reset_steps.add(ctx.step_number)
     ctx.landmark_anchor_steps.add(ctx.step_number)
+    if landmark.heading_deg is not None:
+        _apply_anchor_heading(ctx)
+
+
+def _resample_for_anchor_heading(ctx: ParticleRuntime) -> None:
+    """位置を動かさず、有効な事後粒子を一様重みのアンカー状態へ移す。"""
+    if ctx.valid_weight_mass <= 0.0:
+        _anchor_to_landmark(ctx)
+        return
+    normalized = ctx.posterior_weights / ctx.valid_weight_mass
+    indices = _systematic_resample(normalized, ctx.rng)
+    ctx.particles = ctx.proposed_particles[indices]
+    ctx.heading_correction = ctx.proposed_correction[indices]
+    ctx.heading_drift = ctx.proposed_drift[indices]
+    ctx.stride_scale = ctx.proposed_stride_scale[indices]
+    ctx.motion_state = ctx.proposed_motion_state[indices]
+    ctx.weights = np.full(ctx.n_particles, 1.0 / ctx.n_particles)
+    ctx.posterior_weights = ctx.weights.copy()
+    ctx.parent_indices = indices
+    ctx.next_path_log_scores = np.zeros(ctx.n_particles, dtype=float)
+    ctx.valid_transition = ctx.valid_transition[indices]
+    ctx.valid_count = int(np.count_nonzero(ctx.valid_transition))
+    ctx.valid_weight_mask = ctx.valid_transition.copy()
+    ctx.valid_weight_count = ctx.valid_count
+    ctx.valid_weight_mass = 1.0
+    ctx.ess_after_observation = float(ctx.n_particles)
+    ctx.effective_step_lengths_for_diagnostics = ctx.sl[indices]
+    ctx.resampled = True
+    ctx.recovery_attempted = False
+    ctx.recovery_valid_count = ctx.valid_count
+
+
+def _apply_anchor_heading(ctx: ParticleRuntime) -> None:
+    """現在の粒子配列へ確定絶対方位を補正項として注入する。"""
+    landmark = ctx.landmark_definition
+    if landmark is None or landmark.heading_deg is None:
+        raise RuntimeError("内部エラー: 確定対象の方位がありません。")
+    base_headings = ctx.particle_base_headings[ctx.parent_indices]
+    current_headings = _normalize_angle(
+        base_headings + ctx.heading_correction + ctx.heading_drift
+    )
+    ctx.heading_correction, ctx.heading_drift = resolve_anchor_heading(
+        base_headings,
+        current_headings,
+        landmark.heading_deg,
+        landmark.heading_sigma_deg,
+        landmark.heading_bidirectional,
+        ctx.rng,
+    )
+    ctx.recovery_mode = "landmark_anchor_heading"
+    ctx.landmark_applied = True
 
 
 def _landmark_reset_requested(ctx: ParticleRuntime) -> bool:
@@ -307,9 +362,15 @@ def _landmark_reset_within_limit(ctx: ParticleRuntime) -> bool:
 def resolve_map_constraints(ctx: ParticleRuntime) -> None:
     """地図制約違反を復旧し、通常粒子はESSに応じて再標本化する。"""
     _reset_recovery_diagnostics(ctx)
-    if ctx.landmark_detection is not None and _anchor_position_requested(ctx):
-        _anchor_to_landmark(ctx)
-        return
+    landmark = ctx.landmark_definition
+    if landmark is not None and landmark.position_sigma_m is not None:
+        if _anchor_position_requested(ctx) or ctx.recovery_attempted:
+            _anchor_to_landmark(ctx)
+            return
+        if landmark.heading_deg is not None:
+            _resample_for_anchor_heading(ctx)
+            _apply_anchor_heading(ctx)
+            return
     if ctx.landmark_detection is not None and _landmark_reset_requested(ctx):
         if _landmark_reset_within_limit(ctx):
             _reset_to_landmark(ctx)
