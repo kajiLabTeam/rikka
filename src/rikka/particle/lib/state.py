@@ -145,6 +145,7 @@ class ParticleRuntime:
     landmark_likelihood: np.ndarray | None = field(init=False)
     landmark_likelihood_mean: float | None = field(init=False)
     landmark_position_spread_rms_m: float | None = field(init=False)
+    landmark_anchor_steps: set[int] = field(init=False)
     landmark_meters: dict[str, tuple[float, float]] = field(init=False)
     landmark_xy: tuple[float, float] | None = field(init=False)
     landmark_reset_steps: set[int] = field(init=False)

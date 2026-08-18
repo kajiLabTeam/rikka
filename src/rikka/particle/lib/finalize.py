@@ -147,7 +147,7 @@ def finalize(
         )
         ctx.selected_mode = "current"
     if allowed_jump_steps:
-        for step in allowed_jump_steps:
+        for step in allowed_jump_steps - ctx.landmark_anchor_steps:
             jump_distance = float(
                 np.linalg.norm(ctx.selected_path[step] - ctx.selected_path[step - 1])
             )
