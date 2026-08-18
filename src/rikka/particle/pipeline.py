@@ -139,6 +139,7 @@ def run_particle(
         landmark_reset_spread_ratio=settings.landmark_reset_spread_ratio,
         landmark_reset_min_distance_m=settings.landmark_reset_min_distance_m,
         landmark_reset_heading_sigma=settings.landmark_reset_heading_sigma,
+        landmark_anchor_warn_jump_m=settings.landmark_anchor_warn_jump_m,
         landmark_events_collector=landmark_events,
     )
     if detections is not None and landmark_settings is not None:

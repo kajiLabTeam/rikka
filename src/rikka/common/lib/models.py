@@ -278,11 +278,19 @@ class FloorMap:
 
 @dataclass(frozen=True)
 class Landmark:
-    """フロアマップの既知ピクセル座標に設置した BLE ビーコンの定義。"""
+    """フロアマップの既知ピクセル座標に設置した BLE ビーコンの定義。
+
+    ``position_sigma_m`` が指定されたものは、検出時に粒子を既知位置へ合わせる
+    確定ランドマークとして扱う。``heading_deg`` も指定すると絶対方位も確定する。
+    """
 
     beacon_id: str
     pixel_x: float
     pixel_y: float
+    position_sigma_m: float | None = None
+    heading_deg: float | None = None
+    heading_sigma_deg: float = 15.0
+    heading_bidirectional: bool = False
 
 
 class BleObservation(NamedTuple):

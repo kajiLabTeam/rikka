@@ -15,6 +15,7 @@ from pathlib import Path
 import numpy as np
 
 from ...common.config import (
+    BLE_ANCHOR_WARN_JUMP_M,
     FLOORMAP_ORIGIN_PX,
     FLOORMAP_PATH,
     FLOORMAP_SCALE,
@@ -141,6 +142,7 @@ def run_particle_steps(
     landmark_reset_spread_ratio: float = PF_LANDMARK_RESET_SPREAD_RATIO,
     landmark_reset_min_distance_m: float = PF_LANDMARK_RESET_MIN_DISTANCE_M,
     landmark_reset_heading_sigma: float = PF_LANDMARK_RESET_HEADING_SIGMA,
+    landmark_anchor_warn_jump_m: float = BLE_ANCHOR_WARN_JUMP_M,
     landmark_events_collector: list[LandmarkCorrection] | None = None,
 ) -> ParticleStepsResult:
     """準備済み歩列を受け、元と同じ順序でPF段階を実行する。"""
@@ -197,6 +199,7 @@ def run_particle_steps(
         landmark_reset_spread_ratio=landmark_reset_spread_ratio,
         landmark_reset_min_distance_m=landmark_reset_min_distance_m,
         landmark_reset_heading_sigma=landmark_reset_heading_sigma,
+        landmark_anchor_warn_jump_m=landmark_anchor_warn_jump_m,
         landmark_events_collector=landmark_events_collector,
     )
     setup(ctx)

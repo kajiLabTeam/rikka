@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from rikka.common.config import (
+    BLE_ANCHOR_WARN_JUMP_M,
     FLOORMAP_ORIGIN_PX,
     FLOORMAP_PATH,
     FLOORMAP_SCALE,
@@ -224,6 +225,7 @@ def test_particle_landmark_settings_have_provisional_defaults() -> None:
     assert (
         settings.landmark_reset_heading_sigma == PF_LANDMARK_RESET_HEADING_SIGMA == 0.20
     )
+    assert settings.landmark_anchor_warn_jump_m == BLE_ANCHOR_WARN_JUMP_M == 20.0
 
 
 @pytest.mark.parametrize(
@@ -240,6 +242,7 @@ def test_particle_landmark_settings_have_provisional_defaults() -> None:
         ({"landmark_reset_spread_ratio": 0.0}, "landmark_reset_spread_ratio"),
         ({"landmark_reset_min_distance_m": -0.1}, "landmark_reset_min_distance_m"),
         ({"landmark_reset_heading_sigma": -0.1}, "landmark_reset_heading_sigma"),
+        ({"landmark_anchor_warn_jump_m": 0.0}, "landmark_anchor_warn_jump_m"),
     ],
 )
 def test_particle_landmark_settings_reject_invalid_values(

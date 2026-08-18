@@ -37,6 +37,7 @@ from .state import ParticleRuntime
 def _resolve_landmark_observation(ctx: ParticleRuntime) -> None:
     """現在歩のランドマークと、observation方式の尤度・診断値を解決する。"""
     ctx.landmark_detection = None
+    ctx.landmark_definition = None
     ctx.landmark_xy = None
     ctx.landmark_likelihood = None
     ctx.landmark_likelihood_mean = None
@@ -48,6 +49,7 @@ def _resolve_landmark_observation(ctx: ParticleRuntime) -> None:
     ctx.landmark_detection = ctx.landmark_by_step.get(ctx.step_number)
     if ctx.landmark_detection is None:
         return
+    ctx.landmark_definition = ctx.landmark_definitions[ctx.landmark_detection.beacon_id]
     ctx.landmark_xy = ctx.landmark_meters[ctx.landmark_detection.beacon_id]
     base_weights = weight(
         ctx.weights_before,
