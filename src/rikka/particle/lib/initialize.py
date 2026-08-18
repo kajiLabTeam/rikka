@@ -156,6 +156,7 @@ def initialize(ctx: ParticleRuntime) -> None:
     ctx.landmark_events = (
         [] if ctx.landmark_events_collector is None else ctx.landmark_events_collector
     )
+    ctx.landmark_anchor_steps = set()
     ctx.landmark_reset_steps = set()
     if ctx.landmark_mode != "none":
         for beacon_id, landmark_xy in ctx.landmark_meters.items():
