@@ -16,7 +16,9 @@ from pathlib import Path
 import numpy as np
 
 from .config import (
+    BLE_ANCHOR_WARN_JUMP_M,
     BLE_DATA_PATH,
+    BLE_LANDMARK_ANCHORS,
     BLE_LANDMARK_ENABLED,
     BLE_LANDMARKS_PX,
     BLE_RSSI_RELEASE_MARGIN_DB,
@@ -210,6 +212,7 @@ class ParticleSettings:
     landmark_reset_spread_ratio: float = PF_LANDMARK_RESET_SPREAD_RATIO
     landmark_reset_min_distance_m: float = PF_LANDMARK_RESET_MIN_DISTANCE_M
     landmark_reset_heading_sigma: float = PF_LANDMARK_RESET_HEADING_SIGMA
+    landmark_anchor_warn_jump_m: float = BLE_ANCHOR_WARN_JUMP_M
 
     def __post_init__(self) -> None:
         validate_scale(self.scale)
@@ -243,10 +246,65 @@ class ParticleSettings:
             "landmark_reset_heading_sigma",
             self.landmark_reset_heading_sigma,
         )
+        validate_positive_parameter(
+            "landmark_anchor_warn_jump_m",
+            self.landmark_anchor_warn_jump_m,
+        )
         if not 0.0 <= self.landmark_likelihood_floor < 1.0:
             raise ValueError(
                 "landmark_likelihood_floor は 0 以上 1 未満を指定してください。"
             )
+
+
+def _build_landmarks_with_anchors(
+    landmark_rows: tuple[tuple[str, float, float], ...],
+    anchor_rows: tuple[tuple[str, float, float | None, float, bool], ...],
+) -> tuple[Landmark, ...]:
+    """座標定義へ beacon_id が一致する確定情報を結合する。"""
+    validated = validate_landmarks(landmark_rows)
+    known_ids = {beacon_id for beacon_id, _, _ in validated}
+    anchors: dict[str, tuple[float, float | None, float, bool]] = {}
+    for (
+        beacon_id,
+        position_sigma_m,
+        heading_deg,
+        heading_sigma_deg,
+        bidirectional,
+    ) in anchor_rows:
+        if beacon_id not in known_ids:
+            raise ValueError(
+                "BLE_LANDMARK_ANCHORS に BLE_LANDMARKS_PX 未定義の "
+                f"beacon_id があります: {beacon_id}"
+            )
+        if beacon_id in anchors:
+            raise ValueError(
+                f"BLE_LANDMARK_ANCHORS の beacon_id が重複しています: {beacon_id}"
+            )
+        anchors[beacon_id] = (
+            position_sigma_m,
+            heading_deg,
+            heading_sigma_deg,
+            bidirectional,
+        )
+
+    landmarks = []
+    for beacon_id, pixel_x, pixel_y in validated:
+        anchor = anchors.get(beacon_id)
+        if anchor is None:
+            landmarks.append(Landmark(beacon_id, pixel_x, pixel_y))
+            continue
+        landmarks.append(
+            Landmark(
+                beacon_id,
+                pixel_x,
+                pixel_y,
+                position_sigma_m=anchor[0],
+                heading_deg=anchor[1],
+                heading_sigma_deg=anchor[2],
+                heading_bidirectional=anchor[3],
+            )
+        )
+    return tuple(landmarks)
 
 
 @dataclass(frozen=True)
@@ -260,9 +318,9 @@ class BleLandmarkSettings:
     release_streak: int = BLE_RSSI_RELEASE_STREAK
     sync_window_s: float = BLE_SYNC_WINDOW_S
     landmarks: tuple[Landmark, ...] = field(
-        default_factory=lambda: tuple(
-            Landmark(beacon_id=beacon_id, pixel_x=pixel_x, pixel_y=pixel_y)
-            for beacon_id, pixel_x, pixel_y in validate_landmarks(BLE_LANDMARKS_PX)
+        default_factory=lambda: _build_landmarks_with_anchors(
+            BLE_LANDMARKS_PX,
+            BLE_LANDMARK_ANCHORS,
         )
     )
 
@@ -282,6 +340,20 @@ class BleLandmarkSettings:
                 (item.beacon_id, item.pixel_x, item.pixel_y) for item in self.landmarks
             )
         )
+        for item in self.landmarks:
+            if item.position_sigma_m is not None:
+                validate_positive_parameter(
+                    f"{item.beacon_id}.position_sigma_m",
+                    item.position_sigma_m,
+                )
+            if item.heading_deg is not None and not np.isfinite(item.heading_deg):
+                raise ValueError(
+                    f"{item.beacon_id}.heading_deg は有限な値を指定してください。"
+                )
+            validate_non_negative_parameter(
+                f"{item.beacon_id}.heading_sigma_deg",
+                item.heading_sigma_deg,
+            )
         if self.enabled and not self.landmarks:
             raise ValueError(
                 "BLE ランドマーク補正を有効にする場合は landmarks を 1 件以上"

@@ -101,6 +101,7 @@ class ParticleRuntime:
     landmark_reset_spread_ratio: float
     landmark_reset_min_distance_m: float
     landmark_reset_heading_sigma: float
+    landmark_anchor_warn_jump_m: float
     landmark_events_collector: list[LandmarkCorrection] | None
 
     adaptive_recovery_scale: bool = field(init=False)
@@ -141,6 +142,8 @@ class ParticleRuntime:
     landmark_applied: bool = field(init=False)
     landmark_by_step: dict[int, LandmarkDetection] = field(init=False)
     landmark_detection: LandmarkDetection | None = field(init=False)
+    landmark_definition: Landmark | None = field(init=False)
+    landmark_definitions: dict[str, Landmark] = field(init=False)
     landmark_events: list[LandmarkCorrection] = field(init=False)
     landmark_likelihood: np.ndarray | None = field(init=False)
     landmark_likelihood_mean: float | None = field(init=False)

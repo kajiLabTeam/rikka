@@ -148,6 +148,7 @@ def initialize(ctx: ParticleRuntime) -> None:
         ctx.gz_mean,
         FloorMap(str(ctx.floormap_path), ctx.origin_px, ctx.scale),
     )
+    ctx.landmark_definitions = {item.beacon_id: item for item in ctx.landmarks}
     ctx.landmark_by_step = build_step_landmark_map(
         ctx.landmark_detections,
         ctx.raw_step_times,

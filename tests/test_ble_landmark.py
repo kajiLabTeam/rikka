@@ -21,6 +21,7 @@ from rikka.ble.pipeline import run_ble_landmark_detection
 from rikka.cli import commands as cli_commands
 from rikka.cli.commands import run as run_command
 from rikka.cli.options import cli
+from rikka.common import settings as settings_module
 from rikka.common.config import FLOORMAP_PATH
 from rikka.common.lib.floormap import compute_meter_coords, compute_pixel_coords
 from rikka.common.lib.models import (
@@ -159,6 +160,47 @@ def _landmark_settings(**overrides: object) -> BleLandmarkSettings:
     }
     values.update(overrides)
     return BleLandmarkSettings(**values)  # type: ignore[arg-type]
+
+
+def test_landmark_anchor_fields_keep_three_argument_compatibility() -> None:
+    """従来の3引数構築は通常ランドマークとしてそのまま使える。"""
+    landmark = Landmark("beacon", 1.0, 2.0)
+
+    assert landmark.position_sigma_m is None
+    assert landmark.heading_deg is None
+    assert landmark.heading_sigma_deg == 15.0
+    assert not landmark.heading_bidirectional
+
+
+@pytest.mark.parametrize(
+    ("landmark", "message"),
+    [
+        (Landmark("beacon", 1.0, 2.0, position_sigma_m=0.0), "position_sigma_m"),
+        (Landmark("beacon", 1.0, 2.0, heading_deg=float("nan")), "heading_deg"),
+        (Landmark("beacon", 1.0, 2.0, heading_sigma_deg=-1.0), "heading_sigma_deg"),
+    ],
+)
+def test_landmark_anchor_fields_are_validated(
+    landmark: Landmark,
+    message: str,
+) -> None:
+    """確定位置・方位の不正な不確かさを設定境界で拒否する。"""
+    with pytest.raises(ValueError, match=message):
+        BleLandmarkSettings(landmarks=(landmark,))
+
+
+def test_default_anchor_rejects_unknown_beacon_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """座標表にない確定定義のタイプミスを黙って無視しない。"""
+    monkeypatch.setattr(
+        settings_module,
+        "BLE_LANDMARK_ANCHORS",
+        (("unknown", 0.3, None, 15.0, False),),
+    )
+
+    with pytest.raises(ValueError, match="BLE_LANDMARKS_PX 未定義"):
+        BleLandmarkSettings()
 
 
 def _apply_corrections(

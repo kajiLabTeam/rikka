@@ -228,6 +228,15 @@ BLE_LANDMARKS_PX: tuple[tuple[str, float, float], ...] = (
     ("beacon_3", 2056, 700),
 )
 
+# 通過地点の構造から位置・方位を確定できるランドマークの追加情報。
+# (beacon_id, 位置ばらつき[m], 方位[deg] または None, 方位ばらつき[deg],
+# 双方向か) の並び。方位は 0=+X、90=+Y、反時計回りが正。
+BLE_LANDMARK_ANCHORS: tuple[tuple[str, float, float | None, float, bool], ...] = ()
+
+# 確定ランドマーク反映時に警告する代表位置のジャンプ距離 [m]。
+# 確定情報なので反映自体は止めず、座標設定ミスを診断するために使用する。
+BLE_ANCHOR_WARN_JUMP_M = 20.0
+
 # particle filter へのランドマーク反映方式
 # "none" は無効、"observation" は観測尤度、"reset" は粒子再配置、
 # "hybrid" は粒子群の広がりに応じて観測尤度と再配置を切り替える。
