@@ -99,6 +99,7 @@ class ParticleRuntime:
     landmark_reset_sigma_m: float
     landmark_max_jump_m: float
     landmark_reset_spread_ratio: float
+    landmark_reset_min_distance_m: float
     landmark_reset_heading_sigma: float
     landmark_events_collector: list[LandmarkCorrection] | None
 

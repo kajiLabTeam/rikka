@@ -271,6 +271,7 @@ def _render_particle_artifacts(
             origin_px=settings.origin_px,
             scale=settings.scale,
             output_path=output_dir / "particle_filter.mp4",
+            landmark=result.landmark,
         )
 
 

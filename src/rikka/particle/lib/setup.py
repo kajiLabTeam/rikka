@@ -113,6 +113,9 @@ def setup(ctx: ParticleRuntime) -> None:
     ctx.landmark_reset_spread_ratio = validate_positive_parameter(
         "landmark_reset_spread_ratio", ctx.landmark_reset_spread_ratio
     )
+    ctx.landmark_reset_min_distance_m = validate_non_negative_parameter(
+        "landmark_reset_min_distance_m", ctx.landmark_reset_min_distance_m
+    )
     ctx.landmark_reset_heading_sigma = validate_non_negative_parameter(
         "landmark_reset_heading_sigma", ctx.landmark_reset_heading_sigma
     )

@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.animation import FuncAnimation
 from matplotlib.artist import Artist
+from matplotlib.axes import Axes
 from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize
 
@@ -106,6 +107,78 @@ def plot_particle_filter_trajectory(
     plt.show()
 
 
+def _draw_animation_landmarks(
+    ax: Axes,
+    landmark: LandmarkCorrectionResult,
+    frame: int,
+    gx_mean: float,
+    gz_mean: float,
+    origin_px: tuple[int, int],
+    scale: float,
+) -> None:
+    """1フレームへランドマーク位置と、その時点までに起きた補正を描く。
+
+    ``all_particles`` は先頭が初期粒子なので、歩 index ``step_index`` の補正は
+    フレーム ``step_index + 1`` に対応する。
+    """
+    applied = [item for item in landmark.corrections if item.applied]
+    if not applied:
+        return
+
+    unique_targets = dict.fromkeys(
+        (item.landmark_x, item.landmark_y) for item in applied
+    )
+    target = np.asarray(list(unique_targets), dtype=float)
+    target_px, target_py = compute_pixel_coords(
+        target[:, 0], target[:, 1], gx_mean, gz_mean, origin_px, scale
+    )
+    ax.scatter(
+        target_px,
+        target_py,
+        marker="*",
+        s=260,
+        color="magenta",
+        edgecolors="black",
+        linewidths=0.8,
+        zorder=6,
+        label="ランドマーク",
+    )
+
+    done = [item for item in applied if item.step_index + 1 <= frame]
+    if not done:
+        return
+    before = np.asarray([(item.before_x, item.before_y) for item in done], dtype=float)
+    before_px, before_py = compute_pixel_coords(
+        before[:, 0], before[:, 1], gx_mean, gz_mean, origin_px, scale
+    )
+    after = np.asarray(
+        [(item.landmark_x, item.landmark_y) for item in done], dtype=float
+    )
+    after_px, after_py = compute_pixel_coords(
+        after[:, 0], after[:, 1], gx_mean, gz_mean, origin_px, scale
+    )
+    ax.scatter(
+        before_px,
+        before_py,
+        marker="X",
+        s=110,
+        color="red",
+        edgecolors="black",
+        linewidths=0.8,
+        zorder=7,
+        label="ランドマーク補正",
+    )
+    for index in range(len(done)):
+        ax.plot(
+            [before_px[index], after_px[index]],
+            [before_py[index], after_py[index]],
+            color="red",
+            linewidth=1.0,
+            alpha=0.7,
+            zorder=6,
+        )
+
+
 def save_particle_animation(
     all_particles: np.ndarray,
     mean_trajectory: list[list[float]],
@@ -116,6 +189,7 @@ def save_particle_animation(
     scale: float = FLOORMAP_SCALE,
     output_path: Path | str = Path("output/particle_filter.mp4"),
     fps: int = 10,
+    landmark: LandmarkCorrectionResult | None = None,
 ) -> None:
     """PF の各ステップのパーティクル分布をフロアマップ上に描画し MP4 として保存する。
 
@@ -130,6 +204,8 @@ def save_particle_animation(
         scale: 1ピクセルあたりのメートル数
         output_path: 出力ファイルパス（.mp4）
         fps: フレームレート
+        landmark: BLE ランドマーク補正結果。粒子が寄る先を確認できるよう、
+            ランドマーク位置を全フレームへ、補正が起きた歩を該当フレーム以降へ描く
     """
     from matplotlib.animation import FFMpegWriter, PillowWriter  # noqa: PLC0415
 
@@ -176,6 +252,17 @@ def save_particle_animation(
             scale,
         )
         ax.scatter(px_c, py_c, s=60, c="red", zorder=4)
+        if landmark is not None:
+            _draw_animation_landmarks(
+                ax,
+                landmark,
+                frame,
+                gx_mean,
+                gz_mean,
+                origin_px,
+                scale,
+            )
+            ax.legend(loc="upper right", fontsize=8)
         ax.set_title(f"ステップ {frame}")
         return []
 
