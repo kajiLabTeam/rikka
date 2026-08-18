@@ -33,6 +33,31 @@ def landmark_likelihood(
     return np.asarray(floor + (1.0 - floor) * gaussian, dtype=float)
 
 
+def resolve_anchor_heading(
+    base_headings: np.ndarray,
+    current_headings: np.ndarray,
+    heading_deg: float,
+    heading_sigma_deg: float,
+    bidirectional: bool,
+    rng: np.random.Generator,
+) -> tuple[np.ndarray, np.ndarray]:
+    """確定絶対方位を保つ補正項と、一時的な方位ばらつきを返す。"""
+
+    def normalize(values: np.ndarray) -> np.ndarray:
+        return np.asarray(np.arctan2(np.sin(values), np.cos(values)), dtype=float)
+
+    target = np.full(len(base_headings), np.radians(heading_deg), dtype=float)
+    if bidirectional:
+        opposite = normalize(target + np.pi)
+        use_opposite = np.abs(normalize(target - current_headings)) > np.pi / 2.0
+        target = np.where(use_opposite, opposite, target)
+    correction = normalize(target - base_headings)
+    drift = normalize(
+        rng.normal(0.0, np.radians(heading_sigma_deg), len(base_headings))
+    )
+    return correction, drift
+
+
 def meter_walkable_mask(
     points: np.ndarray,
     map_gray: np.ndarray,

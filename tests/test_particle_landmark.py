@@ -25,6 +25,7 @@ from rikka.common.settings import BleLandmarkSettings, ParticleSettings, PdrSett
 from rikka.particle.lib.landmark import (
     landmark_likelihood,
     reset_particles_to_landmark,
+    resolve_anchor_heading,
 )
 from rikka.particle.lib.weighting import weight
 from rikka.particle.pipeline import run_particle
@@ -46,6 +47,15 @@ def particle_landmark_results() -> dict[str, TrajectoryResult]:
             if item.beacon_id == "beacon_2"
             else item
             for item in landmark_settings.landmarks
+        ),
+    )
+    anchor_heading_settings = replace(
+        anchor_settings,
+        landmarks=tuple(
+            replace(item, heading_deg=90.0, heading_sigma_deg=10.0)
+            if item.beacon_id == "beacon_2"
+            else item
+            for item in anchor_settings.landmarks
         ),
     )
     detection = LandmarkDetection(
@@ -139,6 +149,17 @@ def particle_landmark_results() -> dict[str, TrajectoryResult]:
             ),
             detections=(far_detection,),
             landmark_settings=anchor_settings,
+        ),
+        "anchor_heading_far": run_particle(
+            prepared,
+            floormap,
+            ParticleSettings(
+                landmark_mode="observation",
+                count=120,
+                seed=0,
+            ),
+            detections=(far_detection,),
+            landmark_settings=anchor_heading_settings,
         ),
     }
 
@@ -470,3 +491,87 @@ def test_anchor_uses_landmark_position_sigma(
 
     assert 0.1 < diagnostic.position_spread_rms_m < 0.6
     assert diagnostic.recovery_mode == "landmark_anchor"
+
+
+def test_anchor_heading_sets_absolute_heading() -> None:
+    """base・補正・driftの合成絶対方位が指定方位へ揃う。"""
+    base = np.radians(np.full(100, 20.0))
+    current = np.radians(np.full(100, 40.0))
+
+    correction, drift = resolve_anchor_heading(
+        base,
+        current,
+        heading_deg=90.0,
+        heading_sigma_deg=0.0,
+        bidirectional=False,
+        rng=np.random.default_rng(0),
+    )
+    absolute = np.degrees(
+        np.arctan2(np.sin(base + correction + drift), np.cos(base + correction + drift))
+    )
+
+    np.testing.assert_allclose(absolute, 90.0, atol=1e-12)
+
+
+def test_anchor_heading_correction_survives_following_turn() -> None:
+    """確定方位は減衰しない補正項へ入り、次歩の相対旋回だけを反映する。"""
+    base = np.asarray([np.radians(20.0)])
+    correction, drift = resolve_anchor_heading(
+        base,
+        np.asarray([np.radians(40.0)]),
+        heading_deg=90.0,
+        heading_sigma_deg=0.0,
+        bidirectional=False,
+        rng=np.random.default_rng(0),
+    )
+    next_base = base + np.radians(30.0)
+    next_absolute = np.degrees(next_base + correction + 0.85 * drift)
+
+    np.testing.assert_allclose(next_absolute, 120.0, atol=1e-12)
+
+
+def test_anchor_heading_bidirectional_picks_nearer_direction() -> None:
+    """双方向指定は現在方位に近い0度または180度を粒子ごとに選ぶ。"""
+    base = np.zeros(2)
+    current = np.radians(np.asarray([10.0, 190.0]))
+
+    correction, drift = resolve_anchor_heading(
+        base,
+        current,
+        heading_deg=0.0,
+        heading_sigma_deg=0.0,
+        bidirectional=True,
+        rng=np.random.default_rng(0),
+    )
+    absolute = np.mod(np.degrees(base + correction + drift), 360.0)
+
+    np.testing.assert_allclose(absolute, [0.0, 180.0], atol=1e-12)
+
+
+def test_anchor_heading_keeps_diversity() -> None:
+    """方位確定後も指定σに応じた粒子間の方位多様性を残す。"""
+    base = np.zeros(500)
+    correction, drift = resolve_anchor_heading(
+        base,
+        base,
+        heading_deg=45.0,
+        heading_sigma_deg=10.0,
+        bidirectional=False,
+        rng=np.random.default_rng(0),
+    )
+
+    assert np.std(np.degrees(correction + drift)) == pytest.approx(10.0, rel=0.15)
+
+
+def test_anchor_heading_integration_sets_diagnostic_mode(
+    particle_landmark_results: dict[str, TrajectoryResult],
+) -> None:
+    """位置と方位の確定をPF実行時に専用モードとして記録する。"""
+    result = particle_landmark_results["anchor_heading_far"]
+    assert result.landmark is not None
+    assert result.particle is not None
+    event = result.landmark.corrections[0]
+    diagnostic = result.particle.diagnostics[event.step_index]
+
+    assert event.applied
+    assert diagnostic.recovery_mode == "landmark_anchor_heading"
