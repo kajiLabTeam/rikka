@@ -19,7 +19,7 @@ from rikka.common.lib.pdr_math import (
     _validate_positive_parameter,
     _validate_scale,
 )
-from rikka.common.lib.sensors import process_sensor_data
+from rikka.common.lib.sensors import load_sensor_data, process_sensor_data
 from rikka.common.lib.time_utils import _sample_gyro_angle
 from rikka.particle.lib.branches import branch_preserving_resample
 from rikka.particle.lib.map_constraints import (
@@ -130,6 +130,41 @@ def _forward_step_heading(
         motion_reject_reason=None,
         trajectory_movement_type="forward",
     )
+
+
+def test_load_sensor_data_accepts_experiment_time_headers(tmp_path: Path) -> None:
+    """BLE併記データの phyphox 列名を標準列名へ変換する。"""
+    pd.DataFrame(
+        {
+            "Experiment Time (s)": [0.01, 0.02],
+            "Acceleration X (m/s^2)": [1.0, 2.0],
+            "Acceleration Y (m/s^2)": [3.0, 4.0],
+            "Acceleration Z (m/s^2)": [5.0, 6.0],
+        }
+    ).to_csv(tmp_path / "Accelerometer.csv", index=False)
+    pd.DataFrame(
+        {
+            "Experiment Time (s)": [0.01, 0.02],
+            "Gyroscope X (rad/s)": [0.1, 0.2],
+            "Gyroscope Y (rad/s)": [0.3, 0.4],
+            "Gyroscope Z (rad/s)": [0.5, 0.6],
+        }
+    ).to_csv(tmp_path / "Gyroscope.csv", index=False)
+
+    df_acc, df_gyro = load_sensor_data(tmp_path)
+
+    assert df_acc[["t", "x", "y", "z"]].to_dict("list") == {
+        "t": [0.01, 0.02],
+        "x": [1.0, 2.0],
+        "y": [3.0, 4.0],
+        "z": [5.0, 6.0],
+    }
+    assert df_gyro[["t", "x", "y", "z"]].to_dict("list") == {
+        "t": [0.01, 0.02],
+        "x": [0.1, 0.2],
+        "y": [0.3, 0.4],
+        "z": [0.5, 0.6],
+    }
 
 
 def test_process_sensor_data_resets_index_and_uses_time_delta_for_gyro() -> None:

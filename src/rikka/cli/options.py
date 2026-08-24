@@ -16,6 +16,7 @@
 """
 
 from math import isfinite
+from pathlib import Path
 
 import click
 
@@ -50,6 +51,7 @@ from ..common.config import (
     STEP_LENGTH_METHOD,
     USER_HEIGHT_M,
 )
+from ..common.lib.models import Landmark
 from ..common.lib.validation import (
     BLE_SAMPLE_MODES,
     BLE_SAMPLE_SOURCES,
@@ -185,6 +187,35 @@ def _validate_gyro_bias_options(
         )
     if gyro_bias is not None and not isfinite(gyro_bias):
         raise click.BadParameter("gyro_bias は有限な値を指定してください。")
+
+
+def _resolve_ble_inputs(
+    data_dir: str,
+    ble_landmark: bool,
+    ble_data_path: str,
+) -> tuple[str, tuple[Landmark, ...] | None]:
+    """計測ディレクトリに同居するBLEログと既知座標を優先して解決する。"""
+    if not ble_landmark:
+        return ble_data_path, None
+
+    measurement_dir = Path(data_dir)
+    resolved_data_path = Path(ble_data_path)
+    local_data_path = measurement_dir / "BLE.csv"
+    if ble_data_path == _BLE_DATA_DEFAULT and local_data_path.is_file():
+        resolved_data_path = local_data_path
+
+    local_position_path = resolved_data_path.with_name("BLE_pos.csv")
+    if not local_position_path.is_file():
+        return str(resolved_data_path), None
+
+    from ..ble.lib.loader import load_ble_landmarks  # noqa: PLC0415
+
+    landmarks = load_ble_landmarks(local_position_path)
+    if not landmarks:
+        raise ValueError(
+            f"BLE_pos.csv に座標が確定した端末がありません: {local_position_path}"
+        )
+    return str(resolved_data_path), landmarks
 
 
 def _common_options(f: click.decorators.FC) -> click.decorators.FC:
@@ -406,6 +437,11 @@ def _run_pdr(
 
     _validate_gyro_bias_options(gyro_bias_method, gyro_bias)
     df_acc, df_gyro = load_sensor_data(data_dir)
+    ble_data_path, ble_landmarks = _resolve_ble_inputs(
+        data_dir,
+        ble_landmark,
+        ble_data_path,
+    )
     _run(
         df_acc=df_acc,
         df_gyro=df_gyro,
@@ -433,6 +469,7 @@ def _run_pdr(
         ble_landmark=ble_landmark,
         ble_data_path=ble_data_path,
         ble_rssi_threshold=ble_rssi_threshold,
+        ble_landmarks=ble_landmarks,
     )
 
 
@@ -617,6 +654,11 @@ def particle(
 
     _validate_gyro_bias_options(gyro_bias_method, gyro_bias)
     df_acc, df_gyro = load_sensor_data(data_dir)
+    ble_data_path, ble_landmarks = _resolve_ble_inputs(
+        data_dir,
+        ble_landmark,
+        ble_data_path,
+    )
     _run(
         df_acc=df_acc,
         df_gyro=df_gyro,
@@ -655,6 +697,7 @@ def particle(
         ble_landmark=ble_landmark,
         ble_data_path=ble_data_path,
         ble_rssi_threshold=ble_rssi_threshold,
+        ble_landmarks=ble_landmarks,
     )
 
 
