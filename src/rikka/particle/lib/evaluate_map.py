@@ -363,7 +363,11 @@ def resolve_map_constraints(ctx: ParticleRuntime) -> None:
     """地図制約違反を復旧し、通常粒子はESSに応じて再標本化する。"""
     _reset_recovery_diagnostics(ctx)
     landmark = ctx.landmark_definition
-    if landmark is not None and landmark.position_sigma_m is not None:
+    if (
+        ctx.landmark_mode != "ranging"
+        and landmark is not None
+        and landmark.position_sigma_m is not None
+    ):
         if _anchor_position_requested(ctx) or ctx.recovery_attempted:
             _anchor_to_landmark(ctx)
             return

@@ -211,6 +211,7 @@ def _plot_landmark_overlay(
         )
 
     applied = [item for item in landmark.corrections if item.applied]
+    _plot_landmark_positions(ax, landmark, applied, gx_mean, gz_mean, origin_px, scale)
     if not applied:
         return
 
@@ -219,56 +220,6 @@ def _plot_landmark_overlay(
             (item.beacon_id, item.landmark_x, item.landmark_y): item for item in applied
         }.values()
     )
-    groups = (
-        (
-            [item for item in unique if item.anchor_position_sigma_m is None],
-            "*",
-            260,
-            "magenta",
-            "ランドマーク",
-        ),
-        (
-            [
-                item
-                for item in unique
-                if item.anchor_position_sigma_m is not None
-                and item.anchor_heading_deg is None
-            ],
-            "D",
-            130,
-            "cyan",
-            "確定ランドマーク（位置）",
-        ),
-        (
-            [item for item in unique if item.anchor_heading_deg is not None],
-            "P",
-            170,
-            "orange",
-            "確定ランドマーク（位置・方位）",
-        ),
-    )
-    for items, marker, size, color, label in groups:
-        if not items:
-            continue
-        item_x, item_y = _compute_pixel_coords(
-            np.asarray([item.landmark_x for item in items], dtype=float),
-            np.asarray([item.landmark_y for item in items], dtype=float),
-            gx_mean,
-            gz_mean,
-            origin_px,
-            scale,
-        )
-        ax.scatter(
-            item_x,
-            item_y,
-            marker=marker,
-            s=size,
-            color=color,
-            edgecolors="black",
-            linewidths=0.8,
-            zorder=8,
-            label=label,
-        )
     _plot_anchor_heading_arrows(ax, unique, gx_mean, gz_mean, origin_px, scale)
 
     landmark_x = np.array([item.landmark_x for item in applied], dtype=float)
@@ -306,6 +257,97 @@ def _plot_landmark_overlay(
             linewidth=1.0,
             alpha=0.7,
             zorder=8,
+        )
+
+
+def _plot_landmark_positions(
+    ax: Axes,
+    landmark: LandmarkCorrectionResult,
+    applied: list[LandmarkCorrection],
+    gx_mean: float,
+    gz_mean: float,
+    origin_px: tuple[int, int],
+    scale: float,
+) -> None:
+    """登録済みBLE位置を検出の有無にかかわらず地図へ描画する。"""
+    applied_by_id = {item.beacon_id: item for item in applied}
+    configured_ids = {item.beacon_id for item in landmark.landmarks}
+    groups: tuple[tuple[list[tuple[float, float]], str, int, str, str], ...] = (
+        (
+            [],
+            "*",
+            260,
+            "magenta",
+            "ランドマーク",
+        ),
+        (
+            [],
+            "D",
+            130,
+            "cyan",
+            "確定ランドマーク（位置）",
+        ),
+        (
+            [],
+            "P",
+            170,
+            "orange",
+            "確定ランドマーク（位置・方位）",
+        ),
+    )
+    for definition in landmark.landmarks:
+        correction = applied_by_id.get(definition.beacon_id)
+        position_sigma = (
+            definition.position_sigma_m
+            if correction is None
+            else correction.anchor_position_sigma_m
+        )
+        heading = (
+            definition.heading_deg
+            if correction is None
+            else correction.anchor_heading_deg
+        )
+        group_index = 0 if position_sigma is None else 1 if heading is None else 2
+        groups[group_index][0].append(
+            (float(definition.pixel_x), float(definition.pixel_y))
+        )
+
+    fallback = [item for item in applied if item.beacon_id not in configured_ids]
+    if fallback:
+        fallback_x, fallback_y = _compute_pixel_coords(
+            np.asarray([item.landmark_x for item in fallback], dtype=float),
+            np.asarray([item.landmark_y for item in fallback], dtype=float),
+            gx_mean,
+            gz_mean,
+            origin_px,
+            scale,
+        )
+        for item, pixel_x, pixel_y in zip(
+            fallback, fallback_x, fallback_y, strict=True
+        ):
+            group_index = (
+                0
+                if item.anchor_position_sigma_m is None
+                else 1
+                if item.anchor_heading_deg is None
+                else 2
+            )
+            groups[group_index][0].append((float(pixel_x), float(pixel_y)))
+
+    for points, marker, size, color, label in groups:
+        if not points:
+            continue
+        coordinates = np.asarray(points, dtype=float)
+        ax.scatter(
+            coordinates[:, 0],
+            coordinates[:, 1],
+            marker=marker,
+            s=size,
+            color=color,
+            edgecolors="black",
+            linewidths=0.8,
+            zorder=8,
+            label=label,
         )
 
 

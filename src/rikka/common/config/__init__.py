@@ -203,7 +203,7 @@ BLE_DATA_PATH = "input/ble/sample_rssi.csv"
 
 # ランドマーク検出とみなす RSSI の下限 [dBm]
 # この値以上の RSSI を受信したビーコンをランドマーク到達と判定する
-BLE_RSSI_THRESHOLD_DBM = -55.0
+BLE_RSSI_THRESHOLD_DBM = -70.0
 
 # 同一ビーコンによる連続補正を防ぐラッチ解除マージン [dB]
 # 一度補正したビーコンは、RSSI が (閾値 - このマージン) を下回るまで再検出しない
@@ -218,6 +218,17 @@ BLE_RSSI_RELEASE_STREAK = 2
 # 実測 BLE はビーコンごとに受信時刻が数 ms〜数十 ms ずれるため、この幅に収まる
 # 観測を同時受信として扱い、最も強い RSSI のビーコンを 1 件だけ採用する
 BLE_SYNC_WINDOW_S = 0.05
+
+# 実測 RSSI のピーク時刻を決める移動中央値のサンプル数。
+BLE_RSSI_SMOOTHING_SAMPLES = 5
+
+# RSSI = A - 10 n log10(d) の既定パスロスモデル。
+BLE_PATH_LOSS_TX_POWER_DBM = -59.0
+BLE_PATH_LOSS_N = 2.0
+BLE_RSSI_SIGMA_DB = 6.0
+
+# 通常 PDR のランドマーク補正方式。既存挙動は snap のまま維持する。
+BLE_PDR_CORRECTION_MODE = "snap"
 
 # ランドマークとして扱う BLE ビーコンのフロアマップ上の既知座標
 # (beacon_id, pixel_x, pixel_y) の並び。--origin-px と同じ画像左上原点の

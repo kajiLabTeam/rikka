@@ -14,15 +14,21 @@
     行って検出列を返す。
 """
 
-from ..common.lib.models import LandmarkDetection
+from ..common.config import (
+    BLE_PATH_LOSS_N,
+    BLE_PATH_LOSS_TX_POWER_DBM,
+    BLE_RSSI_SIGMA_DB,
+)
+from ..common.lib.models import LandmarkRange, PathLossModel
 from ..common.settings import BleLandmarkSettings
-from .lib.detection import detect_landmarks
+from .lib.detection import detect_landmarks, smoothed_rssi_at_detection
 from .lib.loader import load_ble_observations
+from .lib.pathloss import rssi_sigma_to_distance_sigma_m, rssi_to_distance_m
 
 
 def run_ble_landmark_detection(
     settings: BleLandmarkSettings,
-) -> tuple[LandmarkDetection, ...] | None:
+) -> tuple[LandmarkRange, ...] | None:
     """BLE ランドマークを検出する。
 
     ``None`` は機能無効、空タプルは有効だが検出なしを表す。
@@ -30,4 +36,31 @@ def run_ble_landmark_detection(
     if not settings.enabled:
         return None
     observations = load_ble_observations(settings.data_path)
-    return detect_landmarks(observations, settings)
+    detections = detect_landmarks(observations, settings)
+    landmarks = settings.landmark_map()
+    default_model = PathLossModel(
+        BLE_PATH_LOSS_TX_POWER_DBM,
+        BLE_PATH_LOSS_N,
+        BLE_RSSI_SIGMA_DB,
+    )
+    ranges = []
+    for detection in detections:
+        landmark = landmarks[detection.beacon_id]
+        model = landmark.path_loss_model or default_model
+        smoothed_rssi = smoothed_rssi_at_detection(
+            observations,
+            detection,
+            settings.rssi_smoothing_samples,
+        )
+        distance = rssi_to_distance_m(smoothed_rssi, model)
+        ranges.append(
+            LandmarkRange(
+                detection.timestamp_s,
+                detection.beacon_id,
+                detection.rssi_dbm,
+                distance,
+                rssi_sigma_to_distance_sigma_m(distance, model),
+                smoothed_rssi,
+            )
+        )
+    return tuple(ranges)

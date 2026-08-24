@@ -17,18 +17,18 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from ...common.lib.models import LandmarkDetection
+from ...common.lib.models import LandmarkObservation
 
 
 def assign_detections_to_steps(
-    detections: tuple[LandmarkDetection, ...],
+    detections: tuple[LandmarkObservation, ...],
     t_at_steps: np.ndarray | Sequence[float],
-) -> tuple[dict[int, list[LandmarkDetection]], int]:
+) -> tuple[dict[int, list[LandmarkObservation]], int]:
     """検出時刻を0始まりの歩indexへ写像し、歩ごとの検出と破棄件数を返す。"""
     if len(t_at_steps) == 0:
         return {}, len(detections)
     times = np.asarray(t_at_steps, dtype=float)
-    assigned: dict[int, list[LandmarkDetection]] = {}
+    assigned: dict[int, list[LandmarkObservation]] = {}
     discarded_count = 0
     for detection in detections:
         index = int(np.searchsorted(times, detection.timestamp_s, side="left"))
@@ -40,13 +40,13 @@ def assign_detections_to_steps(
 
 
 def build_step_landmark_map(
-    detections: tuple[LandmarkDetection, ...],
+    detections: tuple[LandmarkObservation, ...],
     t_at_steps: np.ndarray | Sequence[float],
     landmark_meters: dict[str, tuple[float, float]],
-) -> dict[int, LandmarkDetection]:
+) -> dict[int, LandmarkObservation]:
     """PFの1始まり歩番号からその歩で反映する最後の登録済み検出への辞書を返す。"""
     assigned, _ = assign_detections_to_steps(detections, t_at_steps)
-    result: dict[int, LandmarkDetection] = {}
+    result: dict[int, LandmarkObservation] = {}
     for step_index, step_detections in assigned.items():
         registered = [
             detection

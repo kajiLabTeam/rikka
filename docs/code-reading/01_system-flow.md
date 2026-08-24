@@ -14,6 +14,10 @@ flowchart TD
     Fusion -->|方位・歩幅・時刻| Shared[PreparedPdrSteps]
     Shared -->|selected_heading × step_length| PDR[integrate_steps<br/>通常PDR]
     Shared -->|歩列・運動尤度| PF[particle.lib.runner<br/>particle filter]
+    BLE[BLE.csv + BLE_pos.csv] -->|平滑ピーク・推定距離| Range[LandmarkRange]
+    Range -->|snap / warp| PDR
+    Range -->|observation / ranging| PF
+    Walk[walk_config.csv] -->|起点・方位・身長| CLI
     Map[フロアマップ画像] -->|輝度>128を通路<br/>原点・縮尺| PF
     PDR -->|TrajectoryResult| CLI[cli.commands.run]
     PF -->|粒子・診断付きTrajectoryResult| CLI
@@ -29,8 +33,8 @@ flowchart TD
 2. [`cli.commands.run()`](../../src/rikka/cli/commands.py#L81) が [`PdrSettings`](../../src/rikka/common/settings.py#L218)、[`ParticleSettings`](../../src/rikka/common/settings.py#L166)、[`OutputSettings`](../../src/rikka/common/settings.py#L193) を作ります。
 3. [`pdr.pipeline.run_pdr()`](../../src/rikka/pdr/pipeline.py#L21) が [`prepare_pdr_steps_with_settings()`](../../src/rikka/pdr/lib/preparation.py#L111) を呼びます。
 4. 前処理、歩検出、方位・運動状態・歩幅推定を実行し、共有歩列を作ります。
-5. 通常 PDR は [`integrate_steps()`](../../src/rikka/pdr/lib/integrate.py#L18) の結果を使用します。
-6. PF 指定時だけ [`particle.pipeline.run_particle()`](../../src/rikka/particle/pipeline.py#L28) が同じ共有歩列を補正します。
+5. 通常 PDR は [`integrate_steps()`](../../src/rikka/pdr/lib/integrate.py#L18) の結果を使用し、BLE有効時は `snap` または過去へ残差を配分する `warp` を適用します。
+6. PF 指定時だけ [`particle.pipeline.run_particle()`](../../src/rikka/particle/pipeline.py#L28) が同じ共有歩列を補正し、`ranging` ではRSSI領域の尤度で祖先経路も再選択します。
 7. [`plot.pipeline.write_outputs()`](../../src/rikka/plot/pipeline.py#L51) は常に CSV を保存し、`render()` は設定に応じて図・動画を保存します。
 8. 評価は通常実行の必須工程ではなく、[`agent/`](../../agent) の明示実行で行います。
 

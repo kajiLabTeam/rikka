@@ -53,6 +53,7 @@ def run_pdr(
             rssi_threshold_dbm=settings.landmark.rssi_threshold_dbm,
             gx_mean=prepared.gx_mean,
             gz_mean=prepared.gz_mean,
+            correction_mode=settings.landmark.correction_mode,
         )
     return TrajectoryResult(
         trajectory=prepared.trajectory if landmark is None else landmark.trajectory,

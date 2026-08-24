@@ -36,6 +36,7 @@ from rikka.common.lib.models import (
     Landmark,
     LandmarkCorrectionResult,
     LandmarkDetection,
+    LandmarkRange,
 )
 from rikka.common.lib.sensors import load_sensor_data
 from rikka.common.settings import (
@@ -296,6 +297,7 @@ def test_group_by_timestamp_uses_window_start_as_anchor() -> None:
 
 def _landmark_settings(**overrides: object) -> BleLandmarkSettings:
     values: dict[str, object] = {
+        "rssi_threshold_dbm": -55.0,
         "landmarks": (
             Landmark("beacon_1", 1.0, 2.0),
             Landmark("beacon_2", 3.0, 4.0),
@@ -925,7 +927,16 @@ def test_run_ble_landmark_detection_returns_detection_only(tmp_path: Path) -> No
         _landmark_settings(enabled=True, data_path=path)
     )
 
-    assert result == (LandmarkDetection(1.0, "beacon_1", -50.0),)
+    assert result == (
+        LandmarkRange(
+            1.0,
+            "beacon_1",
+            -50.0,
+            pytest.approx(0.3548133892),
+            pytest.approx(0.2450964063),
+            -50.0,
+        ),
+    )
 
 
 def test_run_pdr_without_ble_matches_prepared_trajectory() -> None:
@@ -1021,6 +1032,10 @@ def test_build_landmark_corrections_dataframe_has_diagnostic_columns() -> None:
             "anchor_heading_deg": None,
             "anchor_heading_sigma_deg": None,
             "anchor_heading_bidirectional": False,
+            "estimated_distance_m": None,
+            "correction_mode": "snap",
+            "warp_start_step": None,
+            "warp_span_m": None,
         }
     ]
 
@@ -1072,6 +1087,39 @@ def test_plot_trajectory_labels_corrected_path_with_landmark(
 
     labels = [artist.get_label() for artist in plt.gcf().axes[0].collections]
     assert "補正後軌跡" in labels
+    plt.close("all")
+
+
+def test_plot_trajectory_shows_all_registered_ble_positions_without_detection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """未検出でも座標確定済みBLEを星印で地図へ表示する。"""
+    map_path = tmp_path / "map.png"
+    plt.imsave(map_path, np.ones((8, 8)), cmap="gray", vmin=0.0, vmax=1.0)
+    landmark = _apply_corrections(
+        [[0.0, 0.0], [1.0, 0.0]],
+        [1.0],
+        (),
+        _landmark_settings(),
+        "ble.csv",
+        0.0,
+        1.0,
+    )
+    monkeypatch.setattr(plt, "show", lambda: None)
+
+    plot_trajectory(
+        landmark.trajectory,
+        floormap_path=map_path,
+        landmark=landmark,
+    )
+
+    collections = plt.gcf().axes[0].collections
+    stars = next(item for item in collections if item.get_label() == "ランドマーク")
+    np.testing.assert_allclose(
+        stars.get_offsets(),
+        [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]],
+    )
     plt.close("all")
 
 

@@ -118,9 +118,9 @@ def finalize(
         ctx.current_reversals = _unsupported_reversal_count(
             ctx.current_path, ctx.sensor_headings, ctx.turning_evidence
         )
-        if (
-            ctx.path_selection == "sequence"
-            and ctx.sequence_reversals < ctx.current_reversals
+        if ctx.path_selection == "sequence" and (
+            ctx.landmark_mode == "ranging"
+            or ctx.sequence_reversals < ctx.current_reversals
         ):
             ctx.selected_path = ctx.sequence_path
             ctx.trajectory_modes = ctx.sequence_modes

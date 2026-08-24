@@ -22,7 +22,7 @@ import numpy as np
 from ...common.lib.models import (
     Landmark,
     LandmarkCorrection,
-    LandmarkDetection,
+    LandmarkObservation,
     StepHeading,
     StepMotionEvidence,
     StepMotionPosterior,
@@ -91,7 +91,7 @@ class ParticleRuntime:
     preserve_recovery_branches: bool
     motion_predictive_weight_power: float
     path_selection: str
-    landmark_detections: tuple[LandmarkDetection, ...]
+    landmark_detections: tuple[LandmarkObservation, ...]
     landmarks: tuple[Landmark, ...]
     landmark_mode: str
     landmark_sigma_m: float
@@ -140,8 +140,8 @@ class ParticleRuntime:
     indices: np.ndarray = field(init=False)
     landmark_before_position: tuple[float, float] | None = field(init=False)
     landmark_applied: bool = field(init=False)
-    landmark_by_step: dict[int, LandmarkDetection] = field(init=False)
-    landmark_detection: LandmarkDetection | None = field(init=False)
+    landmark_by_step: dict[int, LandmarkObservation] = field(init=False)
+    landmark_detection: LandmarkObservation | None = field(init=False)
     landmark_definition: Landmark | None = field(init=False)
     landmark_definitions: dict[str, Landmark] = field(init=False)
     landmark_events: list[LandmarkCorrection] = field(init=False)

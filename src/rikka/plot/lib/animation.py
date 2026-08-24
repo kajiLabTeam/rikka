@@ -37,6 +37,9 @@ from .trajectory import (
 from .trajectory import (
     _plot_landmark_overlay as plot_landmark_overlay,
 )
+from .trajectory import (
+    _plot_landmark_positions as plot_landmark_positions,
+)
 
 
 def plot_particle_filter_trajectory(
@@ -125,6 +128,7 @@ def _draw_animation_landmarks(
     フレーム ``step_index + 1`` に対応する。
     """
     applied = [item for item in landmark.corrections if item.applied]
+    plot_landmark_positions(ax, landmark, applied, gx_mean, gz_mean, origin_px, scale)
     if not applied:
         return
 
@@ -133,54 +137,6 @@ def _draw_animation_landmarks(
             (item.beacon_id, item.landmark_x, item.landmark_y): item for item in applied
         }.values()
     )
-    groups = (
-        (
-            [item for item in unique if item.anchor_position_sigma_m is None],
-            "*",
-            260,
-            "magenta",
-            "ランドマーク",
-        ),
-        (
-            [
-                item
-                for item in unique
-                if item.anchor_position_sigma_m is not None
-                and item.anchor_heading_deg is None
-            ],
-            "D",
-            130,
-            "cyan",
-            "確定ランドマーク（位置）",
-        ),
-        (
-            [item for item in unique if item.anchor_heading_deg is not None],
-            "P",
-            170,
-            "orange",
-            "確定ランドマーク（位置・方位）",
-        ),
-    )
-    for items, marker, size, color, label in groups:
-        if not items:
-            continue
-        target = np.asarray(
-            [(item.landmark_x, item.landmark_y) for item in items], dtype=float
-        )
-        target_px, target_py = compute_pixel_coords(
-            target[:, 0], target[:, 1], gx_mean, gz_mean, origin_px, scale
-        )
-        ax.scatter(
-            target_px,
-            target_py,
-            marker=marker,
-            s=size,
-            color=color,
-            edgecolors="black",
-            linewidths=0.8,
-            zorder=6,
-            label=label,
-        )
     plot_anchor_heading_arrows(ax, unique, gx_mean, gz_mean, origin_px, scale)
 
     done = [item for item in applied if item.step_index + 1 <= frame]

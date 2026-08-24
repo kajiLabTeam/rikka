@@ -14,7 +14,9 @@
     その最大値の時刻を検出として確定して、時刻順に返す。
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+import numpy as np
 
 from ...common.lib.models import BleObservation, LandmarkDetection
 from ...common.settings import BleLandmarkSettings
@@ -28,18 +30,73 @@ class _LatchState:
     best_timestamp_s: float
     best_rssi_dbm: float
     release_streak: int = 0
+    observations: list[BleObservation] = field(default_factory=list)
 
 
 def _finalize_detection(
     beacon_id: str,
     state: _LatchState,
+    smoothing_samples: int,
 ) -> LandmarkDetection:
-    """ラッチ区間の最大 RSSI 観測をランドマーク検出へ変換する。"""
-    return LandmarkDetection(
-        state.best_timestamp_s,
-        beacon_id,
-        state.best_rssi_dbm,
+    """移動中央値が最大の時刻を生RSSI付き検出へ変換する。"""
+    if len(state.observations) < smoothing_samples:
+        return LandmarkDetection(
+            state.best_timestamp_s,
+            beacon_id,
+            state.best_rssi_dbm,
+        )
+    raw = np.asarray([item.rssi_dbm for item in state.observations], dtype=float)
+    radius = smoothing_samples // 2
+    smoothed = np.asarray(
+        [
+            np.median(raw[max(0, index - radius) : index + radius + 1])
+            for index in range(len(raw))
+        ],
+        dtype=float,
     )
+    maximum = float(np.max(smoothed))
+    candidates = [
+        index for index, value in enumerate(smoothed) if np.isclose(value, maximum)
+    ]
+    center_timestamp = float(
+        np.median([state.observations[index].timestamp_s for index in candidates])
+    )
+    best_index = min(
+        candidates,
+        key=lambda index: (
+            abs(state.observations[index].timestamp_s - center_timestamp),
+            -state.observations[index].rssi_dbm,
+            state.observations[index].timestamp_s,
+        ),
+    )
+    best = state.observations[best_index]
+    return LandmarkDetection(
+        best.timestamp_s,
+        beacon_id,
+        best.rssi_dbm,
+    )
+
+
+def smoothed_rssi_at_detection(
+    observations: tuple[BleObservation, ...],
+    detection: LandmarkDetection,
+    smoothing_samples: int,
+) -> float:
+    """検出ビーコンの時系列から検出時刻に対応する移動中央値を返す。"""
+    beacon = [item for item in observations if item.beacon_id == detection.beacon_id]
+    if not beacon:
+        return detection.rssi_dbm
+    index = min(
+        range(len(beacon)),
+        key=lambda item_index: abs(
+            beacon[item_index].timestamp_s - detection.timestamp_s
+        ),
+    )
+    radius = smoothing_samples // 2
+    values = [
+        item.rssi_dbm for item in beacon[max(0, index - radius) : index + radius + 1]
+    ]
+    return float(np.median(values))
 
 
 def _select_strongest(candidates: list[BleObservation]) -> BleObservation:
@@ -80,6 +137,7 @@ def detect_landmarks(
             state = latched.get(observation.beacon_id)
             if state is None:
                 continue
+            state.observations.append(observation)
             if observation.rssi_dbm > state.best_rssi_dbm:
                 state.best_timestamp_s = observation.timestamp_s
                 state.best_rssi_dbm = observation.rssi_dbm
@@ -101,12 +159,20 @@ def detect_landmarks(
             latched[best.beacon_id] = _LatchState(
                 best_timestamp_s=best.timestamp_s,
                 best_rssi_dbm=best.rssi_dbm,
+                observations=[best],
             )
         for beacon_id in released:
-            detections.append(_finalize_detection(beacon_id, latched.pop(beacon_id)))
+            detections.append(
+                _finalize_detection(
+                    beacon_id,
+                    latched.pop(beacon_id),
+                    settings.rssi_smoothing_samples,
+                )
+            )
 
     detections.extend(
-        _finalize_detection(beacon_id, state) for beacon_id, state in latched.items()
+        _finalize_detection(beacon_id, state, settings.rssi_smoothing_samples)
+        for beacon_id, state in latched.items()
     )
     detections.sort(key=lambda detection: detection.timestamp_s)
 

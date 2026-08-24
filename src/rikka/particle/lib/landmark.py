@@ -17,7 +17,9 @@ from collections.abc import Callable
 
 import numpy as np
 
+from ...ble.lib.pathloss import expected_rssi_dbm
 from ...common.lib.floormap import compute_pixel_coords
+from ...common.lib.models import PathLossModel
 
 
 def landmark_likelihood(
@@ -30,6 +32,22 @@ def landmark_likelihood(
     delta = particles - np.asarray(landmark_xy, dtype=float)
     squared = np.sum(delta * delta, axis=1)
     gaussian = np.exp(-squared / (2.0 * sigma_m * sigma_m))
+    return np.asarray(floor + (1.0 - floor) * gaussian, dtype=float)
+
+
+def landmark_range_likelihood(
+    particles: np.ndarray,
+    landmark_xy: tuple[float, float],
+    rssi_dbm: float,
+    model: PathLossModel,
+    floor: float,
+) -> np.ndarray:
+    """RSSI領域の残差から粒子ごとの測距尤度を返す。"""
+    delta = particles - np.asarray(landmark_xy, dtype=float)
+    distances = np.sqrt(np.sum(delta * delta, axis=1))
+    expected = expected_rssi_dbm(distances, model)
+    residual = rssi_dbm - expected
+    gaussian = np.exp(-np.square(residual) / (2.0 * model.rssi_sigma_db**2))
     return np.asarray(floor + (1.0 - floor) * gaussian, dtype=float)
 
 

@@ -12,7 +12,7 @@
 
 import numpy as np
 
-from ...common.lib.models import LandmarkCorrection
+from ...common.lib.models import LandmarkCorrection, LandmarkRange
 from ...particle.lib.proposal import (
     _normalize_angle,
 )
@@ -59,6 +59,12 @@ def _record_landmark_event(ctx: ParticleRuntime) -> None:
             ),
             anchor_heading_bidirectional=(
                 False if landmark is None else landmark.heading_bidirectional
+            ),
+            estimated_distance_m=(
+                detection.distance_m if isinstance(detection, LandmarkRange) else None
+            ),
+            correction_mode=(
+                "ranging" if ctx.landmark_mode == "ranging" else ctx.landmark_mode
             ),
         )
     )

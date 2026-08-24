@@ -16,6 +16,8 @@ uv run rikka run \
   --no-plot
 ```
 
+実測PFでは `rikka particle ... --pf-landmark-mode ranging` を使う。
+
 `BLE.csv` の `Timestamp` は日本時間として解釈し、`meta/time.csv` の
 `START` 行にある `system time - experiment time` を引いて、phyphoxの
 `Experiment Time (s)` と同じ時間軸へ変換する。`meta/time.csv` がない旧データ
@@ -46,6 +48,9 @@ uv run rikka run \
 | `pixel_x` | 座標確定後に必須 | フロアマップ上の X 座標 [pixel] |
 | `pixel_y` | 座標確定後に必須 | フロアマップ上の Y 座標 [pixel] |
 | `note` | 任意 | 設置場所を人が確認するための短い説明 |
+| `tx_power_dbm` | 任意 | 1m地点のRSSI `A` [dBm]。空欄は -59 |
+| `path_loss_n` | 任意 | パスロス係数。空欄は 2.0 |
+| `rssi_sigma_db` | 任意 | RSSI残差の標準偏差 [dB]。空欄は 6.0 |
 
 ファイルは UTF-8 の CSV とし、ヘッダー名は変更しない。1端末につき1行にする。
 BLE の時刻や RSSI は `BLE.csv` に残し、`BLE_pos.csv` には入れない。
@@ -59,3 +64,17 @@ elpis_001,elpis_001,DC:0D:30:1E:33:91,656c7069735f303031,2056,2400,廊下中央
 
 プログラムでは `beacon_id` を座標との結合キーにする。
 端末照合には Device Name に加えて MAC Address と Raw Data の末尾も使用できる。
+
+## 計測ごとの歩行条件
+
+同じディレクトリの `walk_config.csv` に1行だけ記録する。
+
+```csv
+origin_px_x,origin_px_y,initial_direction_deg,user_height_m,note
+1150,3200,260,1.68,西側エレベータ前から開始
+```
+
+`user_height_m` と `note` は空欄でもよい。解決順はCLI明示値、`walk_config.csv`、
+共通既定値である。起点はフロアマップ内の整数座標、方位は有限値、身長は正の値にする。
+起点・方位をRSSIから逆算して確定せず、実測値を
+`agent/agent_diagnose_ble_ranging.py` で検算する。
