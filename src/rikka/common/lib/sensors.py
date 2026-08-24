@@ -30,18 +30,26 @@ from .time_utils import _gyro_integration_dt
 
 ACC_COLUMNS = {
     "Time (s)": "t",
+    "Experiment Time (s)": "t",
     "Acceleration x (m/s^2)": "x",
     "Acceleration y (m/s^2)": "y",
     "Acceleration z (m/s^2)": "z",
+    "Acceleration X (m/s^2)": "x",
+    "Acceleration Y (m/s^2)": "y",
+    "Acceleration Z (m/s^2)": "z",
     "X (m/s^2)": "x",
     "Y (m/s^2)": "y",
     "Z (m/s^2)": "z",
 }
 GYRO_COLUMNS = {
     "Time (s)": "t",
+    "Experiment Time (s)": "t",
     "Gyroscope x (rad/s)": "x",
     "Gyroscope y (rad/s)": "y",
     "Gyroscope z (rad/s)": "z",
+    "Gyroscope X (rad/s)": "x",
+    "Gyroscope Y (rad/s)": "y",
+    "Gyroscope Z (rad/s)": "z",
     "X (rad/s)": "x",
     "Y (rad/s)": "y",
     "Z (rad/s)": "z",

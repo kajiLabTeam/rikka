@@ -146,15 +146,25 @@ def run(
     ble_landmark: bool = BLE_LANDMARK_ENABLED,
     ble_data_path: str | Path = BLE_DATA_PATH,
     ble_rssi_threshold: float = BLE_RSSI_THRESHOLD_DBM,
+    ble_landmarks: tuple[Landmark, ...] | None = None,
 ) -> pd.DataFrame:
     """後方互換引数を設定へ変換し、解析と成果物保存を実行する。"""
     if (save_step_frames or save_path_comparison) and not use_particle_filter:
         raise ValueError("粒子可視化の保存には use_particle_filter=True が必要です。")
     floormap = FloorMap(str(floormap_path), origin_px, scale)
-    landmark_settings = BleLandmarkSettings(
-        enabled=ble_landmark,
-        data_path=ble_data_path,
-        rssi_threshold_dbm=ble_rssi_threshold,
+    landmark_settings = (
+        BleLandmarkSettings(
+            enabled=ble_landmark,
+            data_path=ble_data_path,
+            rssi_threshold_dbm=ble_rssi_threshold,
+        )
+        if ble_landmarks is None
+        else BleLandmarkSettings(
+            enabled=ble_landmark,
+            data_path=ble_data_path,
+            rssi_threshold_dbm=ble_rssi_threshold,
+            landmarks=ble_landmarks,
+        )
     )
     pdr_settings = PdrSettings(
         sensor=SensorSettings(

@@ -10,7 +10,12 @@ import pytest
 from click.testing import CliRunner
 
 from rikka.ble.lib.detection import detect_landmarks
-from rikka.ble.lib.loader import group_by_timestamp, load_ble_observations
+from rikka.ble.lib.loader import (
+    _load_experiment_unix_offset,
+    group_by_timestamp,
+    load_ble_landmarks,
+    load_ble_observations,
+)
 from rikka.ble.lib.sample import (
     build_sample_times,
     generate_sample_observations,
@@ -21,7 +26,7 @@ from rikka.ble.lib.sample import (
 from rikka.ble.pipeline import run_ble_landmark_detection
 from rikka.cli import commands as cli_commands
 from rikka.cli.commands import run as run_command
-from rikka.cli.options import cli
+from rikka.cli.options import _resolve_ble_inputs, cli
 from rikka.common import settings as settings_module
 from rikka.common.config import FLOORMAP_PATH
 from rikka.common.lib.floormap import compute_meter_coords, compute_pixel_coords
@@ -84,6 +89,144 @@ def test_load_ble_observations_keeps_same_timestamp_rows(tmp_path: Path) -> None
     observations = load_ble_observations(path)
 
     assert [item.beacon_id for item in observations] == ["b2", "b1"]
+
+
+def test_load_ble_observations_accepts_measurement_directory_format(
+    tmp_path: Path,
+) -> None:
+    """Thingsupログを端末情報で照合し、phyphox開始基準へ変換する。"""
+    pd.DataFrame({"Unix Offset (s)": [1787129276.0]}).to_csv(
+        tmp_path / "Time Reference.csv", index=False
+    )
+    meta_dir = tmp_path / "meta"
+    meta_dir.mkdir()
+    pd.DataFrame(
+        [
+            {
+                "event": "START",
+                "experiment time": 0.0,
+                "system time": 1787129275.920813,
+            },
+            {
+                "event": "PAUSE",
+                "experiment time": 60.458,
+                "system time": 1787129336.378577,
+            },
+        ]
+    ).to_csv(meta_dir / "time.csv", index=False)
+    pd.DataFrame(
+        [
+            {
+                "beacon_id": "elpis_001",
+                "device_name": "elpis_001",
+                "mac_address": "DC:0D:30:1E:33:91",
+                "raw_data_suffix": "656c7069735f303031",
+                "pixel_x": 2050,
+                "pixel_y": 1870,
+                "note": "通路",
+            }
+        ]
+    ).to_csv(tmp_path / "BLE_pos.csv", index=False)
+    path = _write_ble_csv(
+        tmp_path / "BLE.csv",
+        [
+            {
+                "Timestamp": "19-08-2026 17:48:01:856",
+                "Device Name": "elpis_001",
+                "MAC Address": "DC:0D:30:1E:33:91",
+                "RSSI": -92,
+                "Raw Data": "02000a09656c7069735f303031",
+            },
+            {
+                "Timestamp": "19-08-2026 17:48:02:000",
+                "Device Name": "elpis_001",
+                "MAC Address": "DC:0D:30:1E:33:91",
+                "RSSI": 127,
+                "Raw Data": "02000a09656c7069735f303031",
+            },
+            {
+                "Timestamp": "19-08-2026 17:48:03:000",
+                "Device Name": "unknown",
+                "MAC Address": "00:00:00:00:00:00",
+                "RSSI": -40,
+                "Raw Data": "00",
+            },
+        ],
+    )
+
+    observations = load_ble_observations(path)
+
+    assert len(observations) == 1
+    assert observations[0].beacon_id == "elpis_001"
+    assert observations[0].timestamp_s == pytest.approx(5.935187)
+    assert observations[0].rssi_dbm == -92.0
+
+
+def test_experiment_unix_offset_falls_back_to_time_reference(tmp_path: Path) -> None:
+    """旧計測ディレクトリではTime Reference.csvを時刻基準に使う。"""
+    pd.DataFrame({"Unix Offset (s)": [1787129276.0]}).to_csv(
+        tmp_path / "Time Reference.csv", index=False
+    )
+
+    offset = _load_experiment_unix_offset(tmp_path / "BLE.csv")
+
+    assert offset == 1787129276.0
+
+
+def test_load_ble_landmarks_skips_devices_without_coordinates(tmp_path: Path) -> None:
+    """未設置端末は照合情報に残しつつランドマーク座標から除外する。"""
+    pd.DataFrame(
+        [
+            {
+                "beacon_id": "elpis_001",
+                "device_name": "elpis_001",
+                "mac_address": "DC:0D:30:1E:33:91",
+                "raw_data_suffix": "656c7069735f303031",
+                "pixel_x": 2050,
+                "pixel_y": 1870,
+            },
+            {
+                "beacon_id": "elpis_002",
+                "device_name": "elpis_002",
+                "mac_address": "DC:0D:30:1E:33:84",
+                "raw_data_suffix": "656c7069735f303032",
+                "pixel_x": None,
+                "pixel_y": None,
+            },
+        ]
+    ).to_csv(tmp_path / "BLE_pos.csv", index=False)
+
+    landmarks = load_ble_landmarks(tmp_path / "BLE_pos.csv")
+
+    assert landmarks == (Landmark("elpis_001", 2050.0, 1870.0),)
+
+
+def test_resolve_ble_inputs_prefers_files_in_measurement_directory(
+    tmp_path: Path,
+) -> None:
+    """--ble-landmark時は-data-dirと同居するBLE一式を自動選択する。"""
+    (tmp_path / "BLE.csv").touch()
+    pd.DataFrame(
+        [
+            {
+                "beacon_id": "elpis_001",
+                "device_name": "elpis_001",
+                "mac_address": "DC:0D:30:1E:33:91",
+                "raw_data_suffix": "656c7069735f303031",
+                "pixel_x": 2050,
+                "pixel_y": 1870,
+            }
+        ]
+    ).to_csv(tmp_path / "BLE_pos.csv", index=False)
+
+    data_path, landmarks = _resolve_ble_inputs(
+        str(tmp_path),
+        True,
+        "input/ble/sample_rssi.csv",
+    )
+
+    assert data_path == str(tmp_path / "BLE.csv")
+    assert landmarks == (Landmark("elpis_001", 2050.0, 1870.0),)
 
 
 def test_load_ble_observations_rejects_missing_column(tmp_path: Path) -> None:
