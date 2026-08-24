@@ -23,10 +23,14 @@ import click
 from ..common.config import (
     BLE_DATA_PATH,
     BLE_LANDMARK_ENABLED,
+    BLE_PDR_CORRECTION_MODE,
+    BLE_RSSI_RELEASE_MARGIN_DB,
+    BLE_RSSI_RELEASE_STREAK,
     BLE_RSSI_THRESHOLD_DBM,
     BLE_SAMPLE_MODE,
     BLE_SAMPLE_SEED,
     BLE_SAMPLE_TRUTH_PATH,
+    BLE_SYNC_WINDOW_S,
     DATA_DIR,
     FLOORMAP_ORIGIN_PX,
     FLOORMAP_PATH,
@@ -53,6 +57,7 @@ from ..common.config import (
 )
 from ..common.lib.models import Landmark
 from ..common.lib.validation import (
+    BLE_PDR_CORRECTION_MODES,
     BLE_SAMPLE_MODES,
     BLE_SAMPLE_SOURCES,
     FORWARD_HEADING_SOURCES,
@@ -74,6 +79,11 @@ _DATA_DIR_DEFAULT = DATA_DIR
 _BLE_DATA_DEFAULT = BLE_DATA_PATH
 _BLE_LANDMARK_DEFAULT = BLE_LANDMARK_ENABLED
 _BLE_RSSI_THRESHOLD_DEFAULT = BLE_RSSI_THRESHOLD_DBM
+_BLE_CORRECTION_DEFAULT = BLE_PDR_CORRECTION_MODE
+_BLE_CORRECTION_CHOICES = BLE_PDR_CORRECTION_MODES
+_BLE_RELEASE_MARGIN_DEFAULT = BLE_RSSI_RELEASE_MARGIN_DB
+_BLE_RELEASE_STREAK_DEFAULT = BLE_RSSI_RELEASE_STREAK
+_BLE_SYNC_WINDOW_DEFAULT = BLE_SYNC_WINDOW_S
 _BLE_SAMPLE_SEED_DEFAULT = BLE_SAMPLE_SEED
 _BLE_SAMPLE_MODE_DEFAULT = BLE_SAMPLE_MODE
 _BLE_SAMPLE_TRUTH_DEFAULT = BLE_SAMPLE_TRUTH_PATH
@@ -206,6 +216,13 @@ def _resolve_ble_inputs(
 
     local_position_path = resolved_data_path.with_name("BLE_pos.csv")
     if not local_position_path.is_file():
+        from ..ble.lib.loader import is_logger_ble_data  # noqa: PLC0415
+
+        if resolved_data_path.is_file() and is_logger_ble_data(resolved_data_path):
+            raise ValueError(
+                "Thingsup形式のBLEログには同じディレクトリの BLE_pos.csv が必要です: "
+                f"{resolved_data_path}"
+            )
         return str(resolved_data_path), None
 
     from ..ble.lib.loader import load_ble_landmarks  # noqa: PLC0415
@@ -216,6 +233,49 @@ def _resolve_ble_inputs(
             f"BLE_pos.csv に座標が確定した端末がありません: {local_position_path}"
         )
     return str(resolved_data_path), landmarks
+
+
+def _resolve_measurement_settings(
+    ctx: click.Context,
+    data_dir: str,
+    floormap: str,
+    origin_px: tuple[int, int],
+    direction: float,
+    height_m: float,
+) -> tuple[tuple[int, int], float, float]:
+    """CLI明示値を優先しつつ walk_config.csv の計測条件を反映する。"""
+    import matplotlib.image as mpimg  # noqa: PLC0415
+    from click.core import ParameterSource  # noqa: PLC0415
+
+    from ..common.lib.measurement_config import (  # noqa: PLC0415
+        load_measurement_config,
+    )
+
+    config_path = Path(data_dir) / "walk_config.csv"
+    if not config_path.is_file():
+        return origin_px, direction, height_m
+    try:
+        image = mpimg.imread(floormap)
+    except (OSError, SyntaxError, ValueError) as exc:
+        raise ValueError(
+            f"walk_config.csv の検証用フロアマップを読めません: {floormap}"
+        ) from exc
+    config = load_measurement_config(
+        data_dir,
+        image_size_px=(int(image.shape[1]), int(image.shape[0])),
+    )
+    if config is None:  # pragma: no cover - 直前の存在確認との防御境界
+        return origin_px, direction, height_m
+    if ctx.get_parameter_source("origin_px") is not ParameterSource.COMMANDLINE:
+        origin_px = config.origin_px
+    if ctx.get_parameter_source("direction") is not ParameterSource.COMMANDLINE:
+        direction = config.initial_direction_deg
+    if (
+        config.user_height_m is not None
+        and ctx.get_parameter_source("height_m") is not ParameterSource.COMMANDLINE
+    ):
+        height_m = config.user_height_m
+    return origin_px, direction, height_m
 
 
 def _common_options(f: click.decorators.FC) -> click.decorators.FC:
@@ -237,6 +297,36 @@ def _common_options(f: click.decorators.FC) -> click.decorators.FC:
     )(f)
     f = click.option(
         "--no-plot", is_flag=True, default=False, help="グラフ表示を無効化"
+    )(f)
+    f = click.option(
+        "--ble-sync-window",
+        type=float,
+        default=_BLE_SYNC_WINDOW_DEFAULT,
+        show_default=True,
+        callback=_validate_cli_non_negative_float,
+        help="同時受信としてまとめる時刻窓 [s]",
+    )(f)
+    f = click.option(
+        "--ble-release-streak",
+        type=click.IntRange(min=1),
+        default=_BLE_RELEASE_STREAK_DEFAULT,
+        show_default=True,
+        help="接近ラッチ解除に必要な連続観測数",
+    )(f)
+    f = click.option(
+        "--ble-release-margin",
+        type=float,
+        default=_BLE_RELEASE_MARGIN_DEFAULT,
+        show_default=True,
+        callback=_validate_cli_non_negative_float,
+        help="接近ラッチ解除のRSSI余裕 [dB]",
+    )(f)
+    f = click.option(
+        "--ble-correction",
+        type=click.Choice(_BLE_CORRECTION_CHOICES),
+        default=_BLE_CORRECTION_DEFAULT,
+        show_default=True,
+        help="通常PDRへのランドマーク補正方式",
     )(f)
     f = click.option(
         "--ble-rssi-threshold",
@@ -407,6 +497,7 @@ _click_cli = cli
 
 
 def _run_pdr(
+    ctx: click.Context,
     data_dir: str,
     floormap: str,
     origin_px: tuple[int, int],
@@ -431,11 +522,23 @@ def _run_pdr(
     ble_landmark: bool,
     ble_data_path: str,
     ble_rssi_threshold: float,
+    ble_correction: str,
+    ble_release_margin: float,
+    ble_release_streak: int,
+    ble_sync_window: float,
 ) -> None:
     from ..common.lib.sensors import load_sensor_data  # noqa: PLC0415
     from .commands import run as _run  # noqa: PLC0415
 
     _validate_gyro_bias_options(gyro_bias_method, gyro_bias)
+    origin_px, direction, height_m = _resolve_measurement_settings(
+        ctx,
+        data_dir,
+        floormap,
+        origin_px,
+        direction,
+        height_m,
+    )
     df_acc, df_gyro = load_sensor_data(data_dir)
     ble_data_path, ble_landmarks = _resolve_ble_inputs(
         data_dir,
@@ -469,13 +572,19 @@ def _run_pdr(
         ble_landmark=ble_landmark,
         ble_data_path=ble_data_path,
         ble_rssi_threshold=ble_rssi_threshold,
+        ble_correction=ble_correction,
+        ble_release_margin=ble_release_margin,
+        ble_release_streak=ble_release_streak,
+        ble_sync_window=ble_sync_window,
         ble_landmarks=ble_landmarks,
     )
 
 
 @cli.command()
 @_common_options
+@click.pass_context
 def run(
+    ctx: click.Context,
     data_dir: str,
     floormap: str,
     origin_px: tuple[int, int],
@@ -500,9 +609,14 @@ def run(
     ble_landmark: bool,
     ble_data_path: str,
     ble_rssi_threshold: float,
+    ble_correction: str,
+    ble_release_margin: float,
+    ble_release_streak: int,
+    ble_sync_window: float,
 ) -> None:
     """決定論的 PDR で歩行軌跡を推定する。"""
     _run_pdr(
+        ctx,
         data_dir,
         floormap,
         origin_px,
@@ -527,6 +641,10 @@ def run(
         ble_landmark,
         ble_data_path,
         ble_rssi_threshold,
+        ble_correction,
+        ble_release_margin,
+        ble_release_streak,
+        ble_sync_window,
     )
 
 
@@ -611,7 +729,9 @@ cli.add_command(run, name="pdr")
     help="--no-plot 指定時もパーティクルフィルタのアニメーションを保存",
 )
 @_common_options
+@click.pass_context
 def particle(
+    ctx: click.Context,
     data_dir: str,
     floormap: str,
     origin_px: tuple[int, int],
@@ -636,6 +756,10 @@ def particle(
     ble_landmark: bool,
     ble_data_path: str,
     ble_rssi_threshold: float,
+    ble_correction: str,
+    ble_release_margin: float,
+    ble_release_streak: int,
+    ble_sync_window: float,
     save_animation: bool,
     save_step_frames: bool,
     step_frames_range: tuple[int, int] | None,
@@ -653,6 +777,14 @@ def particle(
     from .commands import run as _run  # noqa: PLC0415
 
     _validate_gyro_bias_options(gyro_bias_method, gyro_bias)
+    origin_px, direction, height_m = _resolve_measurement_settings(
+        ctx,
+        data_dir,
+        floormap,
+        origin_px,
+        direction,
+        height_m,
+    )
     df_acc, df_gyro = load_sensor_data(data_dir)
     ble_data_path, ble_landmarks = _resolve_ble_inputs(
         data_dir,
@@ -697,6 +829,10 @@ def particle(
         ble_landmark=ble_landmark,
         ble_data_path=ble_data_path,
         ble_rssi_threshold=ble_rssi_threshold,
+        ble_correction=ble_correction,
+        ble_release_margin=ble_release_margin,
+        ble_release_streak=ble_release_streak,
+        ble_sync_window=ble_sync_window,
         ble_landmarks=ble_landmarks,
     )
 

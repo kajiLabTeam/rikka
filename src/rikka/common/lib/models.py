@@ -277,6 +277,33 @@ class FloorMap:
 
 
 @dataclass(frozen=True)
+class MeasurementConfig:
+    """計測単位で指定する歩行開始条件。"""
+
+    origin_px: tuple[int, int]
+    initial_direction_deg: float
+    user_height_m: float | None = None
+    note: str = ""
+
+
+@dataclass(frozen=True)
+class PathLossModel:
+    """対数距離パスロスモデルの係数。"""
+
+    tx_power_dbm: float
+    path_loss_n: float
+    rssi_sigma_db: float
+
+    def __post_init__(self) -> None:
+        if not np.isfinite(self.tx_power_dbm):
+            raise ValueError("tx_power_dbm は有限値にしてください。")
+        if not np.isfinite(self.path_loss_n) or self.path_loss_n <= 0.0:
+            raise ValueError("path_loss_n は有限な正の値にしてください。")
+        if not np.isfinite(self.rssi_sigma_db) or self.rssi_sigma_db <= 0.0:
+            raise ValueError("rssi_sigma_db は有限な正の値にしてください。")
+
+
+@dataclass(frozen=True)
 class Landmark:
     """フロアマップの既知ピクセル座標に設置した BLE ビーコンの定義。
 
@@ -291,6 +318,7 @@ class Landmark:
     heading_deg: float | None = None
     heading_sigma_deg: float = 15.0
     heading_bidirectional: bool = False
+    path_loss_model: PathLossModel | None = None
 
 
 class BleObservation(NamedTuple):
@@ -307,6 +335,20 @@ class LandmarkDetection(NamedTuple):
     timestamp_s: float
     beacon_id: str
     rssi_dbm: float
+
+
+class LandmarkRange(NamedTuple):
+    """ピーク RSSI から推定距離を付与したランドマーク観測。"""
+
+    timestamp_s: float
+    beacon_id: str
+    rssi_dbm: float
+    distance_m: float
+    distance_sigma_m: float
+    smoothed_rssi_dbm: float
+
+
+LandmarkObservation = LandmarkDetection | LandmarkRange
 
 
 class LandmarkCorrection(NamedTuple):
@@ -333,6 +375,10 @@ class LandmarkCorrection(NamedTuple):
     anchor_heading_deg: float | None = None
     anchor_heading_sigma_deg: float | None = None
     anchor_heading_bidirectional: bool = False
+    estimated_distance_m: float | None = None
+    correction_mode: str = "snap"
+    warp_start_step: int | None = None
+    warp_span_m: float | None = None
 
 
 @dataclass(frozen=True)
@@ -350,7 +396,8 @@ class LandmarkCorrectionResult:
     discarded_count: int
     rssi_threshold_dbm: float
     data_path: str
-    detections: tuple[LandmarkDetection, ...] = ()
+    detections: tuple[LandmarkObservation, ...] = ()
+    landmarks: tuple[Landmark, ...] = ()
 
 
 @dataclass(frozen=True)

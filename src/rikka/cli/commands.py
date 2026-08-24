@@ -21,7 +21,11 @@ from ..ble.pipeline import run_ble_landmark_detection
 from ..common.config import (
     BLE_DATA_PATH,
     BLE_LANDMARK_ENABLED,
+    BLE_PDR_CORRECTION_MODE,
+    BLE_RSSI_RELEASE_MARGIN_DB,
+    BLE_RSSI_RELEASE_STREAK,
     BLE_RSSI_THRESHOLD_DBM,
+    BLE_SYNC_WINDOW_S,
     FLOORMAP_ORIGIN_PX,
     FLOORMAP_PATH,
     FLOORMAP_SCALE,
@@ -146,6 +150,10 @@ def run(
     ble_landmark: bool = BLE_LANDMARK_ENABLED,
     ble_data_path: str | Path = BLE_DATA_PATH,
     ble_rssi_threshold: float = BLE_RSSI_THRESHOLD_DBM,
+    ble_correction: str = BLE_PDR_CORRECTION_MODE,
+    ble_release_margin: float = BLE_RSSI_RELEASE_MARGIN_DB,
+    ble_release_streak: int = BLE_RSSI_RELEASE_STREAK,
+    ble_sync_window: float = BLE_SYNC_WINDOW_S,
     ble_landmarks: tuple[Landmark, ...] | None = None,
 ) -> pd.DataFrame:
     """後方互換引数を設定へ変換し、解析と成果物保存を実行する。"""
@@ -157,12 +165,20 @@ def run(
             enabled=ble_landmark,
             data_path=ble_data_path,
             rssi_threshold_dbm=ble_rssi_threshold,
+            release_margin_db=ble_release_margin,
+            release_streak=ble_release_streak,
+            sync_window_s=ble_sync_window,
+            correction_mode=ble_correction,
         )
         if ble_landmarks is None
         else BleLandmarkSettings(
             enabled=ble_landmark,
             data_path=ble_data_path,
             rssi_threshold_dbm=ble_rssi_threshold,
+            release_margin_db=ble_release_margin,
+            release_streak=ble_release_streak,
+            sync_window_s=ble_sync_window,
+            correction_mode=ble_correction,
             landmarks=ble_landmarks,
         )
     )

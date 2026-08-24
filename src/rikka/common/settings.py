@@ -21,8 +21,10 @@ from .config import (
     BLE_LANDMARK_ANCHORS,
     BLE_LANDMARK_ENABLED,
     BLE_LANDMARKS_PX,
+    BLE_PDR_CORRECTION_MODE,
     BLE_RSSI_RELEASE_MARGIN_DB,
     BLE_RSSI_RELEASE_STREAK,
+    BLE_RSSI_SMOOTHING_SAMPLES,
     BLE_RSSI_THRESHOLD_DBM,
     BLE_SAMPLE_BASE_RSSI_DBM,
     BLE_SAMPLE_INTERVAL_S,
@@ -67,6 +69,7 @@ from .config import (
 )
 from .lib.models import Landmark
 from .lib.validation import (
+    BLE_PDR_CORRECTION_MODES,
     BLE_SAMPLE_MODES,
     FORWARD_HEADING_SOURCES,
     GYRO_BIAS_METHODS,
@@ -317,6 +320,8 @@ class BleLandmarkSettings:
     release_margin_db: float = BLE_RSSI_RELEASE_MARGIN_DB
     release_streak: int = BLE_RSSI_RELEASE_STREAK
     sync_window_s: float = BLE_SYNC_WINDOW_S
+    rssi_smoothing_samples: int = BLE_RSSI_SMOOTHING_SAMPLES
+    correction_mode: str = BLE_PDR_CORRECTION_MODE
     landmarks: tuple[Landmark, ...] = field(
         default_factory=lambda: _build_landmarks_with_anchors(
             BLE_LANDMARKS_PX,
@@ -335,6 +340,18 @@ class BleLandmarkSettings:
         ):
             raise ValueError("release_streak は 1 以上の整数を指定してください。")
         validate_non_negative_parameter("sync_window_s", self.sync_window_s)
+        if (
+            not isinstance(self.rssi_smoothing_samples, int)
+            or isinstance(self.rssi_smoothing_samples, bool)
+            or self.rssi_smoothing_samples < 1
+            or self.rssi_smoothing_samples % 2 == 0
+        ):
+            raise ValueError("rssi_smoothing_samples は正の奇数にしてください。")
+        validate_choice(
+            "ble_correction",
+            self.correction_mode,
+            BLE_PDR_CORRECTION_MODES,
+        )
         validate_landmarks(
             tuple(
                 (item.beacon_id, item.pixel_x, item.pixel_y) for item in self.landmarks

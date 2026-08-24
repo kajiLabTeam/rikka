@@ -23,7 +23,12 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 
-from ...common.lib.models import BleObservation, Landmark
+from ...common.config import (
+    BLE_PATH_LOSS_N,
+    BLE_PATH_LOSS_TX_POWER_DBM,
+    BLE_RSSI_SIGMA_DB,
+)
+from ...common.lib.models import BleObservation, Landmark, PathLossModel
 
 BLE_REQUIRED_COLUMNS = ("timestamp_s", "beacon_id", "rssi_dbm")
 BLE_LOGGER_REQUIRED_COLUMNS = (
@@ -57,6 +62,7 @@ class _BlePositionRecord:
     raw_data_suffix: str
     pixel_x: float | None
     pixel_y: float | None
+    path_loss_model: PathLossModel | None
 
 
 def _read_csv(path: Path, label: str) -> pd.DataFrame:
@@ -115,6 +121,33 @@ def _optional_coordinate(value: object, column: str, row_number: int) -> float |
     return coordinate
 
 
+def _optional_model_value(
+    values: dict[str, object],
+    column: str,
+    default: float,
+    row_number: int,
+    *,
+    positive: bool = False,
+) -> float:
+    """任意のパスロス列を検証し、空欄なら既定値を返す。"""
+    value = values.get(column)
+    if value is None or pd.isna(value) or str(value).strip() == "":
+        return default
+    try:
+        result = float(str(value))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"BLE_pos.csv の {row_number} 行目の {column} は数値で指定してください。"
+        ) from exc
+    if not np.isfinite(result) or positive and result <= 0:
+        condition = "有限な正の値" if positive else "有限値"
+        raise ValueError(
+            f"BLE_pos.csv の {row_number} 行目の {column} は"
+            f"{condition}で指定してください。"
+        )
+    return result
+
+
 def _load_position_records(data_path: str | Path) -> tuple[_BlePositionRecord, ...]:
     """BLE_pos.csvから端末照合情報と任意の既知座標を読み込む。"""
     path = Path(data_path)
@@ -145,6 +178,38 @@ def _load_position_records(data_path: str | Path) -> tuple[_BlePositionRecord, .
                 f"BLE_pos.csv の {row_number} 行目は pixel_x と pixel_y を"
                 "両方入力するか、両方空欄にしてください。"
             )
+        has_path_loss_override = any(
+            column in values
+            and not pd.isna(values[column])
+            and str(values[column]).strip() != ""
+            for column in ("tx_power_dbm", "path_loss_n", "rssi_sigma_db")
+        )
+        path_loss_model = (
+            PathLossModel(
+                _optional_model_value(
+                    values,
+                    "tx_power_dbm",
+                    BLE_PATH_LOSS_TX_POWER_DBM,
+                    row_number,
+                ),
+                _optional_model_value(
+                    values,
+                    "path_loss_n",
+                    BLE_PATH_LOSS_N,
+                    row_number,
+                    positive=True,
+                ),
+                _optional_model_value(
+                    values,
+                    "rssi_sigma_db",
+                    BLE_RSSI_SIGMA_DB,
+                    row_number,
+                    positive=True,
+                ),
+            )
+            if has_path_loss_override
+            else None
+        )
         records.append(
             _BlePositionRecord(
                 beacon_id,
@@ -153,6 +218,7 @@ def _load_position_records(data_path: str | Path) -> tuple[_BlePositionRecord, .
                 raw_data_suffix,
                 pixel_x,
                 pixel_y,
+                path_loss_model,
             )
         )
     return tuple(records)
@@ -161,7 +227,12 @@ def _load_position_records(data_path: str | Path) -> tuple[_BlePositionRecord, .
 def load_ble_landmarks(data_path: str | Path) -> tuple[Landmark, ...]:
     """BLE_pos.csvから座標が確定しているランドマークだけを返す。"""
     return tuple(
-        Landmark(record.beacon_id, record.pixel_x, record.pixel_y)
+        Landmark(
+            record.beacon_id,
+            record.pixel_x,
+            record.pixel_y,
+            path_loss_model=record.path_loss_model,
+        )
         for record in _load_position_records(data_path)
         if record.pixel_x is not None and record.pixel_y is not None
     )
@@ -308,6 +379,12 @@ def load_ble_observations(
         )
         for row in dataframe.itertuples(index=False)
     )
+
+
+def is_logger_ble_data(data_path: str | Path) -> bool:
+    """BLE CSV が Thingsup 形式かを列名だけで判定する。"""
+    dataframe = _read_csv(Path(data_path), "BLE データ")
+    return set(BLE_LOGGER_REQUIRED_COLUMNS).issubset(dataframe.columns)
 
 
 def group_by_timestamp(

@@ -17,7 +17,7 @@ from ..common.lib.models import (
     FloorMap,
     LandmarkCorrection,
     LandmarkCorrectionResult,
-    LandmarkDetection,
+    LandmarkObservation,
     ParticleFilterResult,
     PreparedPdrSteps,
     TrajectoryResult,
@@ -41,7 +41,7 @@ def _attach_landmark_timing(
     prepared: PreparedPdrSteps,
     floormap: FloorMap,
     landmark_settings: BleLandmarkSettings,
-    detections: tuple[LandmarkDetection, ...],
+    detections: tuple[LandmarkObservation, ...],
     diagnostics: list[ParticleFilterStepDiagnostics],
     events: list[LandmarkCorrection],
 ) -> tuple[list[ParticleFilterStepDiagnostics], list[LandmarkCorrection]]:
@@ -57,12 +57,14 @@ def _attach_landmark_timing(
         prepared.t_at_steps,
         landmark_meters,
     )
-    timing_by_detection: dict[LandmarkDetection, float] = {}
+    timing_by_detection: dict[tuple[float, str, float], float] = {}
     for detection in detections:
         landmark_xy = landmark_meters.get(detection.beacon_id)
         if landmark_xy is None:
             continue
-        timing_by_detection[detection] = evaluate_landmark_timing(
+        timing_by_detection[
+            (detection.timestamp_s, detection.beacon_id, detection.rssi_dbm)
+        ] = evaluate_landmark_timing(
             prepared.trajectory,
             prepared.t_at_steps,
             detection.timestamp_s,
@@ -75,7 +77,13 @@ def _attach_landmark_timing(
         updated_diagnostics.append(
             replace(
                 diagnostic,
-                landmark_nearest_delta_s=timing_by_detection.get(step_detection),
+                landmark_nearest_delta_s=timing_by_detection.get(
+                    (
+                        step_detection.timestamp_s,
+                        step_detection.beacon_id,
+                        step_detection.rssi_dbm,
+                    )
+                ),
             )
             if step_detection is not None
             else diagnostic
@@ -88,7 +96,7 @@ def _attach_landmark_timing(
             )
             ** 0.5,
             nearest_approach_delta_s=timing_by_detection.get(
-                LandmarkDetection(event.timestamp_s, event.beacon_id, event.rssi_dbm)
+                (event.timestamp_s, event.beacon_id, event.rssi_dbm)
             ),
         )
         for event in events
@@ -101,7 +109,7 @@ def run_particle(
     floormap: FloorMap,
     settings: ParticleSettings,
     *,
-    detections: tuple[LandmarkDetection, ...] | None = None,
+    detections: tuple[LandmarkObservation, ...] | None = None,
     landmark_settings: BleLandmarkSettings | None = None,
 ) -> TrajectoryResult:
     """準備済みの歩列へ地図拘束を適用する。"""
@@ -173,6 +181,7 @@ def run_particle(
             rssi_threshold_dbm=landmark_settings.rssi_threshold_dbm,
             data_path=str(landmark_settings.data_path),
             detections=detections,
+            landmarks=landmark_settings.landmarks,
         )
     return TrajectoryResult(
         trajectory=trajectory,

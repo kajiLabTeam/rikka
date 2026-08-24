@@ -397,6 +397,10 @@ def _build_landmark_corrections_dataframe(
         "anchor_heading_deg",
         "anchor_heading_sigma_deg",
         "anchor_heading_bidirectional",
+        "estimated_distance_m",
+        "correction_mode",
+        "warp_start_step",
+        "warp_span_m",
     ]
     rows: list[dict[str, object]] = [
         {
@@ -418,6 +422,10 @@ def _build_landmark_corrections_dataframe(
             "anchor_heading_deg": correction.anchor_heading_deg,
             "anchor_heading_sigma_deg": correction.anchor_heading_sigma_deg,
             "anchor_heading_bidirectional": correction.anchor_heading_bidirectional,
+            "estimated_distance_m": correction.estimated_distance_m,
+            "correction_mode": correction.correction_mode,
+            "warp_start_step": correction.warp_start_step,
+            "warp_span_m": correction.warp_span_m,
         }
         for correction in landmark.corrections
     ]
@@ -454,6 +462,10 @@ def _build_landmark_corrections_dataframe(
                 "anchor_heading_deg": np.nan,
                 "anchor_heading_sigma_deg": np.nan,
                 "anchor_heading_bidirectional": False,
+                "estimated_distance_m": getattr(detection, "distance_m", np.nan),
+                "correction_mode": np.nan,
+                "warp_start_step": np.nan,
+                "warp_span_m": np.nan,
             }
         )
     return pd.DataFrame(rows, columns=columns)

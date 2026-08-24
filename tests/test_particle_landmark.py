@@ -19,7 +19,12 @@ from rikka.common.config import (
     PF_LANDMARK_RESET_SPREAD_RATIO,
     PF_LANDMARK_SIGMA_M,
 )
-from rikka.common.lib.models import FloorMap, LandmarkDetection, TrajectoryResult
+from rikka.common.lib.models import (
+    FloorMap,
+    LandmarkDetection,
+    LandmarkRange,
+    TrajectoryResult,
+)
 from rikka.common.lib.sensors import load_sensor_data
 from rikka.common.settings import BleLandmarkSettings, ParticleSettings, PdrSettings
 from rikka.particle.lib.landmark import (
@@ -63,6 +68,14 @@ def particle_landmark_results() -> dict[str, TrajectoryResult]:
         "beacon_1",
         -45.0,
     )
+    range_detection = LandmarkRange(
+        prepared.t_at_steps[20],
+        "beacon_1",
+        -70.0,
+        3.55,
+        2.45,
+        -70.0,
+    )
     hybrid_detection = LandmarkDetection(
         prepared.t_at_steps[17],
         "beacon_1",
@@ -92,6 +105,13 @@ def particle_landmark_results() -> dict[str, TrajectoryResult]:
             floormap,
             ParticleSettings(landmark_mode="observation", **base_settings),
             detections=(detection,),
+            landmark_settings=landmark_settings,
+        ),
+        "ranging": run_particle(
+            prepared,
+            floormap,
+            ParticleSettings(landmark_mode="ranging", **base_settings),
+            detections=(range_detection,),
             landmark_settings=landmark_settings,
         ),
         "reset": run_particle(
@@ -172,6 +192,20 @@ def test_landmark_likelihood_is_one_at_center_and_approaches_floor() -> None:
 
     assert likelihood[0] == pytest.approx(1.0)
     assert likelihood[1] == pytest.approx(0.05)
+
+
+def test_particle_result_keeps_landmarks_for_plot(
+    particle_landmark_results: dict[str, TrajectoryResult],
+) -> None:
+    """PF結果が登録済みBLE座標を描画層まで保持する。"""
+    result = particle_landmark_results["ranging"]
+
+    assert result.landmark is not None
+    assert [item.beacon_id for item in result.landmark.landmarks] == [
+        "beacon_1",
+        "beacon_2",
+        "beacon_3",
+    ]
 
 
 def test_landmark_likelihood_floor_prevents_zero_mass() -> None:
@@ -311,6 +345,20 @@ def test_landmark_mode_none_matches_baseline_exactly(
         np.asarray(baseline.particle.all_particles),
         np.asarray(disabled.particle.all_particles),
     )
+
+
+def test_ranging_sequence_reflects_observation_before_detection(
+    particle_landmark_results: dict[str, TrajectoryResult],
+) -> None:
+    """rangingは祖先経路を選び、検出歩より前の代表位置にも観測を反映する。"""
+    baseline = np.asarray(particle_landmark_results["baseline"].trajectory)
+    ranging = particle_landmark_results["ranging"]
+
+    assert not np.array_equal(baseline[:20], np.asarray(ranging.trajectory)[:20])
+    assert ranging.particle is not None
+    assert {item.trajectory_mode for item in ranging.particle.diagnostics} == {
+        "sequence_map_ancestry"
+    }
 
 
 def test_observation_keeps_step_continuity_around_landmark(

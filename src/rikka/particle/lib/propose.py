@@ -14,10 +14,14 @@
 import numpy as np
 
 from ...common.config import (
+    BLE_PATH_LOSS_N,
+    BLE_PATH_LOSS_TX_POWER_DBM,
+    BLE_RSSI_SIGMA_DB,
     SIDESTEP_LENGTH_SCALE,
     TURNING_LENGTH_SCALE,
 )
-from ...particle.lib.landmark import landmark_likelihood
+from ...common.lib.models import LandmarkRange, PathLossModel
+from ...particle.lib.landmark import landmark_likelihood, landmark_range_likelihood
 from ...particle.lib.map_constraints import (
     _evaluate_particle_transitions,
 )
@@ -69,6 +73,26 @@ def _resolve_landmark_observation(ctx: ParticleRuntime) -> None:
             )
         )
     )
+    if ctx.landmark_mode == "ranging":
+        if not isinstance(ctx.landmark_detection, LandmarkRange):
+            raise ValueError("ranging には距離付き BLE 観測が必要です。")
+        model = ctx.landmark_definition.path_loss_model or PathLossModel(
+            BLE_PATH_LOSS_TX_POWER_DBM,
+            BLE_PATH_LOSS_N,
+            BLE_RSSI_SIGMA_DB,
+        )
+        ctx.landmark_likelihood = landmark_range_likelihood(
+            ctx.proposed_particles,
+            ctx.landmark_xy,
+            ctx.landmark_detection.smoothed_rssi_dbm,
+            model,
+            ctx.landmark_likelihood_floor,
+        )
+        ctx.landmark_likelihood_mean = float(
+            np.sum(normalized * ctx.landmark_likelihood)
+        )
+        ctx.landmark_applied = True
+        return
     if ctx.landmark_definition.position_sigma_m is not None:
         return
     if ctx.landmark_mode not in {"observation", "hybrid"}:

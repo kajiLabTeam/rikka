@@ -55,7 +55,7 @@ from ...common.config import (
 from ...common.lib.models import (
     Landmark,
     LandmarkCorrection,
-    LandmarkDetection,
+    LandmarkObservation,
     StepHeading,
     StepMotionEvidence,
     StepMotionPosterior,
@@ -132,7 +132,7 @@ def run_particle_steps(
     preserve_recovery_branches: bool = False,
     motion_predictive_weight_power: float = PF_MOTION_PREDICTIVE_WEIGHT_POWER,
     path_selection: str = PF_PATH_SELECTION,
-    landmark_detections: tuple[LandmarkDetection, ...] = (),
+    landmark_detections: tuple[LandmarkObservation, ...] = (),
     landmarks: tuple[Landmark, ...] = (),
     landmark_mode: str = PF_LANDMARK_MODE,
     landmark_sigma_m: float = PF_LANDMARK_SIGMA_M,

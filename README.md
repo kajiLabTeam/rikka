@@ -121,7 +121,23 @@ uv run rikka sensor
 既知座標に置いた BLE ビーコンの RSSI が閾値以上になったとき、通常 PDR または
 particle filter にランドマーク位置を反映できます。BLE 測位自体は既定で無効です。
 
-実測データがない場合は、センサー CSV と同じ時間軸のサンプルを先に生成します。
+実測では計測ディレクトリに `BLE.csv`、`BLE_pos.csv`、`walk_config.csv` を置きます。
+起点・方位を計測ごとに解決してから、PF のRSSI測距尤度を使います。
+
+```sh
+uv run python agent/agent_diagnose_ble_ranging.py \
+  -d input/senser_data_withBLE/natsuki/WithBLE_1
+uv run rikka particle \
+  -d input/senser_data_withBLE/natsuki/WithBLE_1 \
+  --ble-landmark --pf-landmark-mode ranging --no-plot
+```
+
+`walk_config.csv` がある場合の解決順は、CLI明示値、計測設定、共通既定値です。
+診断は `corr(RSSI, log10(distance)) <= -0.5` かつパスロス係数
+`1.5 <= n <= 4.0` を合格条件とします。RSSIから逆算した探索起点は検算用であり、
+実測起点の代わりにはしません。
+
+実測データがない場合は、回帰テスト用サンプルを先に生成できます。
 
 ```sh
 uv run rikka ble-sample
@@ -152,7 +168,8 @@ BLE CSV は次の3列を持ちます。
 `BLE_LANDMARKS_PX` に `(beacon_id, pixel_x, pixel_y)` で設定します。
 `pixel_x` と `pixel_y` は `--origin-px` と同じ、フロアマップ画像の左上を
 `(0, 0)` とするピクセル座標です。補正時に `--origin-px` と `--scale` を
-使って PDR のメートル座標へ変換します。既定の検出下限は -55 dBm です。
+使って PDR のメートル座標へ変換します。既定の検出下限は -70 dBm です。
+ピーク時刻は5サンプルの移動中央値で安定化します。
 
 改札・自動ドア・踊り場のように、通過した事実から位置を確定できる地点は
 `BLE_LANDMARK_ANCHORS` へ追加します。既定値は空で、通常ランドマークの挙動には
@@ -174,17 +191,22 @@ BLE_LANDMARK_ANCHORS = (
 - `--ble-landmark`: BLE 補正を有効化
 - `--ble-data PATH`: BLE CSV を指定
 - `--ble-rssi-threshold DBM`: 検出下限を変更
+- `--ble-release-margin DB` / `--ble-release-streak N`: ラッチ解除条件
+- `--ble-sync-window S`: 同時受信としてまとめる時刻窓
+- `--ble-correction snap|warp`: 通常PDRの補正方式。`warp` は直前拘束からの
+  累積歩行距離比で残差を過去の歩へ配分します。
 
 実測値へ差し替える場合は、同じ3列と経過秒の時間軸へ整形し、
 `--ble-data <実測CSV>` を指定します。絶対時刻だけの場合は、phyphox の
 `meta/time.csv` にある START の `system time` を引いて経過秒へ変換してください。
-検出時刻には、RSSIが閾値を超えた区間の立ち上がりではなく最大RSSIの時刻を使います。
+Thingsup形式を `--ble-data` で明示した場合、同じディレクトリに `BLE_pos.csv` が
+無ければ入力エラーになります。既定ランドマークへの無警告フォールバックは行いません。
 
 BLE 有効時は `output/<timestamp>/landmark_corrections.csv` に検出時刻、RSSI、
 補正前座標、ランドマーク座標、補正後座標、検出距離、最接近時間差、アンカーの
 位置・方位設定を保存します。
-`trajectory.png` には
-補正前後の軌跡、ランドマーク、補正地点を重ねて描画します。
+`trajectory.png`（PFでは `pf_trajectory.png`）には、`BLE_pos.csv` で座標が
+確定した全ビーコンを星印で表示し、補正前後の軌跡と補正地点を重ねて描画します。
 最終歩より後で補正できなかった検出は `step=-1`、`applied=False` としてCSVに残ります。
 
 particle filter では `--pf-landmark-mode` で反映方式を選びます。
@@ -200,6 +222,10 @@ particle filter では `--pf-landmark-mode` で反映方式を選びます。
   それより遠く、かつ距離が2mを超える場合はresetを使います。通常resetの距離が
   5mを超える検出は安全のため再配置せず、通常のPF更新を続けます。確定
   ランドマークはこの判定より優先されます。
+- `ranging`: RSSI領域でパスロスモデルの期待値と観測値を比較します。弱いRSSIは
+  遠い粒子を支持し、resetを行わないため、祖先経路の再重み付けで検出前の軌跡にも
+  観測が反映されます。`pf-path-selection=sequence` では合法な単一祖先経路を選びます。
+  実測BLEではこの方式を使用します。
 
 観測尤度の既定値は `sigma=1.0m`、`floor=0.05` です。合成BLEと対応する正解軌跡の
 6 seed評価で選んだ値なので、実測BLE取得後には再校正が必要です。PF の
@@ -213,7 +239,7 @@ particle filter では `--pf-landmark-mode` で反映方式を選びます。
 - `landmark/lib/`: 検出元や推定方式に依存しない座標変換、歩割り当て、時間整合評価
 - `pdr/lib/landmark_correction.py`: 通常 PDR 固有の完全座標補正
 - `particle/lib/landmark.py`: PF 固有の観測尤度と reset 再配置
-- `common/lib/models.py`: PDR / PF が共有できる `LandmarkDetection` などの境界型
+- `common/lib/models.py`: PDR / PF が共有する `LandmarkRange`、`PathLossModel` など
 
 `ble.pipeline.run_ble_landmark_detection()` は軌跡を変更せず、検出列だけを返します。
 通常 PDR は検出を完全座標補正に使い、PF は同じ検出を観測尤度または再配置へ使います。
