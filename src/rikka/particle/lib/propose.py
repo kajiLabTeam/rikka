@@ -20,7 +20,7 @@ from ...common.config import (
     SIDESTEP_LENGTH_SCALE,
     TURNING_LENGTH_SCALE,
 )
-from ...common.lib.models import LandmarkRange, PathLossModel
+from ...common.lib.models import PathLossModel
 from ...particle.lib.landmark import landmark_likelihood, landmark_range_likelihood
 from ...particle.lib.map_constraints import (
     _evaluate_particle_transitions,
@@ -41,6 +41,7 @@ from .state import ParticleRuntime
 def _resolve_landmark_observation(ctx: ParticleRuntime) -> None:
     """現在歩のランドマークと、observation方式の尤度・診断値を解決する。"""
     ctx.landmark_detection = None
+    ctx.landmark_observations = ()
     ctx.landmark_definition = None
     ctx.landmark_xy = None
     ctx.landmark_likelihood = None
@@ -51,10 +52,17 @@ def _resolve_landmark_observation(ctx: ParticleRuntime) -> None:
     if ctx.landmark_mode == "none":
         return
     ctx.landmark_detection = ctx.landmark_by_step.get(ctx.step_number)
-    if ctx.landmark_detection is None:
+    if ctx.landmark_mode == "ranging":
+        ctx.landmark_observations = ctx.landmark_observations_by_step.get(
+            ctx.step_number, ()
+        )
+    if ctx.landmark_detection is None and not ctx.landmark_observations:
         return
-    ctx.landmark_definition = ctx.landmark_definitions[ctx.landmark_detection.beacon_id]
-    ctx.landmark_xy = ctx.landmark_meters[ctx.landmark_detection.beacon_id]
+    if ctx.landmark_detection is not None:
+        ctx.landmark_definition = ctx.landmark_definitions[
+            ctx.landmark_detection.beacon_id
+        ]
+        ctx.landmark_xy = ctx.landmark_meters[ctx.landmark_detection.beacon_id]
     base_weights = weight(
         ctx.weights_before,
         ctx.valid_transition,
@@ -74,25 +82,34 @@ def _resolve_landmark_observation(ctx: ParticleRuntime) -> None:
         )
     )
     if ctx.landmark_mode == "ranging":
-        if not isinstance(ctx.landmark_detection, LandmarkRange):
-            raise ValueError("ranging には距離付き BLE 観測が必要です。")
-        model = ctx.landmark_definition.path_loss_model or PathLossModel(
-            BLE_PATH_LOSS_TX_POWER_DBM,
-            BLE_PATH_LOSS_N,
-            BLE_RSSI_SIGMA_DB,
-        )
-        ctx.landmark_likelihood = landmark_range_likelihood(
-            ctx.proposed_particles,
-            ctx.landmark_xy,
-            ctx.landmark_detection.smoothed_rssi_dbm,
-            model,
-            ctx.landmark_likelihood_floor,
+        log_likelihood = np.zeros(ctx.n_particles, dtype=float)
+        for observation in ctx.landmark_observations:
+            definition = ctx.landmark_definitions[observation.beacon_id]
+            model = definition.path_loss_model or PathLossModel(
+                BLE_PATH_LOSS_TX_POWER_DBM,
+                BLE_PATH_LOSS_N,
+                BLE_RSSI_SIGMA_DB,
+            )
+            likelihood = landmark_range_likelihood(
+                ctx.proposed_particles,
+                ctx.landmark_meters[observation.beacon_id],
+                observation.smoothed_rssi_dbm,
+                model,
+                ctx.landmark_likelihood_floor,
+            )
+            log_likelihood += np.log(likelihood)
+        ctx.landmark_likelihood = np.exp(
+            ctx.landmark_range_weight_power * log_likelihood
         )
         ctx.landmark_likelihood_mean = float(
             np.sum(normalized * ctx.landmark_likelihood)
         )
-        ctx.landmark_applied = True
+        ctx.landmark_applied = bool(ctx.landmark_observations) or (
+            ctx.landmark_detection is not None
+        )
         return
+    if ctx.landmark_definition is None or ctx.landmark_xy is None:
+        raise RuntimeError("内部エラー: 検出ランドマークの定義がありません。")
     if ctx.landmark_definition.position_sigma_m is not None:
         return
     if ctx.landmark_mode not in {"observation", "hybrid"}:

@@ -18,10 +18,16 @@ import numpy as np
 from .config import (
     BLE_ANCHOR_WARN_JUMP_M,
     BLE_DATA_PATH,
+    BLE_DETECT_COOLDOWN_S,
+    BLE_DETECT_MIN_PROMINENCE_DB,
+    BLE_DETECT_MIN_SAMPLES,
     BLE_LANDMARK_ANCHORS,
     BLE_LANDMARK_ENABLED,
     BLE_LANDMARKS_PX,
+    BLE_MAX_CORRECTION_M,
+    BLE_MAX_WARP_SPAN_M,
     BLE_PDR_CORRECTION_MODE,
+    BLE_PREFLIGHT_MODE,
     BLE_RSSI_RELEASE_MARGIN_DB,
     BLE_RSSI_RELEASE_STREAK,
     BLE_RSSI_SMOOTHING_SAMPLES,
@@ -48,6 +54,7 @@ from .config import (
     PF_LANDMARK_LIKELIHOOD_FLOOR,
     PF_LANDMARK_MAX_JUMP_M,
     PF_LANDMARK_MODE,
+    PF_LANDMARK_RANGE_WEIGHT_POWER,
     PF_LANDMARK_RESET_HEADING_SIGMA,
     PF_LANDMARK_RESET_MIN_DISTANCE_M,
     PF_LANDMARK_RESET_SIGMA_M,
@@ -70,6 +77,7 @@ from .config import (
 from .lib.models import Landmark
 from .lib.validation import (
     BLE_PDR_CORRECTION_MODES,
+    BLE_PREFLIGHT_MODES,
     BLE_SAMPLE_MODES,
     FORWARD_HEADING_SOURCES,
     GYRO_BIAS_METHODS,
@@ -210,6 +218,7 @@ class ParticleSettings:
     landmark_mode: str = PF_LANDMARK_MODE
     landmark_sigma_m: float = PF_LANDMARK_SIGMA_M
     landmark_likelihood_floor: float = PF_LANDMARK_LIKELIHOOD_FLOOR
+    landmark_range_weight_power: float = PF_LANDMARK_RANGE_WEIGHT_POWER
     landmark_reset_sigma_m: float = PF_LANDMARK_RESET_SIGMA_M
     landmark_max_jump_m: float = PF_LANDMARK_MAX_JUMP_M
     landmark_reset_spread_ratio: float = PF_LANDMARK_RESET_SPREAD_RATIO
@@ -257,6 +266,9 @@ class ParticleSettings:
             raise ValueError(
                 "landmark_likelihood_floor は 0 以上 1 未満を指定してください。"
             )
+        validate_non_negative_parameter(
+            "landmark_range_weight_power", self.landmark_range_weight_power
+        )
 
 
 def _build_landmarks_with_anchors(
@@ -321,7 +333,13 @@ class BleLandmarkSettings:
     release_streak: int = BLE_RSSI_RELEASE_STREAK
     sync_window_s: float = BLE_SYNC_WINDOW_S
     rssi_smoothing_samples: int = BLE_RSSI_SMOOTHING_SAMPLES
+    detect_min_samples: int = BLE_DETECT_MIN_SAMPLES
+    detect_cooldown_s: float = BLE_DETECT_COOLDOWN_S
+    detect_min_prominence_db: float = BLE_DETECT_MIN_PROMINENCE_DB
     correction_mode: str = BLE_PDR_CORRECTION_MODE
+    preflight_mode: str = BLE_PREFLIGHT_MODE
+    max_correction_m: float = BLE_MAX_CORRECTION_M
+    max_warp_span_m: float = BLE_MAX_WARP_SPAN_M
     landmarks: tuple[Landmark, ...] = field(
         default_factory=lambda: _build_landmarks_with_anchors(
             BLE_LANDMARKS_PX,
@@ -347,11 +365,20 @@ class BleLandmarkSettings:
             or self.rssi_smoothing_samples % 2 == 0
         ):
             raise ValueError("rssi_smoothing_samples は正の奇数にしてください。")
+        if self.detect_min_samples < 1:
+            raise ValueError("detect_min_samples は1以上にしてください。")
+        validate_non_negative_parameter("detect_cooldown_s", self.detect_cooldown_s)
+        validate_non_negative_parameter(
+            "detect_min_prominence_db", self.detect_min_prominence_db
+        )
         validate_choice(
             "ble_correction",
             self.correction_mode,
             BLE_PDR_CORRECTION_MODES,
         )
+        validate_choice("ble_preflight", self.preflight_mode, BLE_PREFLIGHT_MODES)
+        validate_positive_parameter("max_correction_m", self.max_correction_m)
+        validate_positive_parameter("max_warp_span_m", self.max_warp_span_m)
         validate_landmarks(
             tuple(
                 (item.beacon_id, item.pixel_x, item.pixel_y) for item in self.landmarks

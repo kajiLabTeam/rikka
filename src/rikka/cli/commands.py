@@ -17,11 +17,14 @@ import matplotlib.image as mpimg
 import numpy as np
 import pandas as pd
 
-from ..ble.pipeline import run_ble_landmark_detection
+from ..ble.pipeline import run_ble_ranging_input
 from ..common.config import (
     BLE_DATA_PATH,
     BLE_LANDMARK_ENABLED,
+    BLE_MAX_CORRECTION_M,
+    BLE_MAX_WARP_SPAN_M,
     BLE_PDR_CORRECTION_MODE,
+    BLE_PREFLIGHT_MODE,
     BLE_RSSI_RELEASE_MARGIN_DB,
     BLE_RSSI_RELEASE_STREAK,
     BLE_RSSI_THRESHOLD_DBM,
@@ -35,6 +38,7 @@ from ..common.config import (
     INITIAL_DIRECTION,
     MOTION_ESTIMATION,
     PF_LANDMARK_MODE,
+    PF_LANDMARK_RANGE_WEIGHT_POWER,
     PF_MOTION_PREDICTIVE_WEIGHT_POWER,
     PF_NUM_PARTICLES,
     PF_PATH_SELECTION,
@@ -147,6 +151,7 @@ def run(
     motion_predictive_weight_power: float = PF_MOTION_PREDICTIVE_WEIGHT_POWER,
     pf_path_selection: str = PF_PATH_SELECTION,
     pf_landmark_mode: str = PF_LANDMARK_MODE,
+    pf_landmark_range_weight_power: float = PF_LANDMARK_RANGE_WEIGHT_POWER,
     ble_landmark: bool = BLE_LANDMARK_ENABLED,
     ble_data_path: str | Path = BLE_DATA_PATH,
     ble_rssi_threshold: float = BLE_RSSI_THRESHOLD_DBM,
@@ -154,6 +159,9 @@ def run(
     ble_release_margin: float = BLE_RSSI_RELEASE_MARGIN_DB,
     ble_release_streak: int = BLE_RSSI_RELEASE_STREAK,
     ble_sync_window: float = BLE_SYNC_WINDOW_S,
+    ble_preflight: str = BLE_PREFLIGHT_MODE,
+    ble_max_correction: float = BLE_MAX_CORRECTION_M,
+    ble_max_warp_span: float = BLE_MAX_WARP_SPAN_M,
     ble_landmarks: tuple[Landmark, ...] | None = None,
 ) -> pd.DataFrame:
     """後方互換引数を設定へ変換し、解析と成果物保存を実行する。"""
@@ -169,6 +177,9 @@ def run(
             release_streak=ble_release_streak,
             sync_window_s=ble_sync_window,
             correction_mode=ble_correction,
+            preflight_mode=ble_preflight,
+            max_correction_m=ble_max_correction,
+            max_warp_span_m=ble_max_warp_span,
         )
         if ble_landmarks is None
         else BleLandmarkSettings(
@@ -179,6 +190,9 @@ def run(
             release_streak=ble_release_streak,
             sync_window_s=ble_sync_window,
             correction_mode=ble_correction,
+            preflight_mode=ble_preflight,
+            max_correction_m=ble_max_correction,
+            max_warp_span_m=ble_max_warp_span,
             landmarks=ble_landmarks,
         )
     )
@@ -228,6 +242,7 @@ def run(
         motion_predictive_weight_power=motion_predictive_weight_power,
         path_selection=pf_path_selection,
         landmark_mode=pf_landmark_mode,
+        landmark_range_weight_power=pf_landmark_range_weight_power,
     )
     output_settings = OutputSettings(
         plot=plot,
@@ -248,8 +263,8 @@ def run(
         _validate_floormap_origin(map_gray, origin_px)
         _validate_landmark_pixels(map_gray, landmark_settings.landmarks)
 
-    particle_detections = (
-        run_ble_landmark_detection(landmark_settings) if use_particle_filter else None
+    particle_ble = (
+        run_ble_ranging_input(landmark_settings) if use_particle_filter else None
     )
     result = run_pdr(pdr_settings, df_acc, df_gyro, floormap)
     if use_particle_filter:
@@ -257,7 +272,10 @@ def run(
             result.prepared,
             floormap,
             particle_settings,
-            detections=particle_detections,
+            detections=None if particle_ble is None else particle_ble.detections,
+            ranging_observations=(
+                None if particle_ble is None else particle_ble.observations
+            ),
             landmark_settings=landmark_settings,
         )
     _print_prepared_summary(result.prepared, pdr_settings)

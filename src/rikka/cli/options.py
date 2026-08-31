@@ -23,7 +23,10 @@ import click
 from ..common.config import (
     BLE_DATA_PATH,
     BLE_LANDMARK_ENABLED,
+    BLE_MAX_CORRECTION_M,
+    BLE_MAX_WARP_SPAN_M,
     BLE_PDR_CORRECTION_MODE,
+    BLE_PREFLIGHT_MODE,
     BLE_RSSI_RELEASE_MARGIN_DB,
     BLE_RSSI_RELEASE_STREAK,
     BLE_RSSI_THRESHOLD_DBM,
@@ -58,6 +61,7 @@ from ..common.config import (
 from ..common.lib.models import Landmark
 from ..common.lib.validation import (
     BLE_PDR_CORRECTION_MODES,
+    BLE_PREFLIGHT_MODES,
     BLE_SAMPLE_MODES,
     BLE_SAMPLE_SOURCES,
     FORWARD_HEADING_SOURCES,
@@ -81,6 +85,10 @@ _BLE_LANDMARK_DEFAULT = BLE_LANDMARK_ENABLED
 _BLE_RSSI_THRESHOLD_DEFAULT = BLE_RSSI_THRESHOLD_DBM
 _BLE_CORRECTION_DEFAULT = BLE_PDR_CORRECTION_MODE
 _BLE_CORRECTION_CHOICES = BLE_PDR_CORRECTION_MODES
+_BLE_PREFLIGHT_DEFAULT = BLE_PREFLIGHT_MODE
+_BLE_PREFLIGHT_CHOICES = BLE_PREFLIGHT_MODES
+_BLE_MAX_CORRECTION_DEFAULT = BLE_MAX_CORRECTION_M
+_BLE_MAX_WARP_SPAN_DEFAULT = BLE_MAX_WARP_SPAN_M
 _BLE_RELEASE_MARGIN_DEFAULT = BLE_RSSI_RELEASE_MARGIN_DB
 _BLE_RELEASE_STREAK_DEFAULT = BLE_RSSI_RELEASE_STREAK
 _BLE_SYNC_WINDOW_DEFAULT = BLE_SYNC_WINDOW_S
@@ -280,6 +288,29 @@ def _resolve_measurement_settings(
 
 def _common_options(f: click.decorators.FC) -> click.decorators.FC:
     """run / particle コマンド共通オプションをまとめたデコレータ。"""
+    f = click.option(
+        "--ble-max-warp-span",
+        type=float,
+        default=_BLE_MAX_WARP_SPAN_DEFAULT,
+        show_default=True,
+        callback=_validate_cli_positive_float,
+        help="warpで一度に配分する軌跡区間の上限 [m]",
+    )(f)
+    f = click.option(
+        "--ble-max-correction",
+        type=float,
+        default=_BLE_MAX_CORRECTION_DEFAULT,
+        show_default=True,
+        callback=_validate_cli_positive_float,
+        help="1回のBLE補正移動量の上限 [m]",
+    )(f)
+    f = click.option(
+        "--ble-preflight",
+        type=click.Choice(_BLE_PREFLIGHT_CHOICES),
+        default=_BLE_PREFLIGHT_DEFAULT,
+        show_default=True,
+        help="RSSI距離整合FAIL時の扱い",
+    )(f)
     f = click.option(
         "--smoothing",
         "smoothing_mode",
@@ -526,6 +557,9 @@ def _run_pdr(
     ble_release_margin: float,
     ble_release_streak: int,
     ble_sync_window: float,
+    ble_preflight: str,
+    ble_max_correction: float,
+    ble_max_warp_span: float,
 ) -> None:
     from ..common.lib.sensors import load_sensor_data  # noqa: PLC0415
     from .commands import run as _run  # noqa: PLC0415
@@ -576,6 +610,9 @@ def _run_pdr(
         ble_release_margin=ble_release_margin,
         ble_release_streak=ble_release_streak,
         ble_sync_window=ble_sync_window,
+        ble_preflight=ble_preflight,
+        ble_max_correction=ble_max_correction,
+        ble_max_warp_span=ble_max_warp_span,
         ble_landmarks=ble_landmarks,
     )
 
@@ -613,6 +650,9 @@ def run(
     ble_release_margin: float,
     ble_release_streak: int,
     ble_sync_window: float,
+    ble_preflight: str,
+    ble_max_correction: float,
+    ble_max_warp_span: float,
 ) -> None:
     """決定論的 PDR で歩行軌跡を推定する。"""
     _run_pdr(
@@ -645,6 +685,9 @@ def run(
         ble_release_margin,
         ble_release_streak,
         ble_sync_window,
+        ble_preflight,
+        ble_max_correction,
+        ble_max_warp_span,
     )
 
 
@@ -760,6 +803,9 @@ def particle(
     ble_release_margin: float,
     ble_release_streak: int,
     ble_sync_window: float,
+    ble_preflight: str,
+    ble_max_correction: float,
+    ble_max_warp_span: float,
     save_animation: bool,
     save_step_frames: bool,
     step_frames_range: tuple[int, int] | None,
@@ -833,6 +879,9 @@ def particle(
         ble_release_margin=ble_release_margin,
         ble_release_streak=ble_release_streak,
         ble_sync_window=ble_sync_window,
+        ble_preflight=ble_preflight,
+        ble_max_correction=ble_max_correction,
+        ble_max_warp_span=ble_max_warp_span,
         ble_landmarks=ble_landmarks,
     )
 

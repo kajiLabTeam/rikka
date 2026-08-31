@@ -17,7 +17,7 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from ...common.lib.models import LandmarkObservation
+from ...common.lib.models import LandmarkObservation, LandmarkRange
 
 
 def assign_detections_to_steps(
@@ -55,4 +55,41 @@ def build_step_landmark_map(
         ]
         if registered:
             result[step_index + 1] = registered[-1]
+    return result
+
+
+def build_step_observation_map(
+    observations: tuple[LandmarkRange, ...],
+    t_at_steps: np.ndarray | Sequence[float],
+    landmark_meters: dict[str, tuple[float, float]],
+) -> dict[int, tuple[LandmarkRange, ...]]:
+    """全測距観測を歩・ビーコンごとのRSSI中央値へ集約する。"""
+    assigned, _ = assign_detections_to_steps(observations, t_at_steps)
+    result: dict[int, tuple[LandmarkRange, ...]] = {}
+    for step_index, step_observations in assigned.items():
+        grouped: dict[str, list[LandmarkRange]] = {}
+        for observation in step_observations:
+            if (
+                isinstance(observation, LandmarkRange)
+                and observation.beacon_id in landmark_meters
+            ):
+                grouped.setdefault(observation.beacon_id, []).append(observation)
+        medians = []
+        for beacon_id, rows in sorted(grouped.items()):
+            medians.append(
+                LandmarkRange(
+                    timestamp_s=float(np.median([item.timestamp_s for item in rows])),
+                    beacon_id=beacon_id,
+                    rssi_dbm=float(np.median([item.rssi_dbm for item in rows])),
+                    distance_m=float(np.median([item.distance_m for item in rows])),
+                    distance_sigma_m=float(
+                        np.median([item.distance_sigma_m for item in rows])
+                    ),
+                    smoothed_rssi_dbm=float(
+                        np.median([item.smoothed_rssi_dbm for item in rows])
+                    ),
+                )
+            )
+        if medians:
+            result[step_index + 1] = tuple(medians)
     return result

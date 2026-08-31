@@ -351,6 +351,25 @@ class LandmarkRange(NamedTuple):
 LandmarkObservation = LandmarkDetection | LandmarkRange
 
 
+@dataclass(frozen=True)
+class RangingConsistency:
+    """1ビーコンのRSSIと軌跡上距離の整合診断。"""
+
+    beacon_id: str
+    correlation: float | None
+    path_loss_n: float | None
+    rssi_sigma_db: float | None
+    passed: bool
+
+
+@dataclass(frozen=True)
+class BleRangingInput:
+    """検出イベントとPF測距用の全観測系列。"""
+
+    detections: tuple[LandmarkRange, ...]
+    observations: tuple[LandmarkRange, ...]
+
+
 class LandmarkCorrection(NamedTuple):
     """1 件の検出に対する補正前後の座標記録。
 
@@ -398,6 +417,7 @@ class LandmarkCorrectionResult:
     data_path: str
     detections: tuple[LandmarkObservation, ...] = ()
     landmarks: tuple[Landmark, ...] = ()
+    ranging_consistency: tuple[RangingConsistency, ...] = ()
 
 
 @dataclass(frozen=True)

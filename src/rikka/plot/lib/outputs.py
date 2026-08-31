@@ -401,7 +401,11 @@ def _build_landmark_corrections_dataframe(
         "correction_mode",
         "warp_start_step",
         "warp_span_m",
+        "ranging_corr",
+        "ranging_path_loss_n",
+        "ranging_passed",
     ]
+    consistency = {item.beacon_id: item for item in landmark.ranging_consistency}
     rows: list[dict[str, object]] = [
         {
             "step": correction.step_index,
@@ -426,6 +430,21 @@ def _build_landmark_corrections_dataframe(
             "correction_mode": correction.correction_mode,
             "warp_start_step": correction.warp_start_step,
             "warp_span_m": correction.warp_span_m,
+            "ranging_corr": (
+                consistency[correction.beacon_id].correlation
+                if correction.beacon_id in consistency
+                else np.nan
+            ),
+            "ranging_path_loss_n": (
+                consistency[correction.beacon_id].path_loss_n
+                if correction.beacon_id in consistency
+                else np.nan
+            ),
+            "ranging_passed": (
+                consistency[correction.beacon_id].passed
+                if correction.beacon_id in consistency
+                else np.nan
+            ),
         }
         for correction in landmark.corrections
     ]
@@ -466,6 +485,21 @@ def _build_landmark_corrections_dataframe(
                 "correction_mode": np.nan,
                 "warp_start_step": np.nan,
                 "warp_span_m": np.nan,
+                "ranging_corr": (
+                    consistency[detection.beacon_id].correlation
+                    if detection.beacon_id in consistency
+                    else np.nan
+                ),
+                "ranging_path_loss_n": (
+                    consistency[detection.beacon_id].path_loss_n
+                    if detection.beacon_id in consistency
+                    else np.nan
+                ),
+                "ranging_passed": (
+                    consistency[detection.beacon_id].passed
+                    if detection.beacon_id in consistency
+                    else np.nan
+                ),
             }
         )
     return pd.DataFrame(rows, columns=columns)

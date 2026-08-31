@@ -13,13 +13,16 @@
 
 from dataclasses import replace
 
+from ..ble.lib.ranging_check import run_ranging_preflight
 from ..common.lib.models import (
     FloorMap,
     LandmarkCorrection,
     LandmarkCorrectionResult,
     LandmarkObservation,
+    LandmarkRange,
     ParticleFilterResult,
     PreparedPdrSteps,
+    RangingConsistency,
     TrajectoryResult,
 )
 from ..common.settings import BleLandmarkSettings, ParticleSettings
@@ -110,6 +113,7 @@ def run_particle(
     settings: ParticleSettings,
     *,
     detections: tuple[LandmarkObservation, ...] | None = None,
+    ranging_observations: tuple[LandmarkRange, ...] | None = None,
     landmark_settings: BleLandmarkSettings | None = None,
 ) -> TrajectoryResult:
     """準備済みの歩列へ地図拘束を適用する。"""
@@ -118,6 +122,21 @@ def run_particle(
     path_comparisons: list[ParticlePathComparison] = []
     landmark_events: list[LandmarkCorrection] = []
     runtime_detections = () if detections is None else detections
+    runtime_ranging_observations = (
+        tuple(item for item in runtime_detections if isinstance(item, LandmarkRange))
+        if ranging_observations is None
+        else ranging_observations
+    )
+    consistency: tuple[RangingConsistency, ...] = ()
+    if detections is not None and landmark_settings is not None:
+        consistency = run_ranging_preflight(
+            landmark_settings,
+            floormap,
+            prepared.trajectory,
+            prepared.t_at_steps,
+            prepared.gx_mean,
+            prepared.gz_mean,
+        )
     trajectory, lengths, times, all_particles, headings = run_particle_steps(
         prepared.gx_mean,
         prepared.gz_mean,
@@ -138,10 +157,12 @@ def run_particle(
         stage_collector=stages,
         path_comparison_collector=path_comparisons,
         landmark_detections=runtime_detections,
+        landmark_ranging_observations=runtime_ranging_observations,
         landmarks=(() if landmark_settings is None else landmark_settings.landmarks),
         landmark_mode=settings.landmark_mode,
         landmark_sigma_m=settings.landmark_sigma_m,
         landmark_likelihood_floor=settings.landmark_likelihood_floor,
+        landmark_range_weight_power=settings.landmark_range_weight_power,
         landmark_reset_sigma_m=settings.landmark_reset_sigma_m,
         landmark_max_jump_m=settings.landmark_max_jump_m,
         landmark_reset_spread_ratio=settings.landmark_reset_spread_ratio,
@@ -182,6 +203,7 @@ def run_particle(
             data_path=str(landmark_settings.data_path),
             detections=detections,
             landmarks=landmark_settings.landmarks,
+            ranging_consistency=consistency,
         )
     return TrajectoryResult(
         trajectory=trajectory,

@@ -23,6 +23,7 @@ from ...common.lib.models import (
     Landmark,
     LandmarkCorrection,
     LandmarkObservation,
+    LandmarkRange,
     StepHeading,
     StepMotionEvidence,
     StepMotionPosterior,
@@ -92,10 +93,12 @@ class ParticleRuntime:
     motion_predictive_weight_power: float
     path_selection: str
     landmark_detections: tuple[LandmarkObservation, ...]
+    landmark_ranging_observations: tuple[LandmarkRange, ...]
     landmarks: tuple[Landmark, ...]
     landmark_mode: str
     landmark_sigma_m: float
     landmark_likelihood_floor: float
+    landmark_range_weight_power: float
     landmark_reset_sigma_m: float
     landmark_max_jump_m: float
     landmark_reset_spread_ratio: float
@@ -141,6 +144,10 @@ class ParticleRuntime:
     landmark_before_position: tuple[float, float] | None = field(init=False)
     landmark_applied: bool = field(init=False)
     landmark_by_step: dict[int, LandmarkObservation] = field(init=False)
+    landmark_observations_by_step: dict[int, tuple[LandmarkRange, ...]] = field(
+        init=False
+    )
+    landmark_observations: tuple[LandmarkRange, ...] = field(init=False)
     landmark_detection: LandmarkObservation | None = field(init=False)
     landmark_definition: Landmark | None = field(init=False)
     landmark_definitions: dict[str, Landmark] = field(init=False)

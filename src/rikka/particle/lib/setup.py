@@ -98,6 +98,9 @@ def setup(ctx: ParticleRuntime) -> None:
     ctx.motion_predictive_weight_power = validate_non_negative_parameter(
         "motion_predictive_weight_power", ctx.motion_predictive_weight_power
     )
+    ctx.landmark_range_weight_power = validate_non_negative_parameter(
+        "landmark_range_weight_power", ctx.landmark_range_weight_power
+    )
     if ctx.path_selection not in {"current", "sequence"}:
         raise ValueError("path_selection は current または sequence を指定してください")
     validate_choice("pf_landmark_mode", ctx.landmark_mode, PF_LANDMARK_MODES)
