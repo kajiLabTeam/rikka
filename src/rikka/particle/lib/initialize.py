@@ -16,7 +16,10 @@ import matplotlib.image as mpimg
 import numpy as np
 
 from ...common.lib.models import FloorMap
-from ...landmark.lib.assignment import build_step_landmark_map
+from ...landmark.lib.assignment import (
+    build_step_landmark_map,
+    build_step_observation_map,
+)
 from ...landmark.lib.coordinates import build_landmark_meter_map
 from ...particle.lib.map_constraints import (
     _normalize_floormap_gray,
@@ -151,6 +154,11 @@ def initialize(ctx: ParticleRuntime) -> None:
     ctx.landmark_definitions = {item.beacon_id: item for item in ctx.landmarks}
     ctx.landmark_by_step = build_step_landmark_map(
         ctx.landmark_detections,
+        ctx.raw_step_times,
+        ctx.landmark_meters,
+    )
+    ctx.landmark_observations_by_step = build_step_observation_map(
+        ctx.landmark_ranging_observations,
         ctx.raw_step_times,
         ctx.landmark_meters,
     )

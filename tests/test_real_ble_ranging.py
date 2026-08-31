@@ -119,6 +119,8 @@ def test_median_peak_selection_rejects_isolated_spike() -> None:
     )
     settings = BleLandmarkSettings(
         rssi_threshold_dbm=-70.0,
+        detect_min_samples=1,
+        detect_min_prominence_db=0.0,
         landmarks=(Landmark("b1", 0.0, 0.0),),
     )
 
@@ -126,6 +128,44 @@ def test_median_peak_selection_rejects_isolated_spike() -> None:
 
     assert detections[0].timestamp_s == 4.0
     assert detections[0].rssi_dbm == -63.0
+
+
+def test_robust_detection_replaces_cooldown_peak_and_rejects_weak_peak() -> None:
+    """cooldown内は強い接近を残し、閾値から6dB未満の弱い山を棄却する。"""
+    observations = tuple(
+        BleObservation(timestamp, beacon_id, rssi)
+        for timestamp, beacon_id, rssi in (
+            (-0.1, "b1", -80.0),
+            (0.0, "b1", -65.0),
+            (0.1, "b1", -64.0),
+            (0.2, "b1", -63.0),
+            (0.3, "b1", -80.0),
+            (0.4, "b1", -80.0),
+            (5.0, "b1", -59.0),
+            (5.1, "b1", -58.0),
+            (5.2, "b1", -59.0),
+            (5.3, "b1", -80.0),
+            (5.4, "b1", -80.0),
+            (6.0, "b1", -80.0),
+            (20.0, "b2", -68.0),
+            (20.1, "b2", -68.0),
+            (20.2, "b2", -68.0),
+            (20.3, "b2", -80.0),
+            (20.4, "b2", -80.0),
+        )
+    )
+    settings = BleLandmarkSettings(
+        rssi_threshold_dbm=-70.0,
+        rssi_smoothing_samples=3,
+        landmarks=(Landmark("b1", 0.0, 0.0), Landmark("b2", 1.0, 0.0)),
+    )
+
+    detections = detect_landmarks(observations, settings)
+
+    assert len(detections) == 1
+    assert detections[0].beacon_id == "b1"
+    assert 5.0 <= detections[0].timestamp_s <= 5.2
+    assert detections[0].rssi_dbm == -58.0
 
 
 def test_pdr_warp_distributes_residual_over_past_steps() -> None:
@@ -147,6 +187,25 @@ def test_pdr_warp_distributes_residual_over_past_steps() -> None:
     assert np.allclose(result.trajectory, [[0.0, 0.0], [2.0, 0.0], [4.0, 0.0]])
     assert result.corrections[0].warp_span_m == pytest.approx(2.0)
     assert result.corrections[0].correction_mode == "warp"
+
+
+def test_pdr_rejects_correction_over_safety_limit() -> None:
+    """補正移動量の上限超過は履歴だけを残し軌跡を変更しない。"""
+    result = apply_landmark_corrections(
+        [[0.0, 0.0], [1.0, 0.0]],
+        [1.0],
+        detections=(LandmarkRange(1.0, "b1", -59.0, 0.0, 0.1, -59.0),),
+        landmarks=(Landmark("b1", 10.0, 0.0),),
+        floormap=FloorMap("map.png", (0, 0), 1.0),
+        data_path="ble.csv",
+        rssi_threshold_dbm=-70.0,
+        gx_mean=0.0,
+        gz_mean=1.0,
+        max_correction_m=5.0,
+    )
+
+    assert result.trajectory == [[0.0, 0.0], [1.0, 0.0]]
+    assert not result.corrections[0].applied
 
 
 def test_ranging_likelihood_uses_weak_rssi_as_far_observation() -> None:

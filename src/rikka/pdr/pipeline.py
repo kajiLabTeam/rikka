@@ -13,6 +13,7 @@
 
 import pandas as pd
 
+from ..ble.lib.ranging_check import run_ranging_preflight
 from ..ble.pipeline import run_ble_landmark_detection
 from ..common.lib.models import FloorMap, TrajectoryResult
 from ..common.lib.sensors import load_sensor_data
@@ -43,6 +44,14 @@ def run_pdr(
     if detections is not None:
         if floormap is None:
             raise RuntimeError("内部エラー: ランドマーク用 floormap がありません。")
+        consistency = run_ranging_preflight(
+            settings.landmark,
+            floormap,
+            prepared.trajectory,
+            prepared.t_at_steps,
+            prepared.gx_mean,
+            prepared.gz_mean,
+        )
         landmark = apply_landmark_corrections(
             prepared.trajectory,
             prepared.t_at_steps,
@@ -54,6 +63,9 @@ def run_pdr(
             gx_mean=prepared.gx_mean,
             gz_mean=prepared.gz_mean,
             correction_mode=settings.landmark.correction_mode,
+            max_correction_m=settings.landmark.max_correction_m,
+            max_warp_span_m=settings.landmark.max_warp_span_m,
+            ranging_consistency=consistency,
         )
     return TrajectoryResult(
         trajectory=prepared.trajectory if landmark is None else landmark.trajectory,

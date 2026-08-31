@@ -103,6 +103,7 @@ def plot_particle_filter_trajectory(
         gz_mean,
         origin_px,
         scale,
+        raw_label="通常PDR軌跡（BLEなしPFではない）",
     )
 
     ax.set_title("フロアマップ上のパーティクルフィルタ軌跡")

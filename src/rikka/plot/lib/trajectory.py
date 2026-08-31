@@ -23,8 +23,14 @@ import pandas as pd
 from matplotlib.axes import Axes
 from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize
+from matplotlib.patches import Circle
 
-from ...common.config import FLOORMAP_ORIGIN_PX, FLOORMAP_PATH, FLOORMAP_SCALE
+from ...common.config import (
+    BLE_PLOT_MIN_CORRECTION_M,
+    FLOORMAP_ORIGIN_PX,
+    FLOORMAP_PATH,
+    FLOORMAP_SCALE,
+)
 from ...common.lib.floormap import compute_pixel_coords, pixel_vector_from_heading
 from ...common.lib.models import (
     LandmarkCorrection,
@@ -189,6 +195,7 @@ def _plot_landmark_overlay(
     gz_mean: float,
     origin_px: tuple[int, int],
     scale: float,
+    raw_label: str = "補正前軌跡",
 ) -> None:
     """補正前軌跡、ランドマーク位置、補正発生地点を重ねて描画する。"""
     if landmark is None:
@@ -207,11 +214,35 @@ def _plot_landmark_overlay(
             linewidth=1.4,
             alpha=0.6,
             zorder=1,
-            label="補正前軌跡",
+            label=raw_label,
         )
 
     applied = [item for item in landmark.corrections if item.applied]
     _plot_landmark_positions(ax, landmark, applied, gx_mean, gz_mean, origin_px, scale)
+    _plot_range_circles(ax, landmark, gx_mean, gz_mean, origin_px, scale)
+    rejected = [item for item in landmark.corrections if not item.applied]
+    if rejected:
+        rejected_points = np.asarray(
+            [(item.before_x, item.before_y) for item in rejected], dtype=float
+        )
+        rx, ry = _compute_pixel_coords(
+            rejected_points[:, 0],
+            rejected_points[:, 1],
+            gx_mean,
+            gz_mean,
+            origin_px,
+            scale,
+        )
+        ax.scatter(
+            rx,
+            ry,
+            marker="x",
+            s=90,
+            color="black",
+            linewidths=2.0,
+            zorder=10,
+            label="棄却されたBLE検出",
+        )
     if not applied:
         return
 
@@ -238,6 +269,11 @@ def _plot_landmark_overlay(
         origin_px,
         scale,
     )
+    after_x = np.array([item.after_x for item in applied], dtype=float)
+    after_y = np.array([item.after_y for item in applied], dtype=float)
+    ax_after, ay_after = _compute_pixel_coords(
+        after_x, after_y, gx_mean, gz_mean, origin_px, scale
+    )
     ax.scatter(
         bx,
         by,
@@ -249,15 +285,69 @@ def _plot_landmark_overlay(
         zorder=9,
         label="ランドマーク補正",
     )
-    for index in range(len(applied)):
+    residual_label = True
+    correction_label = True
+    for index, item in enumerate(applied):
         ax.plot(
             [bx[index], lx[index]],
             [by[index], ly[index]],
-            color="red",
+            color="royalblue",
+            linestyle=":",
             linewidth=1.0,
             alpha=0.7,
             zorder=8,
+            label="観測残差（補正ではない）" if residual_label else None,
         )
+        residual_label = False
+        movement = float(
+            np.hypot(item.after_x - item.before_x, item.after_y - item.before_y)
+        )
+        if movement >= BLE_PLOT_MIN_CORRECTION_M:
+            ax.plot(
+                [bx[index], ax_after[index]],
+                [by[index], ay_after[index]],
+                color="red",
+                linewidth=1.4,
+                alpha=0.85,
+                zorder=9,
+                label="実際の補正移動" if correction_label else None,
+            )
+            correction_label = False
+
+
+def _plot_range_circles(
+    ax: Axes,
+    landmark: LandmarkCorrectionResult,
+    gx_mean: float,
+    gz_mean: float,
+    origin_px: tuple[int, int],
+    scale: float,
+) -> None:
+    """推定距離をビーコン中心の円として描く。"""
+    label_added = False
+    for item in landmark.corrections:
+        if item.estimated_distance_m is None:
+            continue
+        lx, ly = _compute_pixel_coords(
+            np.asarray([item.landmark_x]),
+            np.asarray([item.landmark_y]),
+            gx_mean,
+            gz_mean,
+            origin_px,
+            scale,
+        )
+        circle = Circle(
+            (float(lx[0]), float(ly[0])),
+            item.estimated_distance_m / scale,
+            fill=False,
+            color="deepskyblue",
+            linestyle="--",
+            linewidth=1.0,
+            alpha=0.5,
+            label="RSSI推定距離" if not label_added else None,
+        )
+        ax.add_patch(circle)
+        label_added = True
 
 
 def _plot_landmark_positions(

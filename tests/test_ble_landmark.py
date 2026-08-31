@@ -23,7 +23,7 @@ from rikka.ble.lib.sample import (
     resolve_walker_positions,
     write_sample_csv,
 )
-from rikka.ble.pipeline import run_ble_landmark_detection
+from rikka.ble.pipeline import run_ble_landmark_detection, run_ble_ranging_input
 from rikka.cli import commands as cli_commands
 from rikka.cli.commands import run as run_command
 from rikka.cli.options import _resolve_ble_inputs, cli
@@ -47,6 +47,7 @@ from rikka.common.settings import (
 from rikka.landmark.lib.assignment import (
     assign_detections_to_steps,
     build_step_landmark_map,
+    build_step_observation_map,
 )
 from rikka.landmark.lib.timing import evaluate_landmark_timing
 from rikka.pdr.lib.landmark_correction import apply_landmark_corrections
@@ -298,6 +299,9 @@ def test_group_by_timestamp_uses_window_start_as_anchor() -> None:
 def _landmark_settings(**overrides: object) -> BleLandmarkSettings:
     values: dict[str, object] = {
         "rssi_threshold_dbm": -55.0,
+        "detect_min_samples": 1,
+        "detect_cooldown_s": 0.0,
+        "detect_min_prominence_db": 0.0,
         "landmarks": (
             Landmark("beacon_1", 1.0, 2.0),
             Landmark("beacon_2", 3.0, 4.0),
@@ -939,6 +943,44 @@ def test_run_ble_landmark_detection_returns_detection_only(tmp_path: Path) -> No
     )
 
 
+def test_run_ble_ranging_input_keeps_all_known_observations(tmp_path: Path) -> None:
+    """PF測距入力は検出イベントと全観測を別々に保持する。"""
+    path = _write_ble_csv(
+        tmp_path / "ble.csv",
+        [
+            {"timestamp_s": 1.0, "beacon_id": "beacon_1", "rssi_dbm": -50.0},
+            {"timestamp_s": 1.1, "beacon_id": "beacon_1", "rssi_dbm": -51.0},
+            {"timestamp_s": 1.2, "beacon_id": "unknown", "rssi_dbm": -40.0},
+        ],
+    )
+
+    result = run_ble_ranging_input(_landmark_settings(enabled=True, data_path=path))
+
+    assert result is not None
+    assert len(result.detections) == 1
+    assert [item.beacon_id for item in result.observations] == [
+        "beacon_1",
+        "beacon_1",
+    ]
+
+
+def test_build_step_observation_map_uses_beacon_median() -> None:
+    """同じ歩の観測はビーコンごとのRSSI中央値へ集約する。"""
+    observations = (
+        LandmarkRange(0.2, "b1", -70.0, 3.0, 1.0, -71.0),
+        LandmarkRange(0.4, "b1", -60.0, 2.0, 0.8, -61.0),
+        LandmarkRange(0.5, "b2", -50.0, 1.0, 0.5, -51.0),
+    )
+
+    result = build_step_observation_map(
+        observations, [1.0], {"b1": (0.0, 0.0), "b2": (1.0, 0.0)}
+    )
+
+    assert [item.beacon_id for item in result[1]] == ["b1", "b2"]
+    assert result[1][0].rssi_dbm == -65.0
+    assert result[1][0].smoothed_rssi_dbm == -66.0
+
+
 def test_run_pdr_without_ble_matches_prepared_trajectory() -> None:
     """BLE 無効時の run_pdr 軌跡が共有済み軌跡と一致する。"""
     df_acc, df_gyro = load_sensor_data()
@@ -1012,7 +1054,11 @@ def test_build_landmark_corrections_dataframe_has_diagnostic_columns() -> None:
 
     dataframe = _build_landmark_corrections_dataframe(result)
 
-    assert dataframe.to_dict("records") == [
+    records = dataframe.to_dict("records")
+    assert np.isnan(records[0].pop("ranging_corr"))
+    assert np.isnan(records[0].pop("ranging_path_loss_n"))
+    assert np.isnan(records[0].pop("ranging_passed"))
+    assert records == [
         {
             "step": 0,
             "timestamp_s": 1.0,

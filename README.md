@@ -194,7 +194,14 @@ BLE_LANDMARK_ANCHORS = (
 - `--ble-release-margin DB` / `--ble-release-streak N`: ラッチ解除条件
 - `--ble-sync-window S`: 同時受信としてまとめる時刻窓
 - `--ble-correction snap|warp`: 通常PDRの補正方式。`warp` は直前拘束からの
-  累積歩行距離比で残差を過去の歩へ配分します。
+  累積歩行距離比で残差を過去の歩へ配分します。実測BLEでは `warp` を使用して
+  ください（既定の `snap` は合成BLEとの後方互換用です）。
+- `--ble-preflight warn|error|off`: RSSI距離整合FAIL時の扱い
+- `--ble-max-correction M` / `--ble-max-warp-span M`: 補正移動量とwarp区間の上限
+
+実測ログの検出は、閾値以上が3観測続くこと、同一ビーコンの10秒cooldown、
+6dB以上のピークprominenceを要求します。合成BLEは既存goldenとの互換性のため、
+従来の1接近1検出規則を維持します。
 
 実測値へ差し替える場合は、同じ3列と経過秒の時間軸へ整形し、
 `--ble-data <実測CSV>` を指定します。絶対時刻だけの場合は、phyphox の

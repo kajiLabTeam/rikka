@@ -14,6 +14,8 @@
     座標をランドマークへ置き換えて補正履歴とともに返す。
 """
 
+import warnings
+
 import numpy as np
 
 from ...common.lib.models import (
@@ -23,6 +25,7 @@ from ...common.lib.models import (
     LandmarkCorrectionResult,
     LandmarkObservation,
     LandmarkRange,
+    RangingConsistency,
 )
 from ...landmark.lib.assignment import assign_detections_to_steps
 from ...landmark.lib.coordinates import build_landmark_meter_map
@@ -87,6 +90,18 @@ def _apply_translation(
     return span
 
 
+def _warp_span(raw_trajectory: list[list[float]], start: int, endpoint: int) -> float:
+    """warp対象区間の累積距離を返す。"""
+    return float(
+        sum(
+            np.linalg.norm(
+                np.asarray(raw_trajectory[index]) - raw_trajectory[index - 1]
+            )
+            for index in range(start + 1, endpoint + 1)
+        )
+    )
+
+
 def apply_landmark_corrections(
     trajectory: list[list[float]],
     t_at_steps: list[float],
@@ -99,6 +114,9 @@ def apply_landmark_corrections(
     gx_mean: float,
     gz_mean: float,
     correction_mode: str = "snap",
+    max_correction_m: float = float("inf"),
+    max_warp_span_m: float = float("inf"),
+    ranging_consistency: tuple[RangingConsistency, ...] = (),
 ) -> LandmarkCorrectionResult:
     """検出に従って軌跡を補正し、補正後の軌跡と履歴を返す。"""
     if not trajectory:
@@ -140,25 +158,47 @@ def apply_landmark_corrections(
             estimated_distance = (
                 detection.distance_m if isinstance(detection, LandmarkRange) else None
             )
-            target = (landmark_x, landmark_y)
+            target = _constraint_position(
+                (before_x, before_y),
+                (landmark_x, landmark_y),
+                estimated_distance,
+            )
             warp_span = None
             warp_start_point = last_constraint_point
+            applied = False
             if is_last:
-                if correction_mode == "warp":
-                    target = _constraint_position(
-                        (before_x, before_y),
-                        (landmark_x, landmark_y),
-                        estimated_distance,
+                correction_distance = float(
+                    np.linalg.norm(
+                        np.asarray(target) - np.asarray((before_x, before_y))
                     )
-                warp_span = _apply_translation(
-                    corrected,
-                    trajectory,
-                    endpoint_index=endpoint_index,
-                    target=target,
-                    mode=correction_mode,
-                    warp_start_point=warp_start_point,
                 )
-                last_constraint_point = endpoint_index
+                candidate_span = _warp_span(
+                    trajectory, warp_start_point, endpoint_index
+                )
+                span_exceeded = (
+                    correction_mode == "warp" and candidate_span > max_warp_span_m
+                )
+                if correction_distance <= max_correction_m and not span_exceeded:
+                    warp_span = _apply_translation(
+                        corrected,
+                        trajectory,
+                        endpoint_index=endpoint_index,
+                        target=target,
+                        mode=correction_mode,
+                        warp_start_point=warp_start_point,
+                    )
+                    last_constraint_point = endpoint_index
+                    applied = True
+                elif correction_mode == "warp":
+                    warp_span = candidate_span
+                if not applied:
+                    warnings.warn(
+                        "BLE補正を上限超過のため棄却しました: "
+                        f"{detection.beacon_id} correction={correction_distance:.3f}m "
+                        f"warp_span={candidate_span:.3f}m",
+                        UserWarning,
+                        stacklevel=2,
+                    )
             corrections.append(
                 LandmarkCorrection(
                     step_index=step_index,
@@ -171,7 +211,7 @@ def apply_landmark_corrections(
                     landmark_y=landmark_y,
                     after_x=corrected[endpoint_index][0],
                     after_y=corrected[endpoint_index][1],
-                    applied=is_last,
+                    applied=applied,
                     detection_distance_m=(
                         (before_x - landmark_x) ** 2 + (before_y - landmark_y) ** 2
                     )
@@ -204,4 +244,5 @@ def apply_landmark_corrections(
         data_path=data_path,
         detections=detections,
         landmarks=landmarks,
+        ranging_consistency=ranging_consistency,
     )

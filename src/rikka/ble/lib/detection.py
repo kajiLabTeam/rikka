@@ -31,22 +31,51 @@ class _LatchState:
     best_rssi_dbm: float
     release_streak: int = 0
     observations: list[BleObservation] = field(default_factory=list)
+    above_threshold_count: int = 0
+    current_above_threshold_count: int = 0
 
 
 def _finalize_detection(
     beacon_id: str,
     state: _LatchState,
     smoothing_samples: int,
-) -> LandmarkDetection:
+    all_observations: tuple[BleObservation, ...],
+    min_samples: int,
+    min_prominence_db: float,
+    threshold_dbm: float,
+) -> LandmarkDetection | None:
     """移動中央値が最大の時刻を生RSSI付き検出へ変換する。"""
-    if len(state.observations) < smoothing_samples:
-        return LandmarkDetection(
-            state.best_timestamp_s,
-            beacon_id,
-            state.best_rssi_dbm,
+    if state.above_threshold_count < min_samples:
+        return None
+    legacy_peak_selection = min_samples == 1 and min_prominence_db == 0.0
+    if legacy_peak_selection:
+        if len(state.observations) < smoothing_samples:
+            return LandmarkDetection(
+                state.best_timestamp_s,
+                beacon_id,
+                state.best_rssi_dbm,
+            )
+        window = state.observations
+    else:
+        beacon = [item for item in all_observations if item.beacon_id == beacon_id]
+        radius = smoothing_samples // 2
+        start = min(
+            range(len(beacon)),
+            key=lambda index: abs(
+                beacon[index].timestamp_s - state.observations[0].timestamp_s
+            ),
         )
-    raw = np.asarray([item.rssi_dbm for item in state.observations], dtype=float)
+        end = min(
+            range(len(beacon)),
+            key=lambda index: abs(
+                beacon[index].timestamp_s - state.observations[-1].timestamp_s
+            ),
+        )
+        if start < radius or end + radius >= len(beacon):
+            return None
+        window = beacon[max(0, start - radius) : min(len(beacon), end + radius + 1)]
     radius = smoothing_samples // 2
+    raw = np.asarray([item.rssi_dbm for item in window], dtype=float)
     smoothed = np.asarray(
         [
             np.median(raw[max(0, index - radius) : index + radius + 1])
@@ -59,21 +88,36 @@ def _finalize_detection(
         index for index, value in enumerate(smoothed) if np.isclose(value, maximum)
     ]
     center_timestamp = float(
-        np.median([state.observations[index].timestamp_s for index in candidates])
+        np.median([window[index].timestamp_s for index in candidates])
     )
     best_index = min(
         candidates,
         key=lambda index: (
-            abs(state.observations[index].timestamp_s - center_timestamp),
-            -state.observations[index].rssi_dbm,
-            state.observations[index].timestamp_s,
+            abs(window[index].timestamp_s - center_timestamp),
+            -window[index].rssi_dbm,
+            window[index].timestamp_s,
         ),
     )
-    best = state.observations[best_index]
+    if (
+        maximum - float(np.min(smoothed)) < min_prominence_db
+        or maximum - threshold_dbm < min_prominence_db
+    ):
+        return None
+    best = window[best_index]
+    if legacy_peak_selection:
+        return LandmarkDetection(best.timestamp_s, beacon_id, best.rssi_dbm)
+    peak_start = window[candidates[0]].timestamp_s
+    peak_end = window[candidates[-1]].timestamp_s
+    midpoint = (peak_start + peak_end) / 2.0
+    timestamp = max(
+        window[index].timestamp_s
+        for index in candidates
+        if window[index].timestamp_s <= midpoint
+    )
     return LandmarkDetection(
-        best.timestamp_s,
+        timestamp,
         beacon_id,
-        best.rssi_dbm,
+        max(window[index].rssi_dbm for index in candidates),
     )
 
 
@@ -138,6 +182,14 @@ def detect_landmarks(
             if state is None:
                 continue
             state.observations.append(observation)
+            if observation.rssi_dbm >= threshold:
+                state.current_above_threshold_count += 1
+                state.above_threshold_count = max(
+                    state.above_threshold_count,
+                    state.current_above_threshold_count,
+                )
+            else:
+                state.current_above_threshold_count = 0
             if observation.rssi_dbm > state.best_rssi_dbm:
                 state.best_timestamp_s = observation.timestamp_s
                 state.best_rssi_dbm = observation.rssi_dbm
@@ -160,20 +212,49 @@ def detect_landmarks(
                 best_timestamp_s=best.timestamp_s,
                 best_rssi_dbm=best.rssi_dbm,
                 observations=[best],
+                above_threshold_count=1,
+                current_above_threshold_count=1,
             )
         for beacon_id in released:
-            detections.append(
-                _finalize_detection(
-                    beacon_id,
-                    latched.pop(beacon_id),
-                    settings.rssi_smoothing_samples,
-                )
+            detection = _finalize_detection(
+                beacon_id,
+                latched.pop(beacon_id),
+                settings.rssi_smoothing_samples,
+                observations,
+                settings.detect_min_samples,
+                settings.detect_min_prominence_db,
+                threshold,
             )
+            if detection is not None:
+                detections.append(detection)
 
-    detections.extend(
-        _finalize_detection(beacon_id, state, settings.rssi_smoothing_samples)
-        for beacon_id, state in latched.items()
-    )
+    for beacon_id, state in latched.items():
+        detection = _finalize_detection(
+            beacon_id,
+            state,
+            settings.rssi_smoothing_samples,
+            observations,
+            settings.detect_min_samples,
+            settings.detect_min_prominence_db,
+            threshold,
+        )
+        if detection is not None:
+            detections.append(detection)
     detections.sort(key=lambda detection: detection.timestamp_s)
-
-    return tuple(detections)
+    filtered: list[LandmarkDetection] = []
+    for detection in detections:
+        conflicting = [
+            (index, previous)
+            for index, previous in enumerate(filtered)
+            if previous.beacon_id == detection.beacon_id
+            and detection.timestamp_s - previous.timestamp_s
+            < settings.detect_cooldown_s
+        ]
+        if not conflicting:
+            filtered.append(detection)
+            continue
+        index, previous = conflicting[-1]
+        if detection.rssi_dbm > previous.rssi_dbm:
+            filtered[index] = detection
+    filtered.sort(key=lambda detection: detection.timestamp_s)
+    return tuple(filtered)

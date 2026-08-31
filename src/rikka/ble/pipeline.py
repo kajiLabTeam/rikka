@@ -14,15 +14,23 @@
     行って検出列を返す。
 """
 
+from dataclasses import replace
+
 from ..common.config import (
     BLE_PATH_LOSS_N,
     BLE_PATH_LOSS_TX_POWER_DBM,
     BLE_RSSI_SIGMA_DB,
 )
-from ..common.lib.models import LandmarkRange, PathLossModel
+from ..common.lib.models import (
+    BleObservation,
+    BleRangingInput,
+    LandmarkDetection,
+    LandmarkRange,
+    PathLossModel,
+)
 from ..common.settings import BleLandmarkSettings
 from .lib.detection import detect_landmarks, smoothed_rssi_at_detection
-from .lib.loader import load_ble_observations
+from .lib.loader import is_logger_ble_data, load_ble_observations
 from .lib.pathloss import rssi_sigma_to_distance_sigma_m, rssi_to_distance_m
 
 
@@ -35,32 +43,66 @@ def run_ble_landmark_detection(
     """
     if not settings.enabled:
         return None
-    observations = load_ble_observations(settings.data_path)
-    detections = detect_landmarks(observations, settings)
+    ranging_input = run_ble_ranging_input(settings)
+    return None if ranging_input is None else ranging_input.detections
+
+
+def _to_range(
+    observation: BleObservation | LandmarkDetection,
+    observations: tuple[BleObservation, ...],
+    settings: BleLandmarkSettings,
+) -> LandmarkRange:
+    """1観測へ設定済みパスロスモデルの距離情報を付与する。"""
     landmarks = settings.landmark_map()
     default_model = PathLossModel(
         BLE_PATH_LOSS_TX_POWER_DBM,
         BLE_PATH_LOSS_N,
         BLE_RSSI_SIGMA_DB,
     )
-    ranges = []
-    for detection in detections:
-        landmark = landmarks[detection.beacon_id]
-        model = landmark.path_loss_model or default_model
-        smoothed_rssi = smoothed_rssi_at_detection(
-            observations,
-            detection,
-            settings.rssi_smoothing_samples,
+    landmark = landmarks[observation.beacon_id]
+    model = landmark.path_loss_model or default_model
+    smoothed_rssi = smoothed_rssi_at_detection(
+        observations,
+        LandmarkDetection(
+            observation.timestamp_s, observation.beacon_id, observation.rssi_dbm
+        ),
+        settings.rssi_smoothing_samples,
+    )
+    distance = rssi_to_distance_m(smoothed_rssi, model)
+    return LandmarkRange(
+        observation.timestamp_s,
+        observation.beacon_id,
+        observation.rssi_dbm,
+        distance,
+        rssi_sigma_to_distance_sigma_m(distance, model),
+        smoothed_rssi,
+    )
+
+
+def run_ble_ranging_input(settings: BleLandmarkSettings) -> BleRangingInput | None:
+    """検出イベントと座標確定ビーコンの全測距観測を分離して返す。"""
+    if not settings.enabled:
+        return None
+    observations = load_ble_observations(settings.data_path)
+    known = settings.landmark_map()
+    detection_settings = (
+        settings
+        if is_logger_ble_data(settings.data_path)
+        else replace(
+            settings,
+            detect_min_samples=1,
+            detect_cooldown_s=0.0,
+            detect_min_prominence_db=0.0,
         )
-        distance = rssi_to_distance_m(smoothed_rssi, model)
-        ranges.append(
-            LandmarkRange(
-                detection.timestamp_s,
-                detection.beacon_id,
-                detection.rssi_dbm,
-                distance,
-                rssi_sigma_to_distance_sigma_m(distance, model),
-                smoothed_rssi,
-            )
-        )
-    return tuple(ranges)
+    )
+    detections = detect_landmarks(observations, detection_settings)
+    return BleRangingInput(
+        detections=tuple(
+            _to_range(item, observations, settings) for item in detections
+        ),
+        observations=tuple(
+            _to_range(item, observations, settings)
+            for item in observations
+            if item.beacon_id in known
+        ),
+    )
