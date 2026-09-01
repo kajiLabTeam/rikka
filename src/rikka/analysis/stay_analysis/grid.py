@@ -16,8 +16,8 @@ import numpy as np
 import pandas as pd
 from pandas.api.types import is_bool_dtype
 
-from rikka.stay_analysis.models import StayCell
-from rikka.stay_analysis.validation import (
+from .models import StayCell
+from .validation import (
     REQUIRED_COLUMNS,
     finite_numeric,
     require_columns,

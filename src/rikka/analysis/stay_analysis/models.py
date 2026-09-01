@@ -1,11 +1,11 @@
-"""滞在分析で共有する公開データ型とversion定数。
+"""滞在分析で共有するデータ型とversion定数。
 
 役割:
     セル集計とtrajectory集計のJSON互換型、解析・schema versionを定義する。
 依存元:
     Python標準のTypedDictだけを使用する。
 利用先:
-    grid、artifact、公開API利用者が共通の結果形式を参照する。
+    grid、artifact、analysis pipelineが共通の結果形式を参照する。
 処理フロー:
     実行処理は持たず、各処理が生成・検証する値の構造を固定する。
 """

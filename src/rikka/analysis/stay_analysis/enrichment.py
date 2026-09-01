@@ -13,7 +13,10 @@
 import numpy as np
 import pandas as pd
 
-from rikka.stay_analysis.validation import validate_parameter, validate_trajectory
+from .validation import (
+    validate_parameter,
+    validate_trajectory,
+)
 
 
 def enrich_trajectory(
