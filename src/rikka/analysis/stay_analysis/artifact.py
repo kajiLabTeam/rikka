@@ -13,13 +13,13 @@
 import math
 from typing import Any
 
-from rikka.stay_analysis.models import (
+from .models import (
     DEFINITION_VERSION,
     SCHEMA_VERSION,
     StayCell,
     TrajectoryCells,
 )
-from rikka.stay_analysis.validation import validate_floor, validate_parameter
+from .validation import validate_floor, validate_parameter
 
 
 def _normalize_trajectories(
