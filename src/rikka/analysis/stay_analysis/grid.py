@@ -18,12 +18,11 @@ from pandas.api.types import is_bool_dtype
 
 from .models import StayCell
 from .validation import (
-    REQUIRED_COLUMNS,
-    finite_numeric,
     require_columns,
     validate_floor,
     validate_parameter,
     validate_point,
+    validate_trajectory,
 )
 
 
@@ -38,7 +37,8 @@ def aggregate_trajectory_grid(
     start_y_px: float,
 ) -> list[StayCell]:
     """滞在判定済みtrajectoryを非ゼロのセル訪問回数へ集計する。"""
-    require_columns(dataframe, (*REQUIRED_COLUMNS, "is_stay"))
+    validate_trajectory(dataframe)
+    require_columns(dataframe, ("is_stay",))
     is_stay = dataframe["is_stay"]
     if not is_bool_dtype(is_stay.dtype) or is_stay.isna().any():
         raise ValueError("is_stay must contain only boolean values")
@@ -55,8 +55,6 @@ def aggregate_trajectory_grid(
     )
     start_x = validate_point(start_x_px, name="start_x_px", limit=map_width_px)
     start_y = validate_point(start_y_px, name="start_y_px", limit=map_height_px)
-    finite_numeric(dataframe, "x")
-    finite_numeric(dataframe, "y")
 
     inside = dataframe[
         dataframe["x"].ge(0)
