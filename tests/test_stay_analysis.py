@@ -200,9 +200,7 @@ def test_grid_rejects_nullable_stay_flag_with_missing_value() -> None:
             "step_index",
         ),
         (
-            lambda frame: frame.assign(
-                rikka_timestamp_s=[None, 0.0, 1.0, 0.5, 2.0]
-            ),
+            lambda frame: frame.assign(rikka_timestamp_s=[None, 0.0, 1.0, 0.5, 2.0]),
             "strictly increasing",
         ),
     ],
