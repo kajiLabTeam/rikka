@@ -192,6 +192,35 @@ def test_grid_rejects_nullable_stay_flag_with_missing_value() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        (
+            lambda frame: frame.iloc[[0, 1, 3, 2, 4]].reset_index(drop=True),
+            "step_index",
+        ),
+        (
+            lambda frame: frame.assign(
+                rikka_timestamp_s=[None, 0.0, 1.0, 0.5, 2.0]
+            ),
+            "strictly increasing",
+        ),
+    ],
+)
+def test_grid_rejects_invalid_trajectory_order(change, message: str) -> None:
+    dataframe = enrich_trajectory(trajectory())
+
+    with pytest.raises(ValueError, match=message):
+        aggregate_trajectory_grid(
+            change(dataframe),
+            map_width_px=100,
+            map_height_px=100,
+            floor_scale=1,
+            start_x_px=0,
+            start_y_px=0,
+        )
+
+
 def test_assemble_artifact_preserves_trajectory_order_and_sorts_cells() -> None:
     artifact = assemble_heatmap_artifact(
         [
