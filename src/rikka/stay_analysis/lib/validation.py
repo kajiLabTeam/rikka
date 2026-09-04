@@ -5,7 +5,7 @@
 依存元:
     pandas DataFrameとOkarinで正規化された数値を受け取る。
 利用先:
-    analysis配下のenrichment、grid、artifactが計算前の共通検証に使用する。
+    stay_analysis.lib配下のenrichment、grid、artifactが計算前に使用する。
 処理フロー:
     型・範囲・欠損・時系列規則を確認し、不正時はValueErrorを送出する。
 """

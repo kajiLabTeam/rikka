@@ -5,7 +5,7 @@ import math
 import pandas as pd
 import pytest
 
-from rikka.analysis.pipeline import (
+from rikka.stay_analysis.pipeline import (
     aggregate_trajectory_grid,
     assemble_heatmap_artifact,
     enrich_trajectory,
