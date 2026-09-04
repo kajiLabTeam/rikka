@@ -3,7 +3,7 @@
 役割:
     画像内の滞在点から、開始セルを除いたセル訪問区間数を算出する。
 依存元:
-    validationのfloor・座標・parameter検証とmodelsのStayCell型を取得する。
+    validationの入力検証と親階層のmodelsからStayCell型を取得する。
 利用先:
     Nozomiがtrajectory別のsparse heatmap入力を作るために使用する。
 処理フロー:
@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 from pandas.api.types import is_bool_dtype
 
-from .models import StayCell
+from ..models import StayCell
 from .validation import (
     require_columns,
     validate_floor,

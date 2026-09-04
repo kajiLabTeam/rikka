@@ -3,7 +3,7 @@
 役割:
     trajectory別セル集計と解析条件を、自己完結したJSON互換dictへまとめる。
 依存元:
-    modelsの公開型・version定数とvalidationのparameter・floor検証を取得する。
+    親階層のmodelsから公開型・version定数、validationから検証処理を取得する。
 利用先:
     Nozomiがheatmap JSONをserializationしてobject storageへ保存するために使用する。
 処理フロー:
@@ -13,7 +13,7 @@
 import math
 from typing import Any
 
-from .models import (
+from ..models import (
     DEFINITION_VERSION,
     SCHEMA_VERSION,
     StayCell,
