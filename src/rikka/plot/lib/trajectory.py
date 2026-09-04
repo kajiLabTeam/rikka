@@ -17,6 +17,7 @@
 from pathlib import Path
 
 import matplotlib.cm as cm
+import matplotlib.patheffects as path_effects
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -362,26 +363,26 @@ def _plot_landmark_positions(
     """登録済みBLE位置を検出の有無にかかわらず地図へ描画する。"""
     applied_by_id = {item.beacon_id: item for item in applied}
     configured_ids = {item.beacon_id for item in landmark.landmarks}
-    groups: tuple[tuple[list[tuple[float, float]], str, int, str, str], ...] = (
+    groups: tuple[tuple[list[tuple[str, float, float]], str, int, str, str], ...] = (
         (
             [],
             "*",
-            260,
+            420,
             "magenta",
             "ランドマーク",
         ),
         (
             [],
             "D",
-            130,
-            "cyan",
+            260,
+            "deepskyblue",
             "確定ランドマーク（位置）",
         ),
         (
             [],
             "P",
-            170,
-            "orange",
+            300,
+            "darkorange",
             "確定ランドマーク（位置・方位）",
         ),
     )
@@ -399,7 +400,11 @@ def _plot_landmark_positions(
         )
         group_index = 0 if position_sigma is None else 1 if heading is None else 2
         groups[group_index][0].append(
-            (float(definition.pixel_x), float(definition.pixel_y))
+            (
+                definition.beacon_id,
+                float(definition.pixel_x),
+                float(definition.pixel_y),
+            )
         )
 
     fallback = [item for item in applied if item.beacon_id not in configured_ids]
@@ -422,23 +427,65 @@ def _plot_landmark_positions(
                 if item.anchor_heading_deg is None
                 else 2
             )
-            groups[group_index][0].append((float(pixel_x), float(pixel_y)))
+            groups[group_index][0].append(
+                (item.beacon_id, float(pixel_x), float(pixel_y))
+            )
 
+    label_index = 0
+    label_offsets = ((12, -14), (12, 14), (-12, -14), (-12, 14))
     for points, marker, size, color, label in groups:
         if not points:
             continue
-        coordinates = np.asarray(points, dtype=float)
+        coordinates = np.asarray(
+            [(pixel_x, pixel_y) for _, pixel_x, pixel_y in points], dtype=float
+        )
+        ax.scatter(
+            coordinates[:, 0],
+            coordinates[:, 1],
+            marker=marker,
+            s=size * 1.18,
+            facecolors="none",
+            edgecolors="white",
+            linewidths=5.0,
+            alpha=0.95,
+            zorder=10,
+        )
         ax.scatter(
             coordinates[:, 0],
             coordinates[:, 1],
             marker=marker,
             s=size,
-            color=color,
-            edgecolors="black",
-            linewidths=0.8,
-            zorder=8,
+            facecolors="none",
+            edgecolors=color,
+            linewidths=2.6,
+            zorder=11,
             label=label,
         )
+        for beacon_id, pixel_x, pixel_y in points:
+            offset_x, offset_y = label_offsets[label_index % len(label_offsets)]
+            ax.annotate(
+                beacon_id,
+                xy=(pixel_x, pixel_y),
+                xytext=(offset_x, offset_y),
+                textcoords="offset points",
+                horizontalalignment="left" if offset_x > 0 else "right",
+                verticalalignment="bottom" if offset_y > 0 else "top",
+                fontsize=9,
+                fontweight="bold",
+                color=color,
+                arrowprops={
+                    "arrowstyle": "-",
+                    "color": color,
+                    "linewidth": 1.2,
+                },
+                path_effects=[
+                    path_effects.Stroke(linewidth=3.5, foreground="white"),
+                    path_effects.Normal(),
+                ],
+                zorder=12,
+                annotation_clip=False,
+            )
+            label_index += 1
 
 
 def _plot_anchor_heading_arrows(

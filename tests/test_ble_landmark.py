@@ -1166,6 +1166,15 @@ def test_plot_trajectory_shows_all_registered_ble_positions_without_detection(
         stars.get_offsets(),
         [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]],
     )
+    np.testing.assert_allclose(stars.get_sizes(), [420.0])
+    assert stars.get_facecolors().size == 0
+    annotations = plt.gcf().axes[0].texts
+    assert {item.get_text() for item in annotations} == {
+        "beacon_1",
+        "beacon_2",
+        "beacon_3",
+    }
+    assert all(item.get_bbox_patch() is None for item in annotations)
     plt.close("all")
 
 
