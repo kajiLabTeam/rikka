@@ -12,7 +12,8 @@
 処理フロー:
     運動状態の遷移予測、センサー尤度と方位連続性による更新、状態別歩幅倍率の
     更新、方位・歩幅の混合分布生成を各歩で行い、offline 指定時は状態列を後向きに
-    平滑化する。
+    平滑化する。横歩き開始の急変抑制は、高信頼の移動観測が選択方位と身体の
+    横方向に一致する場合だけ解除する。
 """
 
 from __future__ import annotations
@@ -83,6 +84,41 @@ def _adaptive_mode_probabilities(
     return np.asarray(probabilities, dtype=float)
 
 
+def _has_observed_sidestep_start(
+    step_heading: StepHeading,
+    movement_type: str,
+    probabilities: np.ndarray,
+) -> bool:
+    """高信頼の観測で裏付けられた横歩き開始かを判定する。"""
+    side_index = {"sidestep_left": 1, "sidestep_right": 2}.get(movement_type)
+    selected = step_heading.selected_heading
+    motion = step_heading.motion_heading
+    body = _body_heading(step_heading)
+    if (
+        side_index is None
+        or selected is None
+        or motion is None
+        or body is None
+        or step_heading.motion_reject_reason is not None
+        or not step_heading.motion_confidence >= 0.8
+        or not probabilities[side_index] >= 0.8
+        or (
+            step_heading.decoded_motion_mode is not None
+            and (
+                step_heading.decoded_motion_mode != movement_type
+                or not step_heading.decoded_motion_confidence >= 0.8
+            )
+        )
+    ):
+        return False
+    lateral = body + (np.pi / 2.0 if side_index == 1 else -np.pi / 2.0)
+    # 最尤モードから方位を生成せず、実際の選択方位を観測との一致で検証する。
+    return all(
+        abs(_normalize_angle(left - right)) <= np.deg2rad(20.0)
+        for left, right in ((selected, motion), (selected, lateral), (motion, lateral))
+    )
+
+
 def _adaptive_heading_state(
     previous: AdaptivePdrState,
     step_heading: StepHeading,
@@ -115,6 +151,9 @@ def _adaptive_heading_state(
             and abs(heading_jump) > np.deg2rad(45.0)
             and abs(float(step_heading.yaw_delta or 0.0)) < np.deg2rad(20.0)
             and probabilities[3] < 0.25
+            and not _has_observed_sidestep_start(
+                step_heading, movement_type, probabilities
+            )
         ):
             heading_mean = previous.heading_mean
     return heading_mean, min(_circular_std(candidates, probabilities), np.pi)

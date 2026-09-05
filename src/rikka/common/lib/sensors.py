@@ -10,7 +10,8 @@
     ``pipeline`` がファイル入力に、``trajectory.prepare_pdr_steps`` が前処理に、
     ``sensor_plot`` が可視化用データ作成に使用する。
 処理フロー:
-    CSV 読み込みと必須列検証後、加速度を重力成分と線形成分へ分離し、ジャイロの
+    CSV 読み込みと必須列検証後、前処理する軸の非有限値を拒否する。
+    加速度を重力成分と線形成分へ分離し、ジャイロの
     定常偏差を除いて時間積分し、解析列を追加した2つの DataFrame を返す。
 """
 
@@ -85,6 +86,20 @@ def process_sensor_data(
     """生センサーデータからノルム・重力推定・上下/水平加速度・角度を計算する。"""
     df_acc = df_acc.copy().reset_index(drop=True)
     df_gyro = df_gyro.copy().reset_index(drop=True)
+
+    # 平滑化による欠損の隠蔽と、積分による非有限値の後続全体への伝播を防ぐ。
+    # 直接呼び出しではジャイロの x 軸だけを渡す既存の利用方法も維持する。
+    for sensor_name, frame in (("加速度", df_acc), ("ジャイロ", df_gyro)):
+        for axis in ("x", "y", "z"):
+            if axis not in frame.columns:
+                continue
+            values = frame[axis].to_numpy(dtype=float, na_value=np.nan)
+            invalid_rows = np.flatnonzero(~np.isfinite(values))
+            if invalid_rows.size:
+                raise ValueError(
+                    f"{sensor_name}の {axis} 列に非有限値があります "
+                    f"(行位置 {int(invalid_rows[0])}、0始まり)"
+                )
 
     # 3軸それぞれにLPFをかけて重力ベクトルを推定（スカラーノルムではなくベクトルで推定）
     # center=True で対称ウィンドウを使用し、位相遅れなく重力方向を推定する
