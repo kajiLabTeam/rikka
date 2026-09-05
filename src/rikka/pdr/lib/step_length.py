@@ -45,7 +45,12 @@ def _integrate_forward_acceleration(
         dt = np.full(len(times), 1.0 / SAMPLING_RATE)
         dt[0] = 0.0
     velocity = np.cumsum(acceleration * dt)
-    velocity -= np.linspace(velocity[0], velocity[-1], len(velocity))
+    # 非等間隔の記録でも、一定の加速度偏差を時間比例で打ち消す。
+    # サンプル番号で補間すると欠測前後で補正量がずれ、架空の変位が残る。
+    elapsed = np.cumsum(dt)
+    if elapsed[-1] <= 0.0:
+        return 0.0
+    velocity -= velocity[0] + (velocity[-1] - velocity[0]) * elapsed / elapsed[-1]
     return float(np.sum(velocity * dt))
 
 

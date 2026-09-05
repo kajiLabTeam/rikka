@@ -7,7 +7,8 @@
 利用先:
     particle 結果確定段階が sequence 選択モードで使用する。
 処理フロー:
-    各経路の未支持反転を数えてスコアを補正し、降順に合法性を検証する。
+    各経路の急な反転と区間内に累積した未支持反転を数えてスコアを補正し、
+    降順に合法性を検証する。
 """
 
 import numpy as np
@@ -47,15 +48,31 @@ def _unsupported_reversal_count(
         )
     )
     unsupported_count = 0
+    gradual_reversal_active = False
     for moving_index, path_delta in enumerate(path_deltas, start=1):
-        if path_delta < np.deg2rad(135.0):
-            continue
         current_step = int(moving_step_indices[moving_index])
-        window_start = max(0, current_step - window_steps + 1)
+        window_start = max(0, current_step - window_steps)
         recent_yaw = float(np.nansum(sensor_deltas[window_start:current_step]))
         recent_turning = bool(np.any(turning_evidence[window_start : current_step + 1]))
-        if recent_yaw < np.deg2rad(60.0) and not recent_turning:
+        supported = recent_yaw >= np.deg2rad(60.0) or recent_turning
+        if path_delta >= np.deg2rad(135.0) and not supported:
             unsupported_count += 1
+            gradual_reversal_active = True
+            continue
+
+        # 1歩ずつの曲がりが小さくても、同じ期間のセンサー変化で説明できない
+        # 折り返しは区間単位で検出する。停止歩は方位の基準点に使わない。
+        first_moving = int(np.searchsorted(moving_step_indices, window_start))
+        interval_delta = float(
+            np.arctan2(
+                np.sin(path_headings[moving_index] - path_headings[first_moving]),
+                np.cos(path_headings[moving_index] - path_headings[first_moving]),
+            )
+        )
+        gradual_reversal = abs(interval_delta) >= np.deg2rad(135.0) and not supported
+        if gradual_reversal and not gradual_reversal_active:
+            unsupported_count += 1
+        gradual_reversal_active = gradual_reversal
     return unsupported_count
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from rikka.common.lib.models import (
     StepHeading,
@@ -19,7 +20,10 @@ from rikka.pdr.lib.heading.device_orientation import (
     _estimate_device_orientation_mode,
 )
 from rikka.pdr.lib.heading.motion import _MotionHeadingResult
-from rikka.pdr.lib.step_length import estimate_step_length_forward
+from rikka.pdr.lib.step_length import (
+    _integrate_forward_acceleration,
+    estimate_step_length_forward,
+)
 
 
 def _step_heading(
@@ -84,6 +88,20 @@ def _angle_delta(left: float, right: float) -> float:
     return float((left - right + np.pi) % (2.0 * np.pi) - np.pi)
 
 
+@pytest.mark.parametrize(
+    "times",
+    [np.linspace(0.0, 1.0, 5), np.asarray([0.0, 0.1, 0.2, 0.9, 1.0])],
+)
+def test_forward_velocity_correction_removes_constant_acceleration_bias(
+    times: np.ndarray,
+) -> None:
+    acceleration = np.asarray([0.0, 1.0, -0.5, -1.0, 0.5])
+    assert _integrate_forward_acceleration(np.ones(5), times) == pytest.approx(0.0)
+    assert _integrate_forward_acceleration(acceleration + 2.0, times) == pytest.approx(
+        _integrate_forward_acceleration(acceleration, times)
+    )
+
+
 def test_adaptive_heading_keeps_validated_sensor_heading() -> None:
     step = _step_heading(
         1,
@@ -124,6 +142,89 @@ def test_adaptive_sidestep_start_guard_prevents_unobserved_quarter_turn() -> Non
 
     assert result.posteriors[1].selected_mode == "sidestep_left"
     assert abs(_angle_delta(result.posteriors[1].heading_mean, 0.0)) < 1e-6
+
+
+@pytest.mark.parametrize("side", ["sidestep_left", "sidestep_right"])
+@pytest.mark.parametrize("body", [0.0, np.deg2rad(170.0)])
+@pytest.mark.parametrize("decoded", [False, True])
+def test_adaptive_preserves_strongly_observed_sidestep_start(
+    side: str, body: float, decoded: bool
+) -> None:
+    lateral = _angle_delta(
+        body + (np.pi / 2 if side == "sidestep_left" else -np.pi / 2), 0
+    )
+    steps = [_step_heading(1, selected=body, body=body, motion=body)] + [
+        _step_heading(
+            i, selected=lateral, body=body, motion=lateral, movement=side
+        )._replace(
+            decoded_motion_mode=side if decoded else None,
+            decoded_motion_confidence=0.95 if decoded else 0.0,
+        )
+        for i in (2, 3)
+    ]
+    likelihoods = [0.0001] * 4
+    likelihoods[1 if side == "sidestep_left" else 2] = 0.9997
+    side_evidence = StepMotionEvidence(*likelihoods, 1.0, 1.0)
+
+    result = estimate_adaptive_pdr(
+        steps,
+        tuple(_length_observation(i) for i in (1, 2, 3)),
+        (StepMotionEvidence(0.9997, 0.0001, 0.0001, 0.0001, 1.0, 1.0),)
+        + (side_evidence,) * 2,
+    )
+
+    np.testing.assert_allclose(
+        [p.heading_mean for p in result.posteriors], [body, lateral, lateral]
+    )
+    start = result.posteriors[1]
+    assert max(start.sidestep_left_probability, start.sidestep_right_probability) > 0.8
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"motion_confidence": 0.79},
+        {"motion_reject_reason": "low_displacement"},
+        {"motion_heading": None},
+        {"motion_heading": -np.pi / 2},
+        {"motion_heading": np.pi / 2 + np.deg2rad(25)},
+        {"selected_heading": np.pi / 2 + np.deg2rad(25)},
+        {"body_heading": np.deg2rad(40)},
+        {"decoded_motion_mode": "sidestep_left", "decoded_motion_confidence": 0.48},
+        {"decoded_motion_mode": "forward", "decoded_motion_confidence": 1.0},
+    ],
+)
+def test_adaptive_keeps_sidestep_start_guard_without_consistent_observation(
+    changes: dict,
+) -> None:
+    lateral = _step_heading(
+        2, selected=np.pi / 2, motion=np.pi / 2, movement="sidestep_left"
+    )._replace(**changes)
+    result = estimate_adaptive_pdr(
+        [_step_heading(1), lateral],
+        (_length_observation(1), _length_observation(2)),
+        (
+            StepMotionEvidence(0.9997, 0.0001, 0.0001, 0.0001, 1.0, 1.0),
+            StepMotionEvidence(0.0001, 0.9997, 0.0001, 0.0001, 1.0, 1.0),
+        ),
+    )
+
+    assert result.posteriors[1].heading_mean == 0.0
+
+
+def test_adaptive_keeps_sidestep_start_guard_with_weak_mode_probability() -> None:
+    lateral = _step_heading(
+        2, selected=np.pi / 2, motion=np.pi / 2, movement="sidestep_left"
+    )
+    previous = adaptive_estimator._initial_state()._replace(heading_mean=0.0)
+    mean, _ = adaptive_estimator._adaptive_heading_state(
+        previous,
+        lateral,
+        np.asarray([0.0, np.pi / 2, -np.pi / 2, np.pi / 2]),
+        np.asarray([0.2, 0.79, 0.0, 0.01]),
+    )
+
+    assert mean == 0.0
 
 
 def test_adaptive_offline_recomputes_length_without_fabricating_heading(
