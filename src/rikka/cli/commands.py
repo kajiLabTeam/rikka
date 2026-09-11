@@ -25,6 +25,13 @@ from ..common.config import (
     BLE_MAX_WARP_SPAN_M,
     BLE_PDR_CORRECTION_MODE,
     BLE_PREFLIGHT_MODE,
+    BLE_RETROFIT_DAMP_FACTORS,
+    BLE_RETROFIT_FORWARD_MODE,
+    BLE_RETROFIT_MAP_CHECK,
+    BLE_RETROFIT_MAX_HEADING_DEG,
+    BLE_RETROFIT_MIN_SPAN_M,
+    BLE_RETROFIT_STRIDE_SCALE_MAX,
+    BLE_RETROFIT_STRIDE_SCALE_MIN,
     BLE_RSSI_RELEASE_MARGIN_DB,
     BLE_RSSI_RELEASE_STREAK,
     BLE_RSSI_THRESHOLD_DBM,
@@ -39,6 +46,7 @@ from ..common.config import (
     MOTION_ESTIMATION,
     PF_LANDMARK_MODE,
     PF_LANDMARK_RANGE_WEIGHT_POWER,
+    PF_LANDMARK_RETROFIT,
     PF_MOTION_PREDICTIVE_WEIGHT_POWER,
     PF_NUM_PARTICLES,
     PF_PATH_SELECTION,
@@ -53,7 +61,11 @@ from ..common.config import (
     STEP_LENGTH_METHOD,
     USER_HEIGHT_M,
 )
-from ..common.lib.floormap import is_walkable_cell
+from ..common.lib.floormap import (
+    is_walkable_cell,
+    normalize_floormap_gray,
+    validate_floormap_origin,
+)
 from ..common.lib.models import FloorMap, GyroBiasResult, Landmark, PreparedPdrSteps
 from ..common.settings import (
     BleLandmarkSettings,
@@ -64,10 +76,6 @@ from ..common.settings import (
     PdrSettings,
     SensorSettings,
     StepSettings,
-)
-from ..particle.lib.map_constraints import (
-    _normalize_floormap_gray,
-    _validate_floormap_origin,
 )
 from ..particle.pipeline import run_particle
 from ..pdr.pipeline import run_pdr
@@ -86,7 +94,7 @@ def _load_floormap_gray(floormap_path: str | Path) -> np.ndarray:
     except (OSError, SyntaxError, ValueError) as exc:
         raise ValueError(f"フロアマップを画像として読み込めません: {path}") from exc
 
-    map_gray = _normalize_floormap_gray(map_raw)
+    map_gray = normalize_floormap_gray(map_raw)
     if map_gray.ndim != 2 or map_gray.size == 0:
         raise ValueError(f"フロアマップ画像の形状が不正です: {path}")
     return map_gray
@@ -98,7 +106,7 @@ def _validate_particle_floormap(
 ) -> None:
     """PF実行前にフロアマップと歩行可能な起点を検証する。"""
     map_gray = _load_floormap_gray(floormap_path)
-    _validate_floormap_origin(map_gray, origin_px)
+    validate_floormap_origin(map_gray, origin_px)
 
 
 def _validate_landmark_pixels(
@@ -152,6 +160,7 @@ def run(
     pf_path_selection: str = PF_PATH_SELECTION,
     pf_landmark_mode: str = PF_LANDMARK_MODE,
     pf_landmark_range_weight_power: float = PF_LANDMARK_RANGE_WEIGHT_POWER,
+    pf_landmark_retrofit: bool = PF_LANDMARK_RETROFIT,
     ble_landmark: bool = BLE_LANDMARK_ENABLED,
     ble_data_path: str | Path = BLE_DATA_PATH,
     ble_rssi_threshold: float = BLE_RSSI_THRESHOLD_DBM,
@@ -162,6 +171,13 @@ def run(
     ble_preflight: str = BLE_PREFLIGHT_MODE,
     ble_max_correction: float = BLE_MAX_CORRECTION_M,
     ble_max_warp_span: float = BLE_MAX_WARP_SPAN_M,
+    ble_retrofit_forward: str = BLE_RETROFIT_FORWARD_MODE,
+    ble_retrofit_max_heading: float = BLE_RETROFIT_MAX_HEADING_DEG,
+    ble_retrofit_stride_scale_min: float = BLE_RETROFIT_STRIDE_SCALE_MIN,
+    ble_retrofit_stride_scale_max: float = BLE_RETROFIT_STRIDE_SCALE_MAX,
+    ble_retrofit_min_span: float = BLE_RETROFIT_MIN_SPAN_M,
+    ble_retrofit_map_check: str = BLE_RETROFIT_MAP_CHECK,
+    ble_retrofit_damp_factors: tuple[float, ...] = BLE_RETROFIT_DAMP_FACTORS,
     ble_landmarks: tuple[Landmark, ...] | None = None,
 ) -> pd.DataFrame:
     """後方互換引数を設定へ変換し、解析と成果物保存を実行する。"""
@@ -180,6 +196,13 @@ def run(
             preflight_mode=ble_preflight,
             max_correction_m=ble_max_correction,
             max_warp_span_m=ble_max_warp_span,
+            retrofit_forward_mode=ble_retrofit_forward,
+            retrofit_max_heading_deg=ble_retrofit_max_heading,
+            retrofit_stride_scale_min=ble_retrofit_stride_scale_min,
+            retrofit_stride_scale_max=ble_retrofit_stride_scale_max,
+            retrofit_min_span_m=ble_retrofit_min_span,
+            retrofit_map_check=ble_retrofit_map_check,
+            retrofit_damp_factors=ble_retrofit_damp_factors,
         )
         if ble_landmarks is None
         else BleLandmarkSettings(
@@ -193,6 +216,13 @@ def run(
             preflight_mode=ble_preflight,
             max_correction_m=ble_max_correction,
             max_warp_span_m=ble_max_warp_span,
+            retrofit_forward_mode=ble_retrofit_forward,
+            retrofit_max_heading_deg=ble_retrofit_max_heading,
+            retrofit_stride_scale_min=ble_retrofit_stride_scale_min,
+            retrofit_stride_scale_max=ble_retrofit_stride_scale_max,
+            retrofit_min_span_m=ble_retrofit_min_span,
+            retrofit_map_check=ble_retrofit_map_check,
+            retrofit_damp_factors=ble_retrofit_damp_factors,
             landmarks=ble_landmarks,
         )
     )
@@ -243,6 +273,7 @@ def run(
         path_selection=pf_path_selection,
         landmark_mode=pf_landmark_mode,
         landmark_range_weight_power=pf_landmark_range_weight_power,
+        landmark_retrofit=pf_landmark_retrofit,
     )
     output_settings = OutputSettings(
         plot=plot,
@@ -260,7 +291,7 @@ def run(
             _validate_landmark_pixels(map_gray, landmark_settings.landmarks)
     elif landmark_settings.enabled:
         map_gray = _load_floormap_gray(floormap_path)
-        _validate_floormap_origin(map_gray, origin_px)
+        validate_floormap_origin(map_gray, origin_px)
         _validate_landmark_pixels(map_gray, landmark_settings.landmarks)
 
     particle_ble = (

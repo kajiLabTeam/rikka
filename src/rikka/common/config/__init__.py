@@ -229,6 +229,15 @@ BLE_MAX_CORRECTION_M = 5.0
 BLE_MAX_WARP_SPAN_M = 15.0
 BLE_PLOT_MIN_CORRECTION_M = 0.1
 
+# 相似変換による過去軌跡補正。既存 snap / warp の既定挙動には影響しない。
+BLE_RETROFIT_FORWARD_MODE = "hold"
+BLE_RETROFIT_MAX_HEADING_DEG = 30.0
+BLE_RETROFIT_STRIDE_SCALE_MIN = 0.7
+BLE_RETROFIT_STRIDE_SCALE_MAX = 1.4
+BLE_RETROFIT_MIN_SPAN_M = 3.0
+BLE_RETROFIT_MAP_CHECK = "warn"
+BLE_RETROFIT_DAMP_FACTORS: tuple[float, ...] = (1.0, 0.75, 0.5, 0.25)
+
 # RSSI = A - 10 n log10(d) の既定パスロスモデル。
 BLE_PATH_LOSS_TX_POWER_DBM = -59.0
 BLE_PATH_LOSS_N = 2.0
@@ -259,6 +268,7 @@ BLE_ANCHOR_WARN_JUMP_M = 20.0
 # "none" は無効、"observation" は観測尤度、"reset" は粒子再配置、
 # "hybrid" は粒子群の広がりに応じて観測尤度と再配置を切り替える。
 PF_LANDMARK_MODE = "hybrid"
+PF_LANDMARK_RETROFIT = False
 
 # ランドマーク観測尤度の距離標準偏差 [m]。合成BLEの6 seed評価で選定した値。
 # 実測BLEへ差し替えた場合は再校正すること。

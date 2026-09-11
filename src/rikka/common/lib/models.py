@@ -87,6 +87,8 @@ class StepHeading(NamedTuple):
     device_body_offset: float = 0.0
     dynamic_body_heading_confidence: float = 0.0
     body_heading_update_reason: str | None = None
+    landmark_heading_offset: float = 0.0
+    landmark_length_scale: float = 1.0
 
 
 class GyroBiasResult(NamedTuple):
@@ -398,6 +400,11 @@ class LandmarkCorrection(NamedTuple):
     correction_mode: str = "snap"
     warp_start_step: int | None = None
     warp_span_m: float | None = None
+    retrofit_rotation_deg: float | None = None
+    retrofit_scale: float | None = None
+    retrofit_damp_factor: float | None = None
+    retrofit_map_violations: int | None = None
+    retrofit_reject_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -418,6 +425,8 @@ class LandmarkCorrectionResult:
     detections: tuple[LandmarkObservation, ...] = ()
     landmarks: tuple[Landmark, ...] = ()
     ranging_consistency: tuple[RangingConsistency, ...] = ()
+    step_headings: list[StepHeading] | None = None
+    step_lengths: list[float] | None = None
 
 
 @dataclass(frozen=True)
