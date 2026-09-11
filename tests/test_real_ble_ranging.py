@@ -17,6 +17,7 @@ from rikka.ble.lib.pathloss import (
 )
 from rikka.cli import commands as cli_commands
 from rikka.cli.options import _resolve_ble_inputs, cli
+from rikka.common.lib.integrate import integrate_steps
 from rikka.common.lib.measurement_config import load_measurement_config
 from rikka.common.lib.models import (
     BleObservation,
@@ -24,10 +25,39 @@ from rikka.common.lib.models import (
     Landmark,
     LandmarkRange,
     PathLossModel,
+    StepHeading,
 )
 from rikka.common.settings import BleLandmarkSettings
 from rikka.particle.lib.landmark import landmark_range_likelihood
 from rikka.pdr.lib.landmark_correction import apply_landmark_corrections
+
+
+def _step_heading(index: int, heading: float = 0.0) -> StepHeading:
+    """相似補正テスト用の確定済み前進ステップを返す。"""
+    return StepHeading(
+        step_index=index,
+        timestamp_s=float(index + 1),
+        gyro_heading=heading,
+        accel_method1_heading=None,
+        accel_method2_heading=None,
+        selected_heading=heading,
+        source="test",
+        confidence=1.0,
+        angle_diff_method1=None,
+        angle_diff_method2=None,
+        segment_start_index=None,
+        segment_end_index=None,
+        peak1_index=None,
+        peak2_index=None,
+        body_heading=heading,
+        motion_heading=heading,
+        movement_type="forward",
+        forward_displacement=1.0,
+        lateral_displacement=0.0,
+        motion_confidence=1.0,
+        motion_reject_reason=None,
+        trajectory_movement_type="forward",
+    )
 
 
 def test_measurement_config_reads_optional_height_and_validates_map(
@@ -187,6 +217,111 @@ def test_pdr_warp_distributes_residual_over_past_steps() -> None:
     assert np.allclose(result.trajectory, [[0.0, 0.0], [2.0, 0.0], [4.0, 0.0]])
     assert result.corrections[0].warp_span_m == pytest.approx(2.0)
     assert result.corrections[0].correction_mode == "warp"
+
+
+@pytest.mark.parametrize(
+    ("forward_mode", "expected"),
+    [
+        ("hold", [[0.0, 0.0], [0.0, 2.0], [0.0, 4.0], [0.0, 6.0]]),
+        ("freeze", [[0.0, 0.0], [0.0, 2.0], [0.0, 4.0], [1.0, 4.0]]),
+    ],
+)
+def test_pdr_similarity_rewrites_state_and_reintegrates(
+    forward_mode: str,
+    expected: list[list[float]],
+) -> None:
+    """相似補正した方位・歩幅の再積分が補正軌跡と一致する。"""
+    headings = [_step_heading(index) for index in range(3)]
+    lengths = [1.0, 1.0, 1.0]
+    result = apply_landmark_corrections(
+        integrate_steps(headings, lengths),
+        [1.0, 2.0, 3.0],
+        step_headings=headings,
+        step_lengths=lengths,
+        detections=(LandmarkRange(2.0, "b1", -59.0, 0.0, 0.1, -59.0),),
+        landmarks=(Landmark("b1", 0.0, 4.0),),
+        floormap=FloorMap("map.png", (0, 0), 1.0),
+        data_path="ble.csv",
+        rssi_threshold_dbm=-70.0,
+        gx_mean=0.0,
+        gz_mean=1.0,
+        correction_mode="similarity",
+        max_correction_m=10.0,
+        retrofit_forward_mode=forward_mode,
+        retrofit_min_span_m=1.0,
+        retrofit_max_heading_deg=100.0,
+        retrofit_stride_scale_max=3.0,
+        retrofit_map_check="off",
+    )
+
+    assert result.step_headings is not None
+    assert result.step_lengths is not None
+    assert np.allclose(result.trajectory, expected)
+    assert np.allclose(
+        integrate_steps(result.step_headings, result.step_lengths),
+        result.trajectory,
+    )
+    changed_steps = 3 if forward_mode == "hold" else 2
+    assert all(
+        heading.landmark_heading_offset == pytest.approx(np.pi / 2.0)
+        for heading in result.step_headings[:changed_steps]
+    )
+    assert result.corrections[0].retrofit_rotation_deg == pytest.approx(90.0)
+    assert result.corrections[0].retrofit_scale == pytest.approx(2.0)
+
+
+def test_pdr_similarity_rejects_short_anchor_span() -> None:
+    """短すぎるアンカー区間は不安定な相似変換として棄却する。"""
+    headings = [_step_heading(0)]
+    result = apply_landmark_corrections(
+        integrate_steps(headings, [1.0]),
+        [1.0],
+        step_headings=headings,
+        step_lengths=[1.0],
+        detections=(LandmarkRange(1.0, "b1", -59.0, 0.0, 0.1, -59.0),),
+        landmarks=(Landmark("b1", 1.0, 1.0),),
+        floormap=FloorMap("map.png", (0, 0), 1.0),
+        data_path="ble.csv",
+        rssi_threshold_dbm=-70.0,
+        gx_mean=0.0,
+        gz_mean=1.0,
+        correction_mode="similarity",
+        retrofit_map_check="off",
+    )
+
+    assert not result.corrections[0].applied
+    assert result.corrections[0].retrofit_reject_reason == "span_too_short"
+
+
+def test_pdr_similarity_enforce_uses_largest_walkable_damping() -> None:
+    """完全補正が壁を横切る場合は最初に通る最大の減衰係数を採用する。"""
+    headings = [_step_heading(index) for index in range(2)]
+    map_gray = np.full((8, 8), 255.0)
+    map_gray[3, 1] = 0.0
+    result = apply_landmark_corrections(
+        integrate_steps(headings, [1.0, 1.0]),
+        [1.0, 2.0],
+        step_headings=headings,
+        step_lengths=[1.0, 1.0],
+        detections=(LandmarkRange(2.0, "b1", -59.0, 0.0, 0.1, -59.0),),
+        landmarks=(Landmark("b1", 1.0, 3.0),),
+        floormap=FloorMap("map.png", (1, 1), 1.0),
+        data_path="ble.csv",
+        rssi_threshold_dbm=-70.0,
+        gx_mean=0.0,
+        gz_mean=1.0,
+        correction_mode="similarity",
+        max_correction_m=10.0,
+        retrofit_min_span_m=1.0,
+        retrofit_max_heading_deg=100.0,
+        retrofit_map_check="enforce",
+        retrofit_damp_factors=(1.0, 0.75, 0.5),
+        map_gray=map_gray,
+    )
+
+    assert result.corrections[0].applied
+    assert result.corrections[0].retrofit_damp_factor == pytest.approx(0.75)
+    assert result.corrections[0].retrofit_map_violations == 0
 
 
 def test_pdr_rejects_correction_over_safety_limit() -> None:

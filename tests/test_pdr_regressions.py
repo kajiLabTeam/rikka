@@ -1,5 +1,6 @@
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -22,6 +23,7 @@ from rikka.common.lib.pdr_math import (
 from rikka.common.lib.sensors import load_sensor_data, process_sensor_data
 from rikka.common.lib.time_utils import _sample_gyro_angle
 from rikka.particle.lib.branches import branch_preserving_resample
+from rikka.particle.lib.finalize import _retrofit_landmark_anchor_jumps
 from rikka.particle.lib.map_constraints import (
     _evaluate_particle_transitions,
     _normalize_floormap_gray,
@@ -555,6 +557,27 @@ def test_run_particle_filter_seed_makes_particles_deterministic(tmp_path) -> Non
 
     np.testing.assert_allclose(np.asarray(first[0]), np.asarray(second[0]))
     np.testing.assert_allclose(first[3], second[3])
+
+
+def test_pf_landmark_retrofit_removes_selected_path_anchor_jump() -> None:
+    """PF代表経路だけを後処理し、確定アンカー歩の位置ジャンプを除く。"""
+    context = SimpleNamespace(
+        landmark_retrofit=True,
+        landmark_anchor_steps={3},
+        selected_path=np.asarray(
+            [[0.0, 0.0], [1.0, 0.0], [2.0, 0.0], [10.0, 10.0], [11.0, 10.0]]
+        ),
+        map_gray=np.full((30, 30), 255.0),
+        gx_mean=0.0,
+        gz_mean=1.0,
+        origin_px=(5, 5),
+        scale=1.0,
+    )
+
+    _retrofit_landmark_anchor_jumps(context)
+
+    np.testing.assert_allclose(context.selected_path[2], context.selected_path[3])
+    np.testing.assert_allclose(context.selected_path[3:], [[10.0, 10.0], [11.0, 10.0]])
 
 
 def test_particle_filter_diagnostics_field_order_is_stable() -> None:

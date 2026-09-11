@@ -28,6 +28,13 @@ from .config import (
     BLE_MAX_WARP_SPAN_M,
     BLE_PDR_CORRECTION_MODE,
     BLE_PREFLIGHT_MODE,
+    BLE_RETROFIT_DAMP_FACTORS,
+    BLE_RETROFIT_FORWARD_MODE,
+    BLE_RETROFIT_MAP_CHECK,
+    BLE_RETROFIT_MAX_HEADING_DEG,
+    BLE_RETROFIT_MIN_SPAN_M,
+    BLE_RETROFIT_STRIDE_SCALE_MAX,
+    BLE_RETROFIT_STRIDE_SCALE_MIN,
     BLE_RSSI_RELEASE_MARGIN_DB,
     BLE_RSSI_RELEASE_STREAK,
     BLE_RSSI_SMOOTHING_SAMPLES,
@@ -59,6 +66,7 @@ from .config import (
     PF_LANDMARK_RESET_MIN_DISTANCE_M,
     PF_LANDMARK_RESET_SIGMA_M,
     PF_LANDMARK_RESET_SPREAD_RATIO,
+    PF_LANDMARK_RETROFIT,
     PF_LANDMARK_SIGMA_M,
     PF_MOTION_PREDICTIVE_WEIGHT_POWER,
     PF_NUM_PARTICLES,
@@ -78,6 +86,8 @@ from .lib.models import Landmark
 from .lib.validation import (
     BLE_PDR_CORRECTION_MODES,
     BLE_PREFLIGHT_MODES,
+    BLE_RETROFIT_FORWARD_MODES,
+    BLE_RETROFIT_MAP_CHECK_MODES,
     BLE_SAMPLE_MODES,
     FORWARD_HEADING_SOURCES,
     GYRO_BIAS_METHODS,
@@ -225,6 +235,7 @@ class ParticleSettings:
     landmark_reset_min_distance_m: float = PF_LANDMARK_RESET_MIN_DISTANCE_M
     landmark_reset_heading_sigma: float = PF_LANDMARK_RESET_HEADING_SIGMA
     landmark_anchor_warn_jump_m: float = BLE_ANCHOR_WARN_JUMP_M
+    landmark_retrofit: bool = PF_LANDMARK_RETROFIT
 
     def __post_init__(self) -> None:
         validate_scale(self.scale)
@@ -340,6 +351,13 @@ class BleLandmarkSettings:
     preflight_mode: str = BLE_PREFLIGHT_MODE
     max_correction_m: float = BLE_MAX_CORRECTION_M
     max_warp_span_m: float = BLE_MAX_WARP_SPAN_M
+    retrofit_forward_mode: str = BLE_RETROFIT_FORWARD_MODE
+    retrofit_max_heading_deg: float = BLE_RETROFIT_MAX_HEADING_DEG
+    retrofit_stride_scale_min: float = BLE_RETROFIT_STRIDE_SCALE_MIN
+    retrofit_stride_scale_max: float = BLE_RETROFIT_STRIDE_SCALE_MAX
+    retrofit_min_span_m: float = BLE_RETROFIT_MIN_SPAN_M
+    retrofit_map_check: str = BLE_RETROFIT_MAP_CHECK
+    retrofit_damp_factors: tuple[float, ...] = BLE_RETROFIT_DAMP_FACTORS
     landmarks: tuple[Landmark, ...] = field(
         default_factory=lambda: _build_landmarks_with_anchors(
             BLE_LANDMARKS_PX,
@@ -379,6 +397,37 @@ class BleLandmarkSettings:
         validate_choice("ble_preflight", self.preflight_mode, BLE_PREFLIGHT_MODES)
         validate_positive_parameter("max_correction_m", self.max_correction_m)
         validate_positive_parameter("max_warp_span_m", self.max_warp_span_m)
+        validate_choice(
+            "retrofit_forward_mode",
+            self.retrofit_forward_mode,
+            BLE_RETROFIT_FORWARD_MODES,
+        )
+        validate_non_negative_parameter(
+            "retrofit_max_heading_deg", self.retrofit_max_heading_deg
+        )
+        validate_positive_parameter(
+            "retrofit_stride_scale_min", self.retrofit_stride_scale_min
+        )
+        validate_positive_parameter(
+            "retrofit_stride_scale_max", self.retrofit_stride_scale_max
+        )
+        if self.retrofit_stride_scale_min > self.retrofit_stride_scale_max:
+            raise ValueError("retrofit_stride_scale_min は max 以下にしてください。")
+        validate_positive_parameter("retrofit_min_span_m", self.retrofit_min_span_m)
+        validate_choice(
+            "retrofit_map_check",
+            self.retrofit_map_check,
+            BLE_RETROFIT_MAP_CHECK_MODES,
+        )
+        if not self.retrofit_damp_factors:
+            raise ValueError("retrofit_damp_factors は1件以上必要です。")
+        if any(
+            not np.isfinite(factor) or not 0.0 < factor <= 1.0
+            for factor in self.retrofit_damp_factors
+        ):
+            raise ValueError(
+                "retrofit_damp_factors は 0 より大きく 1 以下にしてください。"
+            )
         validate_landmarks(
             tuple(
                 (item.beacon_id, item.pixel_x, item.pixel_y) for item in self.landmarks

@@ -1082,6 +1082,11 @@ def test_build_landmark_corrections_dataframe_has_diagnostic_columns() -> None:
             "correction_mode": "snap",
             "warp_start_step": None,
             "warp_span_m": None,
+            "retrofit_rotation_deg": None,
+            "retrofit_scale": None,
+            "retrofit_damp_factor": None,
+            "retrofit_map_violations": None,
+            "retrofit_reject_reason": None,
         }
     ]
 

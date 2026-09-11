@@ -11,10 +11,12 @@
     入力ペア確認、既定CSV読み込み、共有歩列準備、BLE補正、結果型構築の順に処理する。
 """
 
+import matplotlib.image as mpimg
 import pandas as pd
 
 from ..ble.lib.ranging_check import run_ranging_preflight
 from ..ble.pipeline import run_ble_landmark_detection
+from ..common.lib.floormap import normalize_floormap_gray
 from ..common.lib.models import FloorMap, TrajectoryResult
 from ..common.lib.sensors import load_sensor_data
 from ..common.settings import PdrSettings
@@ -55,6 +57,8 @@ def run_pdr(
         landmark = apply_landmark_corrections(
             prepared.trajectory,
             prepared.t_at_steps,
+            step_headings=prepared.step_headings,
+            step_lengths=prepared.step_lengths,
             detections=detections,
             landmarks=settings.landmark.landmarks,
             floormap=floormap,
@@ -65,13 +69,34 @@ def run_pdr(
             correction_mode=settings.landmark.correction_mode,
             max_correction_m=settings.landmark.max_correction_m,
             max_warp_span_m=settings.landmark.max_warp_span_m,
+            retrofit_forward_mode=settings.landmark.retrofit_forward_mode,
+            retrofit_max_heading_deg=settings.landmark.retrofit_max_heading_deg,
+            retrofit_stride_scale_min=(settings.landmark.retrofit_stride_scale_min),
+            retrofit_stride_scale_max=(settings.landmark.retrofit_stride_scale_max),
+            retrofit_min_span_m=settings.landmark.retrofit_min_span_m,
+            retrofit_map_check=settings.landmark.retrofit_map_check,
+            retrofit_damp_factors=settings.landmark.retrofit_damp_factors,
+            map_gray=(
+                normalize_floormap_gray(mpimg.imread(floormap.path))
+                if settings.landmark.correction_mode == "similarity"
+                and settings.landmark.retrofit_map_check != "off"
+                else None
+            ),
             ranging_consistency=consistency,
         )
     return TrajectoryResult(
         trajectory=prepared.trajectory if landmark is None else landmark.trajectory,
-        step_lengths=prepared.step_lengths,
+        step_lengths=(
+            prepared.step_lengths
+            if landmark is None or landmark.step_lengths is None
+            else landmark.step_lengths
+        ),
         t_at_steps=prepared.t_at_steps,
-        step_headings=prepared.step_headings,
+        step_headings=(
+            prepared.step_headings
+            if landmark is None or landmark.step_headings is None
+            else landmark.step_headings
+        ),
         prepared=prepared,
         landmark=landmark,
     )

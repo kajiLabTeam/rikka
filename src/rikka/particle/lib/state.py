@@ -105,6 +105,7 @@ class ParticleRuntime:
     landmark_reset_min_distance_m: float
     landmark_reset_heading_sigma: float
     landmark_anchor_warn_jump_m: float
+    landmark_retrofit: bool
     landmark_events_collector: list[LandmarkCorrection] | None
 
     adaptive_recovery_scale: bool = field(init=False)

@@ -241,6 +241,8 @@ def _build_step_headings_dataframe(step_headings: list[StepHeading]) -> pd.DataF
         "trajectory_movement_type",
         "forward_heading_source",
         "step_length_scale",
+        "landmark_heading_offset_deg",
+        "landmark_length_scale",
         "confidence",
         "motion_confidence",
         "yaw_delta_deg",
@@ -283,6 +285,10 @@ def _build_step_headings_dataframe(step_headings: list[StepHeading]) -> pd.DataF
             "trajectory_movement_type": heading.trajectory_movement_type,
             "forward_heading_source": heading.forward_heading_source,
             "step_length_scale": heading.step_length_scale,
+            "landmark_heading_offset_deg": _angle_to_deg(
+                heading.landmark_heading_offset
+            ),
+            "landmark_length_scale": heading.landmark_length_scale,
             "confidence": heading.confidence,
             "motion_confidence": heading.motion_confidence,
             "yaw_delta_deg": _angle_to_deg(heading.yaw_delta),
@@ -401,6 +407,11 @@ def _build_landmark_corrections_dataframe(
         "correction_mode",
         "warp_start_step",
         "warp_span_m",
+        "retrofit_rotation_deg",
+        "retrofit_scale",
+        "retrofit_damp_factor",
+        "retrofit_map_violations",
+        "retrofit_reject_reason",
         "ranging_corr",
         "ranging_path_loss_n",
         "ranging_passed",
@@ -430,6 +441,11 @@ def _build_landmark_corrections_dataframe(
             "correction_mode": correction.correction_mode,
             "warp_start_step": correction.warp_start_step,
             "warp_span_m": correction.warp_span_m,
+            "retrofit_rotation_deg": correction.retrofit_rotation_deg,
+            "retrofit_scale": correction.retrofit_scale,
+            "retrofit_damp_factor": correction.retrofit_damp_factor,
+            "retrofit_map_violations": correction.retrofit_map_violations,
+            "retrofit_reject_reason": correction.retrofit_reject_reason,
             "ranging_corr": (
                 consistency[correction.beacon_id].correlation
                 if correction.beacon_id in consistency
@@ -485,6 +501,11 @@ def _build_landmark_corrections_dataframe(
                 "correction_mode": np.nan,
                 "warp_start_step": np.nan,
                 "warp_span_m": np.nan,
+                "retrofit_rotation_deg": np.nan,
+                "retrofit_scale": np.nan,
+                "retrofit_damp_factor": np.nan,
+                "retrofit_map_violations": np.nan,
+                "retrofit_reject_reason": None,
                 "ranging_corr": (
                     consistency[detection.beacon_id].correlation
                     if detection.beacon_id in consistency

@@ -27,6 +27,13 @@ from ..common.config import (
     BLE_MAX_WARP_SPAN_M,
     BLE_PDR_CORRECTION_MODE,
     BLE_PREFLIGHT_MODE,
+    BLE_RETROFIT_DAMP_FACTORS,
+    BLE_RETROFIT_FORWARD_MODE,
+    BLE_RETROFIT_MAP_CHECK,
+    BLE_RETROFIT_MAX_HEADING_DEG,
+    BLE_RETROFIT_MIN_SPAN_M,
+    BLE_RETROFIT_STRIDE_SCALE_MAX,
+    BLE_RETROFIT_STRIDE_SCALE_MIN,
     BLE_RSSI_RELEASE_MARGIN_DB,
     BLE_RSSI_RELEASE_STREAK,
     BLE_RSSI_THRESHOLD_DBM,
@@ -44,6 +51,7 @@ from ..common.config import (
     INITIAL_DIRECTION,
     MOTION_ESTIMATION,
     PF_LANDMARK_MODE,
+    PF_LANDMARK_RETROFIT,
     PF_MOTION_PREDICTIVE_WEIGHT_POWER,
     PF_NUM_PARTICLES,
     PF_PATH_SELECTION,
@@ -62,6 +70,8 @@ from ..common.lib.models import Landmark
 from ..common.lib.validation import (
     BLE_PDR_CORRECTION_MODES,
     BLE_PREFLIGHT_MODES,
+    BLE_RETROFIT_FORWARD_MODES,
+    BLE_RETROFIT_MAP_CHECK_MODES,
     BLE_SAMPLE_MODES,
     BLE_SAMPLE_SOURCES,
     FORWARD_HEADING_SOURCES,
@@ -89,6 +99,13 @@ _BLE_PREFLIGHT_DEFAULT = BLE_PREFLIGHT_MODE
 _BLE_PREFLIGHT_CHOICES = BLE_PREFLIGHT_MODES
 _BLE_MAX_CORRECTION_DEFAULT = BLE_MAX_CORRECTION_M
 _BLE_MAX_WARP_SPAN_DEFAULT = BLE_MAX_WARP_SPAN_M
+_BLE_RETROFIT_FORWARD_DEFAULT = BLE_RETROFIT_FORWARD_MODE
+_BLE_RETROFIT_MAX_HEADING_DEFAULT = BLE_RETROFIT_MAX_HEADING_DEG
+_BLE_RETROFIT_SCALE_MIN_DEFAULT = BLE_RETROFIT_STRIDE_SCALE_MIN
+_BLE_RETROFIT_SCALE_MAX_DEFAULT = BLE_RETROFIT_STRIDE_SCALE_MAX
+_BLE_RETROFIT_MIN_SPAN_DEFAULT = BLE_RETROFIT_MIN_SPAN_M
+_BLE_RETROFIT_MAP_CHECK_DEFAULT = BLE_RETROFIT_MAP_CHECK
+_BLE_RETROFIT_DAMP_FACTORS_DEFAULT = BLE_RETROFIT_DAMP_FACTORS
 _BLE_RELEASE_MARGIN_DEFAULT = BLE_RSSI_RELEASE_MARGIN_DB
 _BLE_RELEASE_STREAK_DEFAULT = BLE_RSSI_RELEASE_STREAK
 _BLE_SYNC_WINDOW_DEFAULT = BLE_SYNC_WINDOW_S
@@ -127,6 +144,7 @@ _SMOOTHING_MODE_CHOICES = SMOOTHING_MODES
 _PF_MOTION_PREDICTIVE_WEIGHT_POWER_DEFAULT = PF_MOTION_PREDICTIVE_WEIGHT_POWER
 _PF_LANDMARK_MODE_DEFAULT = PF_LANDMARK_MODE
 _PF_LANDMARK_MODE_CHOICES = PF_LANDMARK_MODES
+_PF_LANDMARK_RETROFIT_DEFAULT = PF_LANDMARK_RETROFIT
 _PF_NUM_PARTICLES_DEFAULT = PF_NUM_PARTICLES
 _PF_PATH_SELECTION_DEFAULT = PF_PATH_SELECTION
 _PF_PATH_SELECTION_CHOICES = PF_PATH_SELECTION_METHODS
@@ -288,6 +306,64 @@ def _resolve_measurement_settings(
 
 def _common_options(f: click.decorators.FC) -> click.decorators.FC:
     """run / particle コマンド共通オプションをまとめたデコレータ。"""
+    f = click.option(
+        "--ble-retrofit-damp-factor",
+        "ble_retrofit_damp_factors",
+        type=float,
+        multiple=True,
+        default=_BLE_RETROFIT_DAMP_FACTORS_DEFAULT,
+        show_default=True,
+        callback=lambda ctx, param, value: tuple(
+            _validate_cli_positive_float(ctx, param, item) for item in value
+        ),
+        help="地図違反時に試す相似補正の減衰係数（複数指定可）",
+    )(f)
+    f = click.option(
+        "--ble-retrofit-map-check",
+        type=click.Choice(BLE_RETROFIT_MAP_CHECK_MODES),
+        default=_BLE_RETROFIT_MAP_CHECK_DEFAULT,
+        show_default=True,
+        help="相似補正後の壁交差の扱い",
+    )(f)
+    f = click.option(
+        "--ble-retrofit-min-span",
+        type=float,
+        default=_BLE_RETROFIT_MIN_SPAN_DEFAULT,
+        show_default=True,
+        callback=_validate_cli_positive_float,
+        help="相似補正を解く最小アンカー間距離 [m]",
+    )(f)
+    f = click.option(
+        "--ble-retrofit-stride-scale-max",
+        type=float,
+        default=_BLE_RETROFIT_SCALE_MAX_DEFAULT,
+        show_default=True,
+        callback=_validate_cli_positive_float,
+        help="相似補正で許容する歩幅倍率の上限",
+    )(f)
+    f = click.option(
+        "--ble-retrofit-stride-scale-min",
+        type=float,
+        default=_BLE_RETROFIT_SCALE_MIN_DEFAULT,
+        show_default=True,
+        callback=_validate_cli_positive_float,
+        help="相似補正で許容する歩幅倍率の下限",
+    )(f)
+    f = click.option(
+        "--ble-retrofit-max-heading",
+        type=float,
+        default=_BLE_RETROFIT_MAX_HEADING_DEFAULT,
+        show_default=True,
+        callback=_validate_cli_non_negative_float,
+        help="相似補正で許容する絶対回転角の上限 [deg]",
+    )(f)
+    f = click.option(
+        "--ble-retrofit-forward",
+        type=click.Choice(BLE_RETROFIT_FORWARD_MODES),
+        default=_BLE_RETROFIT_FORWARD_DEFAULT,
+        show_default=True,
+        help="相似補正を後続歩へ保持するか固定するか",
+    )(f)
     f = click.option(
         "--ble-max-warp-span",
         type=float,
@@ -560,6 +636,13 @@ def _run_pdr(
     ble_preflight: str,
     ble_max_correction: float,
     ble_max_warp_span: float,
+    ble_retrofit_forward: str,
+    ble_retrofit_max_heading: float,
+    ble_retrofit_stride_scale_min: float,
+    ble_retrofit_stride_scale_max: float,
+    ble_retrofit_min_span: float,
+    ble_retrofit_map_check: str,
+    ble_retrofit_damp_factors: tuple[float, ...],
 ) -> None:
     from ..common.lib.sensors import load_sensor_data  # noqa: PLC0415
     from .commands import run as _run  # noqa: PLC0415
@@ -613,6 +696,13 @@ def _run_pdr(
         ble_preflight=ble_preflight,
         ble_max_correction=ble_max_correction,
         ble_max_warp_span=ble_max_warp_span,
+        ble_retrofit_forward=ble_retrofit_forward,
+        ble_retrofit_max_heading=ble_retrofit_max_heading,
+        ble_retrofit_stride_scale_min=ble_retrofit_stride_scale_min,
+        ble_retrofit_stride_scale_max=ble_retrofit_stride_scale_max,
+        ble_retrofit_min_span=ble_retrofit_min_span,
+        ble_retrofit_map_check=ble_retrofit_map_check,
+        ble_retrofit_damp_factors=ble_retrofit_damp_factors,
         ble_landmarks=ble_landmarks,
     )
 
@@ -653,6 +743,13 @@ def run(
     ble_preflight: str,
     ble_max_correction: float,
     ble_max_warp_span: float,
+    ble_retrofit_forward: str,
+    ble_retrofit_max_heading: float,
+    ble_retrofit_stride_scale_min: float,
+    ble_retrofit_stride_scale_max: float,
+    ble_retrofit_min_span: float,
+    ble_retrofit_map_check: str,
+    ble_retrofit_damp_factors: tuple[float, ...],
 ) -> None:
     """決定論的 PDR で歩行軌跡を推定する。"""
     _run_pdr(
@@ -688,6 +785,13 @@ def run(
         ble_preflight,
         ble_max_correction,
         ble_max_warp_span,
+        ble_retrofit_forward,
+        ble_retrofit_max_heading,
+        ble_retrofit_stride_scale_min,
+        ble_retrofit_stride_scale_max,
+        ble_retrofit_min_span,
+        ble_retrofit_map_check,
+        ble_retrofit_damp_factors,
     )
 
 
@@ -695,6 +799,12 @@ cli.add_command(run, name="pdr")
 
 
 @cli.command()
+@click.option(
+    "--pf-landmark-retrofit/--no-pf-landmark-retrofit",
+    default=_PF_LANDMARK_RETROFIT_DEFAULT,
+    show_default=True,
+    help="PF代表軌跡のランドマーク不連続を相似補正",
+)
 @click.option(
     "--pf-landmark-mode",
     type=click.Choice(_PF_LANDMARK_MODE_CHOICES),
@@ -806,6 +916,13 @@ def particle(
     ble_preflight: str,
     ble_max_correction: float,
     ble_max_warp_span: float,
+    ble_retrofit_forward: str,
+    ble_retrofit_max_heading: float,
+    ble_retrofit_stride_scale_min: float,
+    ble_retrofit_stride_scale_max: float,
+    ble_retrofit_min_span: float,
+    ble_retrofit_map_check: str,
+    ble_retrofit_damp_factors: tuple[float, ...],
     save_animation: bool,
     save_step_frames: bool,
     step_frames_range: tuple[int, int] | None,
@@ -817,6 +934,7 @@ def particle(
     motion_predictive_weight_power: float,
     pf_path_selection: str,
     pf_landmark_mode: str,
+    pf_landmark_retrofit: bool,
 ) -> None:
     """パーティクルフィルタ + マップマッチングで歩行軌跡を推定する。"""
     from ..common.lib.sensors import load_sensor_data  # noqa: PLC0415
@@ -872,6 +990,7 @@ def particle(
         motion_predictive_weight_power=motion_predictive_weight_power,
         pf_path_selection=pf_path_selection,
         pf_landmark_mode=pf_landmark_mode,
+        pf_landmark_retrofit=pf_landmark_retrofit,
         ble_landmark=ble_landmark,
         ble_data_path=ble_data_path,
         ble_rssi_threshold=ble_rssi_threshold,
@@ -882,6 +1001,13 @@ def particle(
         ble_preflight=ble_preflight,
         ble_max_correction=ble_max_correction,
         ble_max_warp_span=ble_max_warp_span,
+        ble_retrofit_forward=ble_retrofit_forward,
+        ble_retrofit_max_heading=ble_retrofit_max_heading,
+        ble_retrofit_stride_scale_min=ble_retrofit_stride_scale_min,
+        ble_retrofit_stride_scale_max=ble_retrofit_stride_scale_max,
+        ble_retrofit_min_span=ble_retrofit_min_span,
+        ble_retrofit_map_check=ble_retrofit_map_check,
+        ble_retrofit_damp_factors=ble_retrofit_damp_factors,
         ble_landmarks=ble_landmarks,
     )
 

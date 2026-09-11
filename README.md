@@ -193,11 +193,19 @@ BLE_LANDMARK_ANCHORS = (
 - `--ble-rssi-threshold DBM`: 検出下限を変更
 - `--ble-release-margin DB` / `--ble-release-streak N`: ラッチ解除条件
 - `--ble-sync-window S`: 同時受信としてまとめる時刻窓
-- `--ble-correction snap|warp`: 通常PDRの補正方式。`warp` は直前拘束からの
-  累積歩行距離比で残差を過去の歩へ配分します。実測BLEでは `warp` を使用して
-  ください（既定の `snap` は合成BLEとの後方互換用です）。
+- `--ble-correction snap|warp|similarity`: 通常PDRの補正方式。`warp` は直前拘束
+  からの累積歩行距離比で残差を過去へ配分します。`similarity` は直前アンカーを
+  固定して過去区間を回転・等方スケールし、同じ量を確定方位と歩幅へ反映します。
+  既定の `snap` は後方互換のため維持しています。
 - `--ble-preflight warn|error|off`: RSSI距離整合FAIL時の扱い
 - `--ble-max-correction M` / `--ble-max-warp-span M`: 補正移動量とwarp区間の上限
+- `--ble-retrofit-forward hold|freeze`: `similarity` の回転・倍率を後続歩にも保持するか、
+  検出歩までで固定するかを選びます。既定は `hold` です。
+- `--ble-retrofit-max-heading`、`--ble-retrofit-stride-scale-min/max`、
+  `--ble-retrofit-min-span`: 回転角・歩幅倍率・最小アンカー間距離の安全条件です。
+- `--ble-retrofit-map-check off|warn|enforce`: 地図違反を無視、警告、減衰後も
+  違反する補正の棄却、のいずれかで扱います。減衰列は
+  `--ble-retrofit-damp-factor` を複数指定して変更できます。
 
 実測ログの検出は、閾値以上が3観測続くこと、同一ビーコンの10秒cooldown、
 6dB以上のピークprominenceを要求します。合成BLEは既存goldenとの互換性のため、
@@ -211,7 +219,9 @@ Thingsup形式を `--ble-data` で明示した場合、同じディレクトリ�
 
 BLE 有効時は `output/<timestamp>/landmark_corrections.csv` に検出時刻、RSSI、
 補正前座標、ランドマーク座標、補正後座標、検出距離、最接近時間差、アンカーの
-位置・方位設定を保存します。
+位置・方位設定を保存します。`similarity` では回転角、歩幅倍率、減衰係数、
+地図違反辺数、棄却理由も保存します。補正後の `step_headings.csv` には累積方位補正、
+累積歩幅倍率を保存し、`step_lengths.csv` と再積分すると軌跡に一致します。
 `trajectory.png`（PFでは `pf_trajectory.png`）には、`BLE_pos.csv` で座標が
 確定した全ビーコンを星印で表示し、補正前後の軌跡と補正地点を重ねて描画します。
 最終歩より後で補正できなかった検出は `step=-1`、`applied=False` としてCSVに残ります。
@@ -234,6 +244,10 @@ particle filter では `--pf-landmark-mode` で反映方式を選びます。
   観測が反映されます。`pf-path-selection=sequence` では合法な単一祖先経路を選びます。
   実測BLEではこの方式を使用します。
 
+`--pf-landmark-retrofit` は既定で無効です。確定ランドマークが粒子を再配置した歩で、
+代表経路選択後のアンカー直前区間だけを相似変換し、位置ジャンプを解消します。
+粒子履歴と重みは変更せず、変換後の全辺が歩行可能な場合だけ採用します。
+
 観測尤度の既定値は `sigma=1.0m`、`floor=0.05` です。合成BLEと対応する正解軌跡の
 6 seed評価で選んだ値なので、実測BLE取得後には再校正が必要です。PF の
 `landmark_corrections.csv` にある
@@ -243,7 +257,8 @@ particle filter では `--pf-landmark-mode` で反映方式を選びます。
 ランドマーク測位は推定方式ごとに責務を分離しています。
 
 - `ble/`: BLE CSV、RSSI 判定、サンプル生成
-- `landmark/lib/`: 検出元や推定方式に依存しない座標変換、歩割り当て、時間整合評価
+- `landmark/lib/`: 検出元や推定方式に依存しない座標変換、歩割り当て、時間整合評価、
+  アンカー固定の相似変換
 - `pdr/lib/landmark_correction.py`: 通常 PDR 固有の完全座標補正
 - `particle/lib/landmark.py`: PF 固有の観測尤度と reset 再配置
 - `common/lib/models.py`: PDR / PF が共有する `LandmarkRange`、`PathLossModel` など
