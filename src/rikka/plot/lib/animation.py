@@ -20,14 +20,26 @@ import numpy as np
 import pandas as pd
 from matplotlib.animation import FuncAnimation
 from matplotlib.artist import Artist
+from matplotlib.axes import Axes
 from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize
 
 from ...common.config import FLOORMAP_ORIGIN_PX, FLOORMAP_PATH, FLOORMAP_SCALE
 from ...common.lib.floormap import compute_pixel_coords
-from ...common.lib.models import StepHeading
+from ...common.lib.models import LandmarkCorrectionResult, StepHeading
 from ...matplotlib_config import configure_japanese_font
-from .trajectory import _plot_heading_overlay as plot_heading_overlay
+from .trajectory import (
+    _plot_anchor_heading_arrows as plot_anchor_heading_arrows,
+)
+from .trajectory import (
+    _plot_heading_overlay as plot_heading_overlay,
+)
+from .trajectory import (
+    _plot_landmark_overlay as plot_landmark_overlay,
+)
+from .trajectory import (
+    _plot_landmark_positions as plot_landmark_positions,
+)
 
 
 def plot_particle_filter_trajectory(
@@ -39,6 +51,7 @@ def plot_particle_filter_trajectory(
     scale: float = FLOORMAP_SCALE,
     output_dir: Path | None = None,
     step_headings: list[StepHeading] | None = None,
+    landmark: LandmarkCorrectionResult | None = None,
 ) -> None:
     """PF の平均優先・壁際祖先フォールバック軌跡を描画する。
 
@@ -67,6 +80,8 @@ def plot_particle_filter_trajectory(
     pts = np.column_stack([px, py]).reshape(-1, 1, 2)
     segments = np.concatenate([pts[:-1], pts[1:]], axis=1)
     lc = LineCollection(segments.tolist(), cmap=cmap, norm=norm, zorder=2)
+    if landmark is not None:
+        lc.set_label("ランドマーク反映後軌跡")
     lc.set_array(np.arange(n - 1))
     ax.add_collection(lc)
     sc = ax.scatter(px, py, c=np.arange(n), cmap=cmap, norm=norm, s=20, zorder=3)
@@ -81,6 +96,15 @@ def plot_particle_filter_trajectory(
         origin_px,
         scale,
     )
+    plot_landmark_overlay(
+        ax,
+        landmark,
+        gx_mean,
+        gz_mean,
+        origin_px,
+        scale,
+        raw_label="通常PDR軌跡（BLEなしPFではない）",
+    )
 
     ax.set_title("フロアマップ上のパーティクルフィルタ軌跡")
     ax.legend()
@@ -88,6 +112,67 @@ def plot_particle_filter_trajectory(
     if output_dir is not None:
         fig.savefig(output_dir / "pf_trajectory.png", dpi=150, bbox_inches="tight")
     plt.show()
+
+
+def _draw_animation_landmarks(
+    ax: Axes,
+    landmark: LandmarkCorrectionResult,
+    frame: int,
+    gx_mean: float,
+    gz_mean: float,
+    origin_px: tuple[int, int],
+    scale: float,
+) -> None:
+    """1フレームへランドマーク位置と、その時点までに起きた補正を描く。
+
+    ``all_particles`` は先頭が初期粒子なので、歩 index ``step_index`` の補正は
+    フレーム ``step_index + 1`` に対応する。
+    """
+    applied = [item for item in landmark.corrections if item.applied]
+    plot_landmark_positions(ax, landmark, applied, gx_mean, gz_mean, origin_px, scale)
+    if not applied:
+        return
+
+    unique = list(
+        {
+            (item.beacon_id, item.landmark_x, item.landmark_y): item for item in applied
+        }.values()
+    )
+    plot_anchor_heading_arrows(ax, unique, gx_mean, gz_mean, origin_px, scale)
+
+    done = [item for item in applied if item.step_index + 1 <= frame]
+    if not done:
+        return
+    before = np.asarray([(item.before_x, item.before_y) for item in done], dtype=float)
+    before_px, before_py = compute_pixel_coords(
+        before[:, 0], before[:, 1], gx_mean, gz_mean, origin_px, scale
+    )
+    after = np.asarray(
+        [(item.landmark_x, item.landmark_y) for item in done], dtype=float
+    )
+    after_px, after_py = compute_pixel_coords(
+        after[:, 0], after[:, 1], gx_mean, gz_mean, origin_px, scale
+    )
+    ax.scatter(
+        before_px,
+        before_py,
+        marker="X",
+        s=110,
+        color="red",
+        edgecolors="black",
+        linewidths=0.8,
+        zorder=7,
+        label="ランドマーク補正",
+    )
+    for index in range(len(done)):
+        ax.plot(
+            [before_px[index], after_px[index]],
+            [before_py[index], after_py[index]],
+            color="red",
+            linewidth=1.0,
+            alpha=0.7,
+            zorder=6,
+        )
 
 
 def save_particle_animation(
@@ -100,6 +185,7 @@ def save_particle_animation(
     scale: float = FLOORMAP_SCALE,
     output_path: Path | str = Path("output/particle_filter.mp4"),
     fps: int = 10,
+    landmark: LandmarkCorrectionResult | None = None,
 ) -> None:
     """PF の各ステップのパーティクル分布をフロアマップ上に描画し MP4 として保存する。
 
@@ -114,6 +200,8 @@ def save_particle_animation(
         scale: 1ピクセルあたりのメートル数
         output_path: 出力ファイルパス（.mp4）
         fps: フレームレート
+        landmark: BLE ランドマーク補正結果。粒子が寄る先を確認できるよう、
+            ランドマーク位置を全フレームへ、補正が起きた歩を該当フレーム以降へ描く
     """
     from matplotlib.animation import FFMpegWriter, PillowWriter  # noqa: PLC0415
 
@@ -160,6 +248,17 @@ def save_particle_animation(
             scale,
         )
         ax.scatter(px_c, py_c, s=60, c="red", zorder=4)
+        if landmark is not None:
+            _draw_animation_landmarks(
+                ax,
+                landmark,
+                frame,
+                gx_mean,
+                gz_mean,
+                origin_px,
+                scale,
+            )
+            ax.legend(loc="upper right", fontsize=8)
         ax.set_title(f"ステップ {frame}")
         return []
 

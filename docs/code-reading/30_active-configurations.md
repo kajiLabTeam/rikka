@@ -37,6 +37,13 @@ Python APIでは [`cli.commands.run()`](../../src/rikka/cli/commands.py#L81) の
 | recovery開始 | 有効率5%未満 | 低水準API | [`PF_RECOVERY_VALID_RATIO`](../../src/rikka/common/config/__init__.py#L183) | propose | 標準使用 |
 | motion重み指数 | 0.1 | `--motion-predictive-weight-power` | config | weighting | EXP-020改善 |
 | 代表経路 | sequence guard | current | [`PF_PATH_SELECTION`](../../src/rikka/common/config/__init__.py#L192) | finalize | sequenceは反転改善時のみ採用 |
+| BLE | 既定無効、閾値-70dBm | `--ble-landmark` | `BLE_LANDMARK_ENABLED` | BLE pipeline | 実測起点の診断を先に行う |
+| BLEピーク平滑化 | 移動中央値5サンプル | Python API | `BLE_RSSI_SMOOTHING_SAMPLES` | detection | 生RSSIは診断に保持 |
+| PDR BLE補正 | snap | warp / similarity | `BLE_PDR_CORRECTION_MODE` / `--ble-correction` | landmark_correction | similarityは方位・歩幅も更新 |
+| similarity前向き反映 | hold | freeze | `BLE_RETROFIT_FORWARD_MODE` / `--ble-retrofit-forward` | landmark_correction | 定数方位オフセットを仮定 |
+| similarity地図検査 | warn | off / enforce | `BLE_RETROFIT_MAP_CHECK` / `--ble-retrofit-map-check` | landmark retrofit | enforceは減衰後も違反なら棄却 |
+| PF BLE反映 | hybrid | none / observation / reset / ranging | `PF_LANDMARK_MODE` / `--pf-landmark-mode` | particle | 実測ではranging、resetなし |
+| PFアンカー経路補正 | 無効 | `--pf-landmark-retrofit` | `PF_LANDMARK_RETROFIT` | particle finalize | 代表経路だけを後処理 |
 | branch quota | false | 低水準APIのみ | runner引数 | recovery | EXP-015悪化、既定無効 |
 | 通常図 | 有効 | `--no-plot` | OutputSettings | plot.pipeline | 精度非影響 |
 | PF animation | plot有効時 | `--save-animation` | OutputSettings | animation | 精度非影響 |
@@ -46,8 +53,9 @@ Python APIでは [`cli.commands.run()`](../../src/rikka/cli/commands.py#L81) の
 
 1. [`common.config`](../../src/rikka/common/config/__init__.py) が定数を定義します。
 2. [`cli.options`](../../src/rikka/cli/options.py) がimport時にCLI既定値へコピーします。
-3. [`cli.commands.run()`](../../src/rikka/cli/commands.py#L81) がsettings dataclassへ変換・再検証します。
-4. PDR/PF pipelineは検証済みsettingsを受けます。
+3. 起点・方位・身長はCLI明示値、計測ディレクトリの`walk_config.csv`、共通既定値の順で解決します。
+4. [`cli.commands.run()`](../../src/rikka/cli/commands.py#L81) がsettings dataclassへ変換・再検証します。
+5. PDR/PF pipelineは検証済みsettingsを受けます。
 
 設定定数を実行中にmonkeypatchしても、すでにimport済みCLIの `_..._DEFAULT` へ反映されない
 可能性があります。実験ではCLI引数またはPython API引数を明示してください。

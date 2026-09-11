@@ -12,6 +12,7 @@
     解析結果の配列長と時刻を揃え、角度や分類値を出力列へ変換して DataFrame を返す。
 """
 
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
@@ -20,6 +21,7 @@ import pandas as pd
 
 from ...common.lib.models import (
     GyroBiasResult,
+    LandmarkCorrectionResult,
     StepDetectionResult,
     StepDirectionPosterior,
     StepHeading,
@@ -239,6 +241,8 @@ def _build_step_headings_dataframe(step_headings: list[StepHeading]) -> pd.DataF
         "trajectory_movement_type",
         "forward_heading_source",
         "step_length_scale",
+        "landmark_heading_offset_deg",
+        "landmark_length_scale",
         "confidence",
         "motion_confidence",
         "yaw_delta_deg",
@@ -281,6 +285,10 @@ def _build_step_headings_dataframe(step_headings: list[StepHeading]) -> pd.DataF
             "trajectory_movement_type": heading.trajectory_movement_type,
             "forward_heading_source": heading.forward_heading_source,
             "step_length_scale": heading.step_length_scale,
+            "landmark_heading_offset_deg": _angle_to_deg(
+                heading.landmark_heading_offset
+            ),
+            "landmark_length_scale": heading.landmark_length_scale,
             "confidence": heading.confidence,
             "motion_confidence": heading.motion_confidence,
             "yaw_delta_deg": _angle_to_deg(heading.yaw_delta),
@@ -370,6 +378,152 @@ def _build_direction_posteriors_dataframe(
         }
         rows.append(values)
     return pd.DataFrame(rows)
+
+
+def _build_landmark_corrections_dataframe(
+    landmark: LandmarkCorrectionResult,
+) -> pd.DataFrame:
+    """BLE ランドマーク検出と補正の履歴をCSV保存用DataFrameに変換する。"""
+    columns = [
+        "step",
+        "timestamp_s",
+        "beacon_id",
+        "rssi_dbm",
+        "detected",
+        "applied",
+        "before_x",
+        "before_y",
+        "landmark_x",
+        "landmark_y",
+        "after_x",
+        "after_y",
+        "detection_distance_m",
+        "nearest_approach_delta_s",
+        "anchor_position_sigma_m",
+        "anchor_heading_deg",
+        "anchor_heading_sigma_deg",
+        "anchor_heading_bidirectional",
+        "estimated_distance_m",
+        "correction_mode",
+        "warp_start_step",
+        "warp_span_m",
+        "retrofit_rotation_deg",
+        "retrofit_scale",
+        "retrofit_damp_factor",
+        "retrofit_map_violations",
+        "retrofit_reject_reason",
+        "ranging_corr",
+        "ranging_path_loss_n",
+        "ranging_passed",
+    ]
+    consistency = {item.beacon_id: item for item in landmark.ranging_consistency}
+    rows: list[dict[str, object]] = [
+        {
+            "step": correction.step_index,
+            "timestamp_s": correction.timestamp_s,
+            "beacon_id": correction.beacon_id,
+            "rssi_dbm": correction.rssi_dbm,
+            "detected": True,
+            "applied": correction.applied,
+            "before_x": correction.before_x,
+            "before_y": correction.before_y,
+            "landmark_x": correction.landmark_x,
+            "landmark_y": correction.landmark_y,
+            "after_x": correction.after_x,
+            "after_y": correction.after_y,
+            "detection_distance_m": correction.detection_distance_m,
+            "nearest_approach_delta_s": correction.nearest_approach_delta_s,
+            "anchor_position_sigma_m": correction.anchor_position_sigma_m,
+            "anchor_heading_deg": correction.anchor_heading_deg,
+            "anchor_heading_sigma_deg": correction.anchor_heading_sigma_deg,
+            "anchor_heading_bidirectional": correction.anchor_heading_bidirectional,
+            "estimated_distance_m": correction.estimated_distance_m,
+            "correction_mode": correction.correction_mode,
+            "warp_start_step": correction.warp_start_step,
+            "warp_span_m": correction.warp_span_m,
+            "retrofit_rotation_deg": correction.retrofit_rotation_deg,
+            "retrofit_scale": correction.retrofit_scale,
+            "retrofit_damp_factor": correction.retrofit_damp_factor,
+            "retrofit_map_violations": correction.retrofit_map_violations,
+            "retrofit_reject_reason": correction.retrofit_reject_reason,
+            "ranging_corr": (
+                consistency[correction.beacon_id].correlation
+                if correction.beacon_id in consistency
+                else np.nan
+            ),
+            "ranging_path_loss_n": (
+                consistency[correction.beacon_id].path_loss_n
+                if correction.beacon_id in consistency
+                else np.nan
+            ),
+            "ranging_passed": (
+                consistency[correction.beacon_id].passed
+                if correction.beacon_id in consistency
+                else np.nan
+            ),
+        }
+        for correction in landmark.corrections
+    ]
+    corrected_detections = Counter(
+        (
+            correction.timestamp_s,
+            correction.beacon_id,
+            correction.rssi_dbm,
+        )
+        for correction in landmark.corrections
+    )
+    for detection in landmark.detections:
+        key = (detection.timestamp_s, detection.beacon_id, detection.rssi_dbm)
+        if corrected_detections[key] > 0:
+            corrected_detections[key] -= 1
+            continue
+        rows.append(
+            {
+                "step": -1,
+                "timestamp_s": detection.timestamp_s,
+                "beacon_id": detection.beacon_id,
+                "rssi_dbm": detection.rssi_dbm,
+                "detected": True,
+                "applied": False,
+                "before_x": np.nan,
+                "before_y": np.nan,
+                "landmark_x": np.nan,
+                "landmark_y": np.nan,
+                "after_x": np.nan,
+                "after_y": np.nan,
+                "detection_distance_m": np.nan,
+                "nearest_approach_delta_s": np.nan,
+                "anchor_position_sigma_m": np.nan,
+                "anchor_heading_deg": np.nan,
+                "anchor_heading_sigma_deg": np.nan,
+                "anchor_heading_bidirectional": False,
+                "estimated_distance_m": getattr(detection, "distance_m", np.nan),
+                "correction_mode": np.nan,
+                "warp_start_step": np.nan,
+                "warp_span_m": np.nan,
+                "retrofit_rotation_deg": np.nan,
+                "retrofit_scale": np.nan,
+                "retrofit_damp_factor": np.nan,
+                "retrofit_map_violations": np.nan,
+                "retrofit_reject_reason": None,
+                "ranging_corr": (
+                    consistency[detection.beacon_id].correlation
+                    if detection.beacon_id in consistency
+                    else np.nan
+                ),
+                "ranging_path_loss_n": (
+                    consistency[detection.beacon_id].path_loss_n
+                    if detection.beacon_id in consistency
+                    else np.nan
+                ),
+                "ranging_passed": (
+                    consistency[detection.beacon_id].passed
+                    if detection.beacon_id in consistency
+                    else np.nan
+                ),
+            }
+        )
+    return pd.DataFrame(rows, columns=columns)
 
 
 def _step_plot_signal(

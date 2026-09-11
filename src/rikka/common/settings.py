@@ -16,6 +16,40 @@ from pathlib import Path
 import numpy as np
 
 from .config import (
+    BLE_ANCHOR_WARN_JUMP_M,
+    BLE_DATA_PATH,
+    BLE_DETECT_COOLDOWN_S,
+    BLE_DETECT_MIN_PROMINENCE_DB,
+    BLE_DETECT_MIN_SAMPLES,
+    BLE_LANDMARK_ANCHORS,
+    BLE_LANDMARK_ENABLED,
+    BLE_LANDMARKS_PX,
+    BLE_MAX_CORRECTION_M,
+    BLE_MAX_WARP_SPAN_M,
+    BLE_PDR_CORRECTION_MODE,
+    BLE_PREFLIGHT_MODE,
+    BLE_RETROFIT_DAMP_FACTORS,
+    BLE_RETROFIT_FORWARD_MODE,
+    BLE_RETROFIT_MAP_CHECK,
+    BLE_RETROFIT_MAX_HEADING_DEG,
+    BLE_RETROFIT_MIN_SPAN_M,
+    BLE_RETROFIT_STRIDE_SCALE_MAX,
+    BLE_RETROFIT_STRIDE_SCALE_MIN,
+    BLE_RSSI_RELEASE_MARGIN_DB,
+    BLE_RSSI_RELEASE_STREAK,
+    BLE_RSSI_SMOOTHING_SAMPLES,
+    BLE_RSSI_THRESHOLD_DBM,
+    BLE_SAMPLE_BASE_RSSI_DBM,
+    BLE_SAMPLE_INTERVAL_S,
+    BLE_SAMPLE_MIN_RSSI_DBM,
+    BLE_SAMPLE_MODE,
+    BLE_SAMPLE_NOISE_SIGMA_DB,
+    BLE_SAMPLE_PEAK_RSSI_DBM,
+    BLE_SAMPLE_PEAK_TIMES_S,
+    BLE_SAMPLE_SEED,
+    BLE_SAMPLE_SIGMA_M,
+    BLE_SAMPLE_SIGMA_S,
+    BLE_SYNC_WINDOW_S,
     FLOORMAP_ORIGIN_PX,
     FLOORMAP_PATH,
     FLOORMAP_SCALE,
@@ -24,6 +58,16 @@ from .config import (
     HEADING_METHOD,
     INITIAL_DIRECTION,
     MOTION_ESTIMATION,
+    PF_LANDMARK_LIKELIHOOD_FLOOR,
+    PF_LANDMARK_MAX_JUMP_M,
+    PF_LANDMARK_MODE,
+    PF_LANDMARK_RANGE_WEIGHT_POWER,
+    PF_LANDMARK_RESET_HEADING_SIGMA,
+    PF_LANDMARK_RESET_MIN_DISTANCE_M,
+    PF_LANDMARK_RESET_SIGMA_M,
+    PF_LANDMARK_RESET_SPREAD_RATIO,
+    PF_LANDMARK_RETROFIT,
+    PF_LANDMARK_SIGMA_M,
     PF_MOTION_PREDICTIVE_WEIGHT_POWER,
     PF_NUM_PARTICLES,
     PF_PATH_SELECTION,
@@ -38,12 +82,19 @@ from .config import (
     STEP_LENGTH_METHOD,
     USER_HEIGHT_M,
 )
+from .lib.models import Landmark
 from .lib.validation import (
+    BLE_PDR_CORRECTION_MODES,
+    BLE_PREFLIGHT_MODES,
+    BLE_RETROFIT_FORWARD_MODES,
+    BLE_RETROFIT_MAP_CHECK_MODES,
+    BLE_SAMPLE_MODES,
     FORWARD_HEADING_SOURCES,
     GYRO_BIAS_METHODS,
     HEADING_METHODS,
     MOTION_ESTIMATION_METHODS,
     MOTION_HEADING_CORRECTION_METHODS,
+    PF_LANDMARK_MODES,
     PF_PATH_SELECTION_METHODS,
     SIDESTEP_HEADING_SOURCES,
     SIDESTEP_SMOOTHING_METHODS,
@@ -52,6 +103,7 @@ from .lib.validation import (
     STEP_DETECTION_METHODS,
     STEP_LENGTH_METHODS,
     validate_choice,
+    validate_landmarks,
     validate_non_negative_parameter,
     validate_positive_parameter,
     validate_scale,
@@ -173,6 +225,17 @@ class ParticleSettings:
     count: int = PF_NUM_PARTICLES
     motion_predictive_weight_power: float = PF_MOTION_PREDICTIVE_WEIGHT_POWER
     path_selection: str = PF_PATH_SELECTION
+    landmark_mode: str = PF_LANDMARK_MODE
+    landmark_sigma_m: float = PF_LANDMARK_SIGMA_M
+    landmark_likelihood_floor: float = PF_LANDMARK_LIKELIHOOD_FLOOR
+    landmark_range_weight_power: float = PF_LANDMARK_RANGE_WEIGHT_POWER
+    landmark_reset_sigma_m: float = PF_LANDMARK_RESET_SIGMA_M
+    landmark_max_jump_m: float = PF_LANDMARK_MAX_JUMP_M
+    landmark_reset_spread_ratio: float = PF_LANDMARK_RESET_SPREAD_RATIO
+    landmark_reset_min_distance_m: float = PF_LANDMARK_RESET_MIN_DISTANCE_M
+    landmark_reset_heading_sigma: float = PF_LANDMARK_RESET_HEADING_SIGMA
+    landmark_anchor_warn_jump_m: float = BLE_ANCHOR_WARN_JUMP_M
+    landmark_retrofit: bool = PF_LANDMARK_RETROFIT
 
     def __post_init__(self) -> None:
         validate_scale(self.scale)
@@ -187,6 +250,252 @@ class ParticleSettings:
             self.path_selection,
             PF_PATH_SELECTION_METHODS,
         )
+        validate_choice("pf_landmark_mode", self.landmark_mode, PF_LANDMARK_MODES)
+        validate_positive_parameter("landmark_sigma_m", self.landmark_sigma_m)
+        validate_positive_parameter(
+            "landmark_reset_sigma_m",
+            self.landmark_reset_sigma_m,
+        )
+        validate_positive_parameter("landmark_max_jump_m", self.landmark_max_jump_m)
+        validate_positive_parameter(
+            "landmark_reset_spread_ratio",
+            self.landmark_reset_spread_ratio,
+        )
+        validate_non_negative_parameter(
+            "landmark_reset_min_distance_m",
+            self.landmark_reset_min_distance_m,
+        )
+        validate_non_negative_parameter(
+            "landmark_reset_heading_sigma",
+            self.landmark_reset_heading_sigma,
+        )
+        validate_positive_parameter(
+            "landmark_anchor_warn_jump_m",
+            self.landmark_anchor_warn_jump_m,
+        )
+        if not 0.0 <= self.landmark_likelihood_floor < 1.0:
+            raise ValueError(
+                "landmark_likelihood_floor は 0 以上 1 未満を指定してください。"
+            )
+        validate_non_negative_parameter(
+            "landmark_range_weight_power", self.landmark_range_weight_power
+        )
+
+
+def _build_landmarks_with_anchors(
+    landmark_rows: tuple[tuple[str, float, float], ...],
+    anchor_rows: tuple[tuple[str, float, float | None, float, bool], ...],
+) -> tuple[Landmark, ...]:
+    """座標定義へ beacon_id が一致する確定情報を結合する。"""
+    validated = validate_landmarks(landmark_rows)
+    known_ids = {beacon_id for beacon_id, _, _ in validated}
+    anchors: dict[str, tuple[float, float | None, float, bool]] = {}
+    for (
+        beacon_id,
+        position_sigma_m,
+        heading_deg,
+        heading_sigma_deg,
+        bidirectional,
+    ) in anchor_rows:
+        if beacon_id not in known_ids:
+            raise ValueError(
+                "BLE_LANDMARK_ANCHORS に BLE_LANDMARKS_PX 未定義の "
+                f"beacon_id があります: {beacon_id}"
+            )
+        if beacon_id in anchors:
+            raise ValueError(
+                f"BLE_LANDMARK_ANCHORS の beacon_id が重複しています: {beacon_id}"
+            )
+        anchors[beacon_id] = (
+            position_sigma_m,
+            heading_deg,
+            heading_sigma_deg,
+            bidirectional,
+        )
+
+    landmarks = []
+    for beacon_id, pixel_x, pixel_y in validated:
+        anchor = anchors.get(beacon_id)
+        if anchor is None:
+            landmarks.append(Landmark(beacon_id, pixel_x, pixel_y))
+            continue
+        landmarks.append(
+            Landmark(
+                beacon_id,
+                pixel_x,
+                pixel_y,
+                position_sigma_m=anchor[0],
+                heading_deg=anchor[1],
+                heading_sigma_deg=anchor[2],
+                heading_bidirectional=anchor[3],
+            )
+        )
+    return tuple(landmarks)
+
+
+@dataclass(frozen=True)
+class BleLandmarkSettings:
+    """BLE ランドマーク補正の設定。"""
+
+    enabled: bool = BLE_LANDMARK_ENABLED
+    data_path: str | Path = BLE_DATA_PATH
+    rssi_threshold_dbm: float = BLE_RSSI_THRESHOLD_DBM
+    release_margin_db: float = BLE_RSSI_RELEASE_MARGIN_DB
+    release_streak: int = BLE_RSSI_RELEASE_STREAK
+    sync_window_s: float = BLE_SYNC_WINDOW_S
+    rssi_smoothing_samples: int = BLE_RSSI_SMOOTHING_SAMPLES
+    detect_min_samples: int = BLE_DETECT_MIN_SAMPLES
+    detect_cooldown_s: float = BLE_DETECT_COOLDOWN_S
+    detect_min_prominence_db: float = BLE_DETECT_MIN_PROMINENCE_DB
+    correction_mode: str = BLE_PDR_CORRECTION_MODE
+    preflight_mode: str = BLE_PREFLIGHT_MODE
+    max_correction_m: float = BLE_MAX_CORRECTION_M
+    max_warp_span_m: float = BLE_MAX_WARP_SPAN_M
+    retrofit_forward_mode: str = BLE_RETROFIT_FORWARD_MODE
+    retrofit_max_heading_deg: float = BLE_RETROFIT_MAX_HEADING_DEG
+    retrofit_stride_scale_min: float = BLE_RETROFIT_STRIDE_SCALE_MIN
+    retrofit_stride_scale_max: float = BLE_RETROFIT_STRIDE_SCALE_MAX
+    retrofit_min_span_m: float = BLE_RETROFIT_MIN_SPAN_M
+    retrofit_map_check: str = BLE_RETROFIT_MAP_CHECK
+    retrofit_damp_factors: tuple[float, ...] = BLE_RETROFIT_DAMP_FACTORS
+    landmarks: tuple[Landmark, ...] = field(
+        default_factory=lambda: _build_landmarks_with_anchors(
+            BLE_LANDMARKS_PX,
+            BLE_LANDMARK_ANCHORS,
+        )
+    )
+
+    def __post_init__(self) -> None:
+        if not np.isfinite(self.rssi_threshold_dbm):
+            raise ValueError("rssi_threshold_dbm は有限な値を指定してください。")
+        validate_non_negative_parameter("release_margin_db", self.release_margin_db)
+        if (
+            not isinstance(self.release_streak, int)
+            or isinstance(self.release_streak, bool)
+            or self.release_streak < 1
+        ):
+            raise ValueError("release_streak は 1 以上の整数を指定してください。")
+        validate_non_negative_parameter("sync_window_s", self.sync_window_s)
+        if (
+            not isinstance(self.rssi_smoothing_samples, int)
+            or isinstance(self.rssi_smoothing_samples, bool)
+            or self.rssi_smoothing_samples < 1
+            or self.rssi_smoothing_samples % 2 == 0
+        ):
+            raise ValueError("rssi_smoothing_samples は正の奇数にしてください。")
+        if self.detect_min_samples < 1:
+            raise ValueError("detect_min_samples は1以上にしてください。")
+        validate_non_negative_parameter("detect_cooldown_s", self.detect_cooldown_s)
+        validate_non_negative_parameter(
+            "detect_min_prominence_db", self.detect_min_prominence_db
+        )
+        validate_choice(
+            "ble_correction",
+            self.correction_mode,
+            BLE_PDR_CORRECTION_MODES,
+        )
+        validate_choice("ble_preflight", self.preflight_mode, BLE_PREFLIGHT_MODES)
+        validate_positive_parameter("max_correction_m", self.max_correction_m)
+        validate_positive_parameter("max_warp_span_m", self.max_warp_span_m)
+        validate_choice(
+            "retrofit_forward_mode",
+            self.retrofit_forward_mode,
+            BLE_RETROFIT_FORWARD_MODES,
+        )
+        validate_non_negative_parameter(
+            "retrofit_max_heading_deg", self.retrofit_max_heading_deg
+        )
+        validate_positive_parameter(
+            "retrofit_stride_scale_min", self.retrofit_stride_scale_min
+        )
+        validate_positive_parameter(
+            "retrofit_stride_scale_max", self.retrofit_stride_scale_max
+        )
+        if self.retrofit_stride_scale_min > self.retrofit_stride_scale_max:
+            raise ValueError("retrofit_stride_scale_min は max 以下にしてください。")
+        validate_positive_parameter("retrofit_min_span_m", self.retrofit_min_span_m)
+        validate_choice(
+            "retrofit_map_check",
+            self.retrofit_map_check,
+            BLE_RETROFIT_MAP_CHECK_MODES,
+        )
+        if not self.retrofit_damp_factors:
+            raise ValueError("retrofit_damp_factors は1件以上必要です。")
+        if any(
+            not np.isfinite(factor) or not 0.0 < factor <= 1.0
+            for factor in self.retrofit_damp_factors
+        ):
+            raise ValueError(
+                "retrofit_damp_factors は 0 より大きく 1 以下にしてください。"
+            )
+        validate_landmarks(
+            tuple(
+                (item.beacon_id, item.pixel_x, item.pixel_y) for item in self.landmarks
+            )
+        )
+        for item in self.landmarks:
+            if item.position_sigma_m is not None:
+                validate_positive_parameter(
+                    f"{item.beacon_id}.position_sigma_m",
+                    item.position_sigma_m,
+                )
+            if item.heading_deg is not None and not np.isfinite(item.heading_deg):
+                raise ValueError(
+                    f"{item.beacon_id}.heading_deg は有限な値を指定してください。"
+                )
+            if item.heading_deg is not None and item.position_sigma_m is None:
+                raise ValueError(
+                    f"{item.beacon_id}.heading_deg には position_sigma_m が必要です。"
+                )
+            validate_non_negative_parameter(
+                f"{item.beacon_id}.heading_sigma_deg",
+                item.heading_sigma_deg,
+            )
+        if self.enabled and not self.landmarks:
+            raise ValueError(
+                "BLE ランドマーク補正を有効にする場合は landmarks を 1 件以上"
+                "指定してください。"
+            )
+
+    def landmark_map(self) -> dict[str, Landmark]:
+        """beacon_id からランドマークを引く辞書を返す。"""
+        return {item.beacon_id: item for item in self.landmarks}
+
+
+@dataclass(frozen=True)
+class BleSampleSettings:
+    """サンプル BLE RSSI 生成の条件。本番のランドマーク測位では使用しない。"""
+
+    mode: str = BLE_SAMPLE_MODE
+    peak_times_s: tuple[tuple[str, float], ...] = BLE_SAMPLE_PEAK_TIMES_S
+    interval_s: float = BLE_SAMPLE_INTERVAL_S
+    base_rssi_dbm: float = BLE_SAMPLE_BASE_RSSI_DBM
+    peak_rssi_dbm: float = BLE_SAMPLE_PEAK_RSSI_DBM
+    sigma_s: float = BLE_SAMPLE_SIGMA_S
+    sigma_m: float = BLE_SAMPLE_SIGMA_M
+    noise_sigma_db: float = BLE_SAMPLE_NOISE_SIGMA_DB
+    min_rssi_dbm: float = BLE_SAMPLE_MIN_RSSI_DBM
+    seed: int = BLE_SAMPLE_SEED
+
+    def __post_init__(self) -> None:
+        validate_choice("ble_sample_mode", self.mode, BLE_SAMPLE_MODES)
+        validate_positive_parameter("interval_s", self.interval_s)
+        validate_positive_parameter("sigma_s", self.sigma_s)
+        validate_positive_parameter("sigma_m", self.sigma_m)
+        validate_non_negative_parameter("noise_sigma_db", self.noise_sigma_db)
+        if self.mode == "time" and not self.peak_times_s:
+            raise ValueError("peak_times_s は 1 件以上指定してください。")
+        seen: set[str] = set()
+        for beacon_id, peak_time in self.peak_times_s:
+            if beacon_id in seen:
+                raise ValueError(f"beacon_id が重複しています: {beacon_id}")
+            seen.add(beacon_id)
+            if not np.isfinite(peak_time):
+                raise ValueError("peak_times_s の時刻は有限な値を指定してください。")
+        if self.peak_rssi_dbm <= self.base_rssi_dbm:
+            raise ValueError(
+                "peak_rssi_dbm は base_rssi_dbm より大きい値を指定してください。"
+            )
 
 
 @dataclass(frozen=True)
@@ -222,3 +531,4 @@ class PdrSettings:
     step: StepSettings = field(default_factory=StepSettings)
     heading: HeadingSettings = field(default_factory=HeadingSettings)
     motion_state: MotionStateSettings = field(default_factory=MotionStateSettings)
+    landmark: BleLandmarkSettings = field(default_factory=BleLandmarkSettings)

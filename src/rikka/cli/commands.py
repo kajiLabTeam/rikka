@@ -10,12 +10,32 @@
     設定構築、通常PDR、任意のPF、コンソール要約、成果物保存の順に実行する。
 """
 
+from dataclasses import replace
 from pathlib import Path
 
 import matplotlib.image as mpimg
+import numpy as np
 import pandas as pd
 
+from ..ble.pipeline import run_ble_ranging_input
 from ..common.config import (
+    BLE_DATA_PATH,
+    BLE_LANDMARK_ENABLED,
+    BLE_MAX_CORRECTION_M,
+    BLE_MAX_WARP_SPAN_M,
+    BLE_PDR_CORRECTION_MODE,
+    BLE_PREFLIGHT_MODE,
+    BLE_RETROFIT_DAMP_FACTORS,
+    BLE_RETROFIT_FORWARD_MODE,
+    BLE_RETROFIT_MAP_CHECK,
+    BLE_RETROFIT_MAX_HEADING_DEG,
+    BLE_RETROFIT_MIN_SPAN_M,
+    BLE_RETROFIT_STRIDE_SCALE_MAX,
+    BLE_RETROFIT_STRIDE_SCALE_MIN,
+    BLE_RSSI_RELEASE_MARGIN_DB,
+    BLE_RSSI_RELEASE_STREAK,
+    BLE_RSSI_THRESHOLD_DBM,
+    BLE_SYNC_WINDOW_S,
     FLOORMAP_ORIGIN_PX,
     FLOORMAP_PATH,
     FLOORMAP_SCALE,
@@ -24,6 +44,9 @@ from ..common.config import (
     HEADING_METHOD,
     INITIAL_DIRECTION,
     MOTION_ESTIMATION,
+    PF_LANDMARK_MODE,
+    PF_LANDMARK_RANGE_WEIGHT_POWER,
+    PF_LANDMARK_RETROFIT,
     PF_MOTION_PREDICTIVE_WEIGHT_POWER,
     PF_NUM_PARTICLES,
     PF_PATH_SELECTION,
@@ -38,8 +61,14 @@ from ..common.config import (
     STEP_LENGTH_METHOD,
     USER_HEIGHT_M,
 )
-from ..common.lib.models import FloorMap, GyroBiasResult, PreparedPdrSteps
+from ..common.lib.floormap import (
+    is_walkable_cell,
+    normalize_floormap_gray,
+    validate_floormap_origin,
+)
+from ..common.lib.models import FloorMap, GyroBiasResult, Landmark, PreparedPdrSteps
 from ..common.settings import (
+    BleLandmarkSettings,
     HeadingSettings,
     MotionStateSettings,
     OutputSettings,
@@ -48,20 +77,13 @@ from ..common.settings import (
     SensorSettings,
     StepSettings,
 )
-from ..particle.lib.map_constraints import (
-    _normalize_floormap_gray,
-    _validate_floormap_origin,
-)
 from ..particle.pipeline import run_particle
 from ..pdr.pipeline import run_pdr
 from ..plot import pipeline as plot_pipeline
 
 
-def _validate_particle_floormap(
-    floormap_path: str | Path,
-    origin_px: tuple[int, int],
-) -> None:
-    """PF実行前にフロアマップと歩行可能な起点を検証する。"""
+def _load_floormap_gray(floormap_path: str | Path) -> np.ndarray:
+    """フロアマップを読み込み、0..255の2次元配列に正規化する。"""
     path = Path(floormap_path)
     if not path.exists():
         raise ValueError(f"フロアマップが存在しません: {path}")
@@ -72,10 +94,34 @@ def _validate_particle_floormap(
     except (OSError, SyntaxError, ValueError) as exc:
         raise ValueError(f"フロアマップを画像として読み込めません: {path}") from exc
 
-    map_gray = _normalize_floormap_gray(map_raw)
+    map_gray = normalize_floormap_gray(map_raw)
     if map_gray.ndim != 2 or map_gray.size == 0:
         raise ValueError(f"フロアマップ画像の形状が不正です: {path}")
-    _validate_floormap_origin(map_gray, origin_px)
+    return map_gray
+
+
+def _validate_particle_floormap(
+    floormap_path: str | Path,
+    origin_px: tuple[int, int],
+) -> None:
+    """PF実行前にフロアマップと歩行可能な起点を検証する。"""
+    map_gray = _load_floormap_gray(floormap_path)
+    validate_floormap_origin(map_gray, origin_px)
+
+
+def _validate_landmark_pixels(
+    map_gray: np.ndarray,
+    landmarks: tuple[Landmark, ...],
+) -> None:
+    """ランドマークが地図内の歩行可能画素にあることを検証する。"""
+    for landmark in landmarks:
+        pixel_x = int(np.floor(landmark.pixel_x + 0.5))
+        pixel_y = int(np.floor(landmark.pixel_y + 0.5))
+        if not is_walkable_cell(map_gray, pixel_x, pixel_y):
+            raise ValueError(
+                "ランドマークは歩行可能なマップ内画素を指定してください: "
+                f"{landmark.beacon_id} ({landmark.pixel_x}, {landmark.pixel_y})"
+            )
 
 
 def run(
@@ -112,10 +158,74 @@ def run(
     smoothing_mode: str = SMOOTHING_MODE,
     motion_predictive_weight_power: float = PF_MOTION_PREDICTIVE_WEIGHT_POWER,
     pf_path_selection: str = PF_PATH_SELECTION,
+    pf_landmark_mode: str = PF_LANDMARK_MODE,
+    pf_landmark_range_weight_power: float = PF_LANDMARK_RANGE_WEIGHT_POWER,
+    pf_landmark_retrofit: bool = PF_LANDMARK_RETROFIT,
+    ble_landmark: bool = BLE_LANDMARK_ENABLED,
+    ble_data_path: str | Path = BLE_DATA_PATH,
+    ble_rssi_threshold: float = BLE_RSSI_THRESHOLD_DBM,
+    ble_correction: str = BLE_PDR_CORRECTION_MODE,
+    ble_release_margin: float = BLE_RSSI_RELEASE_MARGIN_DB,
+    ble_release_streak: int = BLE_RSSI_RELEASE_STREAK,
+    ble_sync_window: float = BLE_SYNC_WINDOW_S,
+    ble_preflight: str = BLE_PREFLIGHT_MODE,
+    ble_max_correction: float = BLE_MAX_CORRECTION_M,
+    ble_max_warp_span: float = BLE_MAX_WARP_SPAN_M,
+    ble_retrofit_forward: str = BLE_RETROFIT_FORWARD_MODE,
+    ble_retrofit_max_heading: float = BLE_RETROFIT_MAX_HEADING_DEG,
+    ble_retrofit_stride_scale_min: float = BLE_RETROFIT_STRIDE_SCALE_MIN,
+    ble_retrofit_stride_scale_max: float = BLE_RETROFIT_STRIDE_SCALE_MAX,
+    ble_retrofit_min_span: float = BLE_RETROFIT_MIN_SPAN_M,
+    ble_retrofit_map_check: str = BLE_RETROFIT_MAP_CHECK,
+    ble_retrofit_damp_factors: tuple[float, ...] = BLE_RETROFIT_DAMP_FACTORS,
+    ble_landmarks: tuple[Landmark, ...] | None = None,
 ) -> pd.DataFrame:
     """後方互換引数を設定へ変換し、解析と成果物保存を実行する。"""
     if (save_step_frames or save_path_comparison) and not use_particle_filter:
         raise ValueError("粒子可視化の保存には use_particle_filter=True が必要です。")
+    floormap = FloorMap(str(floormap_path), origin_px, scale)
+    landmark_settings = (
+        BleLandmarkSettings(
+            enabled=ble_landmark,
+            data_path=ble_data_path,
+            rssi_threshold_dbm=ble_rssi_threshold,
+            release_margin_db=ble_release_margin,
+            release_streak=ble_release_streak,
+            sync_window_s=ble_sync_window,
+            correction_mode=ble_correction,
+            preflight_mode=ble_preflight,
+            max_correction_m=ble_max_correction,
+            max_warp_span_m=ble_max_warp_span,
+            retrofit_forward_mode=ble_retrofit_forward,
+            retrofit_max_heading_deg=ble_retrofit_max_heading,
+            retrofit_stride_scale_min=ble_retrofit_stride_scale_min,
+            retrofit_stride_scale_max=ble_retrofit_stride_scale_max,
+            retrofit_min_span_m=ble_retrofit_min_span,
+            retrofit_map_check=ble_retrofit_map_check,
+            retrofit_damp_factors=ble_retrofit_damp_factors,
+        )
+        if ble_landmarks is None
+        else BleLandmarkSettings(
+            enabled=ble_landmark,
+            data_path=ble_data_path,
+            rssi_threshold_dbm=ble_rssi_threshold,
+            release_margin_db=ble_release_margin,
+            release_streak=ble_release_streak,
+            sync_window_s=ble_sync_window,
+            correction_mode=ble_correction,
+            preflight_mode=ble_preflight,
+            max_correction_m=ble_max_correction,
+            max_warp_span_m=ble_max_warp_span,
+            retrofit_forward_mode=ble_retrofit_forward,
+            retrofit_max_heading_deg=ble_retrofit_max_heading,
+            retrofit_stride_scale_min=ble_retrofit_stride_scale_min,
+            retrofit_stride_scale_max=ble_retrofit_stride_scale_max,
+            retrofit_min_span_m=ble_retrofit_min_span,
+            retrofit_map_check=ble_retrofit_map_check,
+            retrofit_damp_factors=ble_retrofit_damp_factors,
+            landmarks=ble_landmarks,
+        )
+    )
     pdr_settings = PdrSettings(
         sensor=SensorSettings(
             gyro_bias_method=(
@@ -147,6 +257,11 @@ def run(
             motion_estimation=motion_estimation,
             smoothing_mode=smoothing_mode,
         ),
+        landmark=(
+            replace(landmark_settings, enabled=False)
+            if use_particle_filter
+            else landmark_settings
+        ),
     )
     particle_settings = ParticleSettings(
         floormap_path=floormap_path,
@@ -156,6 +271,9 @@ def run(
         count=particle_count,
         motion_predictive_weight_power=motion_predictive_weight_power,
         path_selection=pf_path_selection,
+        landmark_mode=pf_landmark_mode,
+        landmark_range_weight_power=pf_landmark_range_weight_power,
+        landmark_retrofit=pf_landmark_retrofit,
     )
     output_settings = OutputSettings(
         plot=plot,
@@ -168,13 +286,28 @@ def run(
     )
     if use_particle_filter:
         _validate_particle_floormap(floormap_path, origin_px)
+        if ble_landmark:
+            map_gray = _load_floormap_gray(floormap_path)
+            _validate_landmark_pixels(map_gray, landmark_settings.landmarks)
+    elif landmark_settings.enabled:
+        map_gray = _load_floormap_gray(floormap_path)
+        validate_floormap_origin(map_gray, origin_px)
+        _validate_landmark_pixels(map_gray, landmark_settings.landmarks)
 
-    result = run_pdr(pdr_settings, df_acc, df_gyro)
+    particle_ble = (
+        run_ble_ranging_input(landmark_settings) if use_particle_filter else None
+    )
+    result = run_pdr(pdr_settings, df_acc, df_gyro, floormap)
     if use_particle_filter:
         result = run_particle(
             result.prepared,
-            FloorMap(str(floormap_path), origin_px, scale),
+            floormap,
             particle_settings,
+            detections=None if particle_ble is None else particle_ble.detections,
+            ranging_observations=(
+                None if particle_ble is None else particle_ble.observations
+            ),
+            landmark_settings=landmark_settings,
         )
     _print_prepared_summary(result.prepared, pdr_settings)
     output_dir = plot_pipeline.create_output_dir()

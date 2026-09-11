@@ -190,3 +190,127 @@ MOTION_ESTIMATION = "adaptive"  # 標準の運動状態・方位・歩幅推定�
 SMOOTHING_MODE = "causal"  # 標準の時系列平滑化方式
 PF_MOTION_PREDICTIVE_WEIGHT_POWER = 0.1  # 運動状態予測尤度の重み指数
 PF_PATH_SELECTION = "sequence"  # 反転減少時だけ単一祖先経路を採用
+
+# BLE ランドマーク測位設定
+# 既知座標に設置した BLE ビーコンの強い電波を検出した時点で、PDR の推定位置を
+# ランドマーク座標へ補正する。BLE データが無い環境でも既存 PDR が動くよう既定は無効。
+BLE_LANDMARK_ENABLED = False
+
+# BLE RSSI の入力 CSV パス（列: timestamp_s, beacon_id, rssi_dbm）
+# サンプルデータは `rikka ble-sample` で生成する。実測データへ差し替える場合は
+# 同じ列構成・同じ経過秒の時間軸に揃えてこのパスを変更する。
+BLE_DATA_PATH = "input/ble/sample_rssi.csv"
+
+# ランドマーク検出とみなす RSSI の下限 [dBm]
+# この値以上の RSSI を受信したビーコンをランドマーク到達と判定する
+BLE_RSSI_THRESHOLD_DBM = -70.0
+
+# 同一ビーコンによる連続補正を防ぐラッチ解除マージン [dB]
+# 一度補正したビーコンは、RSSI が (閾値 - このマージン) を下回るまで再検出しない
+BLE_RSSI_RELEASE_MARGIN_DB = 3.0
+
+# ラッチ解除に必要な連続観測数
+# 単発のノイズで解除されないよう、解除水準を下回る観測がこの回数連続したときだけ
+# 再検出を許可する。1 を指定すると 1 サンプルで解除する
+BLE_RSSI_RELEASE_STREAK = 2
+
+# 同一アドバタイズとみなす受信時刻の許容差 [s]
+# 実測 BLE はビーコンごとに受信時刻が数 ms〜数十 ms ずれるため、この幅に収まる
+# 観測を同時受信として扱い、最も強い RSSI のビーコンを 1 件だけ採用する
+BLE_SYNC_WINDOW_S = 0.05
+
+# 実測 RSSI のピーク時刻を決める移動中央値のサンプル数。
+BLE_RSSI_SMOOTHING_SAMPLES = 5
+BLE_DETECT_MIN_SAMPLES = 3
+BLE_DETECT_COOLDOWN_S = 10.0
+BLE_DETECT_MIN_PROMINENCE_DB = 6.0
+BLE_PREFLIGHT_MODE = "warn"
+BLE_MAX_CORRECTION_M = 5.0
+BLE_MAX_WARP_SPAN_M = 15.0
+BLE_PLOT_MIN_CORRECTION_M = 0.1
+
+# 相似変換による過去軌跡補正。既存 snap / warp の既定挙動には影響しない。
+BLE_RETROFIT_FORWARD_MODE = "hold"
+BLE_RETROFIT_MAX_HEADING_DEG = 30.0
+BLE_RETROFIT_STRIDE_SCALE_MIN = 0.7
+BLE_RETROFIT_STRIDE_SCALE_MAX = 1.4
+BLE_RETROFIT_MIN_SPAN_M = 3.0
+BLE_RETROFIT_MAP_CHECK = "warn"
+BLE_RETROFIT_DAMP_FACTORS: tuple[float, ...] = (1.0, 0.75, 0.5, 0.25)
+
+# RSSI = A - 10 n log10(d) の既定パスロスモデル。
+BLE_PATH_LOSS_TX_POWER_DBM = -59.0
+BLE_PATH_LOSS_N = 2.0
+BLE_RSSI_SIGMA_DB = 6.0
+
+# 通常 PDR のランドマーク補正方式。既存挙動は snap のまま維持する。
+BLE_PDR_CORRECTION_MODE = "snap"
+
+# ランドマークとして扱う BLE ビーコンのフロアマップ上の既知座標
+# (beacon_id, pixel_x, pixel_y) の並び。--origin-px と同じ画像左上原点の
+# ピクセル座標で設定する。既定値は各廊下の中心付近に置いた歩行可能画素。
+BLE_LANDMARKS_PX: tuple[tuple[str, float, float], ...] = (
+    ("beacon_1", 2056, 2400),
+    ("beacon_2", 750, 1479),
+    ("beacon_3", 2056, 700),
+)
+
+# 通過地点の構造から位置・方位を確定できるランドマークの追加情報。
+# (beacon_id, 位置ばらつき[m], 方位[deg] または None, 方位ばらつき[deg],
+# 双方向か) の並び。方位は 0=+X、90=+Y、反時計回りが正。
+BLE_LANDMARK_ANCHORS: tuple[tuple[str, float, float | None, float, bool], ...] = ()
+
+# 確定ランドマーク反映時に警告する代表位置のジャンプ距離 [m]。
+# 確定情報なので反映自体は止めず、座標設定ミスを診断するために使用する。
+BLE_ANCHOR_WARN_JUMP_M = 20.0
+
+# particle filter へのランドマーク反映方式
+# "none" は無効、"observation" は観測尤度、"reset" は粒子再配置、
+# "hybrid" は粒子群の広がりに応じて観測尤度と再配置を切り替える。
+PF_LANDMARK_MODE = "hybrid"
+PF_LANDMARK_RETROFIT = False
+
+# ランドマーク観測尤度の距離標準偏差 [m]。合成BLEの6 seed評価で選定した値。
+# 実測BLEへ差し替えた場合は再校正すること。
+PF_LANDMARK_SIGMA_M = 1.0
+
+# 全粒子が遠い場合も全重み0を避ける観測尤度の下限 [0, 1)
+PF_LANDMARK_LIKELIHOOD_FLOOR = 0.05
+PF_LANDMARK_RANGE_WEIGHT_POWER = 1.0
+
+# reset 方式でランドマーク周辺へ粒子を再配置する標準偏差 [m]
+PF_LANDMARK_RESET_SIGMA_M = 1.0
+
+# resetの異常な位置ジャンプを防ぐ上限と、hybridがresetへ切り替える距離比。
+PF_LANDMARK_MAX_JUMP_M = 5.0
+PF_LANDMARK_RESET_SPREAD_RATIO = 4.0
+
+# hybrid が reset を選ぶ最小の代表距離 [m]
+# reset は PF_LANDMARK_RESET_SIGMA_M の幅で粒子を撒き直すため、誤差がその幅と
+# 同程度なら撒き直すほうが不確かさを増やす。距離比だけで判定すると、粒子群が
+# 収束している序盤に小さな誤差でも reset が発火して軌跡が折り返す。
+PF_LANDMARK_RESET_MIN_DISTANCE_M = 2.0
+
+# reset後に位置と従来方位が矛盾した場合の折り返しを避ける方位多様化 [rad]。
+PF_LANDMARK_RESET_HEADING_SIGMA = 0.20
+
+# サンプル BLE RSSI 生成条件
+# 本番のランドマーク測位では使用せず、`rikka ble-sample` だけが参照する。
+# "distance" は歩行者とビーコンの距離、"time" は従来の固定時刻で生成する。
+BLE_SAMPLE_MODE = "distance"
+BLE_SAMPLE_SIGMA_M = 4.0
+BLE_SAMPLE_PEAK_TIMES_S: tuple[tuple[str, float], ...] = (
+    ("beacon_1", 20.0),
+    ("beacon_2", 45.0),
+    ("beacon_3", 60.0),
+)
+BLE_SAMPLE_INTERVAL_S = 0.1
+BLE_SAMPLE_BASE_RSSI_DBM = -90.0
+BLE_SAMPLE_PEAK_RSSI_DBM = -45.0
+BLE_SAMPLE_SIGMA_S = 6.0
+BLE_SAMPLE_NOISE_SIGMA_DB = 1.5
+BLE_SAMPLE_MIN_RSSI_DBM = -99.0
+BLE_SAMPLE_SEED = 0
+BLE_SAMPLE_TRUTH_PATH = (
+    "input/correct_path/1turn_rightsidestep_3turn_leftsidestep/walk_trace (3).csv"
+)

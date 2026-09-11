@@ -1,7 +1,8 @@
 """PreparedPdrSteps を地図制約付き代表軌跡へ変換する pipeline。
 
 役割:
-    通常 PDR で確定した歩列だけを受け、particle filter を実行する。
+    通常 PDR で確定した歩列と任意のランドマーク検出を受け、particle filter を
+    実行して共有結果型へまとめる。
 依存元:
     ``common`` の共有型・設定と既存互換 runner の数値実装を使用する。
 利用先:
@@ -10,13 +11,27 @@
     診断収集器を用意し、準備済み歩列をrunnerへ渡して共有結果型へまとめる。
 """
 
+from dataclasses import replace
+
+from ..ble.lib.ranging_check import run_ranging_preflight
 from ..common.lib.models import (
     FloorMap,
+    LandmarkCorrection,
+    LandmarkCorrectionResult,
+    LandmarkObservation,
+    LandmarkRange,
     ParticleFilterResult,
     PreparedPdrSteps,
+    RangingConsistency,
     TrajectoryResult,
 )
-from ..common.settings import ParticleSettings
+from ..common.settings import BleLandmarkSettings, ParticleSettings
+from ..landmark.lib.assignment import (
+    assign_detections_to_steps,
+    build_step_landmark_map,
+)
+from ..landmark.lib.coordinates import build_landmark_meter_map
+from ..landmark.lib.timing import evaluate_landmark_timing
 from .lib.recorder import (
     ParticleFilterStepDiagnostics,
     ParticlePathComparison,
@@ -25,15 +40,103 @@ from .lib.recorder import (
 from .lib.runner import run_particle_steps
 
 
+def _attach_landmark_timing(
+    prepared: PreparedPdrSteps,
+    floormap: FloorMap,
+    landmark_settings: BleLandmarkSettings,
+    detections: tuple[LandmarkObservation, ...],
+    diagnostics: list[ParticleFilterStepDiagnostics],
+    events: list[LandmarkCorrection],
+) -> tuple[list[ParticleFilterStepDiagnostics], list[LandmarkCorrection]]:
+    """PF診断と補正履歴へ共通の最接近時刻指標を付ける。"""
+    landmark_meters = build_landmark_meter_map(
+        landmark_settings.landmarks,
+        prepared.gx_mean,
+        prepared.gz_mean,
+        floormap,
+    )
+    by_step = build_step_landmark_map(
+        detections,
+        prepared.t_at_steps,
+        landmark_meters,
+    )
+    timing_by_detection: dict[tuple[float, str, float], float] = {}
+    for detection in detections:
+        landmark_xy = landmark_meters.get(detection.beacon_id)
+        if landmark_xy is None:
+            continue
+        timing_by_detection[
+            (detection.timestamp_s, detection.beacon_id, detection.rssi_dbm)
+        ] = evaluate_landmark_timing(
+            prepared.trajectory,
+            prepared.t_at_steps,
+            detection.timestamp_s,
+            landmark_xy,
+        ).nearest_approach_delta_s
+
+    updated_diagnostics: list[ParticleFilterStepDiagnostics] = []
+    for diagnostic in diagnostics:
+        step_detection = by_step.get(diagnostic.step)
+        updated_diagnostics.append(
+            replace(
+                diagnostic,
+                landmark_nearest_delta_s=timing_by_detection.get(
+                    (
+                        step_detection.timestamp_s,
+                        step_detection.beacon_id,
+                        step_detection.rssi_dbm,
+                    )
+                ),
+            )
+            if step_detection is not None
+            else diagnostic
+        )
+    updated_events = [
+        event._replace(
+            detection_distance_m=(
+                (event.before_x - event.landmark_x) ** 2
+                + (event.before_y - event.landmark_y) ** 2
+            )
+            ** 0.5,
+            nearest_approach_delta_s=timing_by_detection.get(
+                (event.timestamp_s, event.beacon_id, event.rssi_dbm)
+            ),
+        )
+        for event in events
+    ]
+    return updated_diagnostics, updated_events
+
+
 def run_particle(
     prepared: PreparedPdrSteps,
     floormap: FloorMap,
     settings: ParticleSettings,
+    *,
+    detections: tuple[LandmarkObservation, ...] | None = None,
+    ranging_observations: tuple[LandmarkRange, ...] | None = None,
+    landmark_settings: BleLandmarkSettings | None = None,
 ) -> TrajectoryResult:
     """準備済みの歩列へ地図拘束を適用する。"""
     diagnostics: list[ParticleFilterStepDiagnostics] = []
     stages: list[ParticleStepStages] = []
     path_comparisons: list[ParticlePathComparison] = []
+    landmark_events: list[LandmarkCorrection] = []
+    runtime_detections = () if detections is None else detections
+    runtime_ranging_observations = (
+        tuple(item for item in runtime_detections if isinstance(item, LandmarkRange))
+        if ranging_observations is None
+        else ranging_observations
+    )
+    consistency: tuple[RangingConsistency, ...] = ()
+    if detections is not None and landmark_settings is not None:
+        consistency = run_ranging_preflight(
+            landmark_settings,
+            floormap,
+            prepared.trajectory,
+            prepared.t_at_steps,
+            prepared.gx_mean,
+            prepared.gz_mean,
+        )
     trajectory, lengths, times, all_particles, headings = run_particle_steps(
         prepared.gx_mean,
         prepared.gz_mean,
@@ -53,7 +156,31 @@ def run_particle(
         diagnostics_collector=diagnostics,
         stage_collector=stages,
         path_comparison_collector=path_comparisons,
+        landmark_detections=runtime_detections,
+        landmark_ranging_observations=runtime_ranging_observations,
+        landmarks=(() if landmark_settings is None else landmark_settings.landmarks),
+        landmark_mode=settings.landmark_mode,
+        landmark_sigma_m=settings.landmark_sigma_m,
+        landmark_likelihood_floor=settings.landmark_likelihood_floor,
+        landmark_range_weight_power=settings.landmark_range_weight_power,
+        landmark_reset_sigma_m=settings.landmark_reset_sigma_m,
+        landmark_max_jump_m=settings.landmark_max_jump_m,
+        landmark_reset_spread_ratio=settings.landmark_reset_spread_ratio,
+        landmark_reset_min_distance_m=settings.landmark_reset_min_distance_m,
+        landmark_reset_heading_sigma=settings.landmark_reset_heading_sigma,
+        landmark_anchor_warn_jump_m=settings.landmark_anchor_warn_jump_m,
+        landmark_retrofit=settings.landmark_retrofit,
+        landmark_events_collector=landmark_events,
     )
+    if detections is not None and landmark_settings is not None:
+        diagnostics, landmark_events = _attach_landmark_timing(
+            prepared,
+            floormap,
+            landmark_settings,
+            detections,
+            diagnostics,
+            landmark_events,
+        )
     particle = ParticleFilterResult(
         trajectory=trajectory,
         all_particles=[item for item in all_particles],
@@ -61,6 +188,24 @@ def run_particle(
         stages=tuple(stages),
         path_comparisons=tuple(path_comparisons),
     )
+    landmark = None
+    if detections is not None and landmark_settings is not None:
+        _, discarded_count = assign_detections_to_steps(
+            detections,
+            prepared.t_at_steps,
+        )
+        landmark = LandmarkCorrectionResult(
+            trajectory=trajectory,
+            raw_trajectory=[list(point) for point in prepared.trajectory],
+            corrections=tuple(landmark_events),
+            detection_count=len(detections),
+            discarded_count=discarded_count,
+            rssi_threshold_dbm=landmark_settings.rssi_threshold_dbm,
+            data_path=str(landmark_settings.data_path),
+            detections=detections,
+            landmarks=landmark_settings.landmarks,
+            ranging_consistency=consistency,
+        )
     return TrajectoryResult(
         trajectory=trajectory,
         step_lengths=lengths,
@@ -68,4 +213,5 @@ def run_particle(
         step_headings=headings,
         prepared=prepared,
         particle=particle,
+        landmark=landmark,
     )

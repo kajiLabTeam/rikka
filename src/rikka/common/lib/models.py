@@ -2,7 +2,7 @@
 
 役割:
     ステップ区間、検出結果、方位候補、ジャイロ補正結果、確定移動量、前処理済み
-    PDR 一式を NamedTuple / dataclass として定義する。
+    PDR 一式と BLE ランドマーク補正結果を NamedTuple / dataclass として定義する。
 依存元:
     ``config`` から ``PreparedPdrSteps`` の既定値を取得し、NumPy と Pandas の型を
     配列・DataFrame フィールドに使用する。
@@ -87,6 +87,8 @@ class StepHeading(NamedTuple):
     device_body_offset: float = 0.0
     dynamic_body_heading_confidence: float = 0.0
     body_heading_update_reason: str | None = None
+    landmark_heading_offset: float = 0.0
+    landmark_length_scale: float = 1.0
 
 
 class GyroBiasResult(NamedTuple):
@@ -277,6 +279,157 @@ class FloorMap:
 
 
 @dataclass(frozen=True)
+class MeasurementConfig:
+    """計測単位で指定する歩行開始条件。"""
+
+    origin_px: tuple[int, int]
+    initial_direction_deg: float
+    user_height_m: float | None = None
+    note: str = ""
+
+
+@dataclass(frozen=True)
+class PathLossModel:
+    """対数距離パスロスモデルの係数。"""
+
+    tx_power_dbm: float
+    path_loss_n: float
+    rssi_sigma_db: float
+
+    def __post_init__(self) -> None:
+        if not np.isfinite(self.tx_power_dbm):
+            raise ValueError("tx_power_dbm は有限値にしてください。")
+        if not np.isfinite(self.path_loss_n) or self.path_loss_n <= 0.0:
+            raise ValueError("path_loss_n は有限な正の値にしてください。")
+        if not np.isfinite(self.rssi_sigma_db) or self.rssi_sigma_db <= 0.0:
+            raise ValueError("rssi_sigma_db は有限な正の値にしてください。")
+
+
+@dataclass(frozen=True)
+class Landmark:
+    """フロアマップの既知ピクセル座標に設置した BLE ビーコンの定義。
+
+    ``position_sigma_m`` が指定されたものは、検出時に粒子を既知位置へ合わせる
+    確定ランドマークとして扱う。``heading_deg`` も指定すると絶対方位も確定する。
+    """
+
+    beacon_id: str
+    pixel_x: float
+    pixel_y: float
+    position_sigma_m: float | None = None
+    heading_deg: float | None = None
+    heading_sigma_deg: float = 15.0
+    heading_bidirectional: bool = False
+    path_loss_model: PathLossModel | None = None
+
+
+class BleObservation(NamedTuple):
+    """BLE CSV の 1 行に対応する RSSI 観測。"""
+
+    timestamp_s: float
+    beacon_id: str
+    rssi_dbm: float
+
+
+class LandmarkDetection(NamedTuple):
+    """RSSI 閾値判定で確定した 1 件のランドマーク検出。"""
+
+    timestamp_s: float
+    beacon_id: str
+    rssi_dbm: float
+
+
+class LandmarkRange(NamedTuple):
+    """ピーク RSSI から推定距離を付与したランドマーク観測。"""
+
+    timestamp_s: float
+    beacon_id: str
+    rssi_dbm: float
+    distance_m: float
+    distance_sigma_m: float
+    smoothed_rssi_dbm: float
+
+
+LandmarkObservation = LandmarkDetection | LandmarkRange
+
+
+@dataclass(frozen=True)
+class RangingConsistency:
+    """1ビーコンのRSSIと軌跡上距離の整合診断。"""
+
+    beacon_id: str
+    correlation: float | None
+    path_loss_n: float | None
+    rssi_sigma_db: float | None
+    passed: bool
+
+
+@dataclass(frozen=True)
+class BleRangingInput:
+    """検出イベントとPF測距用の全観測系列。"""
+
+    detections: tuple[LandmarkRange, ...]
+    observations: tuple[LandmarkRange, ...]
+
+
+class LandmarkCorrection(NamedTuple):
+    """1 件の検出に対する補正前後の座標記録。
+
+    ``applied`` は最終的な軌跡へ反映されたかどうかを表す。同じ歩に複数の検出が
+    割り当たった場合、最後の 1 件だけが ``True`` になる。
+    """
+
+    step_index: int
+    timestamp_s: float
+    beacon_id: str
+    rssi_dbm: float
+    before_x: float
+    before_y: float
+    landmark_x: float
+    landmark_y: float
+    after_x: float
+    after_y: float
+    applied: bool
+    detection_distance_m: float | None = None
+    nearest_approach_delta_s: float | None = None
+    anchor_position_sigma_m: float | None = None
+    anchor_heading_deg: float | None = None
+    anchor_heading_sigma_deg: float | None = None
+    anchor_heading_bidirectional: bool = False
+    estimated_distance_m: float | None = None
+    correction_mode: str = "snap"
+    warp_start_step: int | None = None
+    warp_span_m: float | None = None
+    retrofit_rotation_deg: float | None = None
+    retrofit_scale: float | None = None
+    retrofit_damp_factor: float | None = None
+    retrofit_map_violations: int | None = None
+    retrofit_reject_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class LandmarkCorrectionResult:
+    """BLE ランドマーク反映の結果と診断情報。
+
+    通常PDRの ``raw_trajectory`` は補正前PDR、PFでは同じ準備済み歩列の
+    通常PDR軌跡を表し、PFをランドマークなしで再実行した軌跡ではない。
+    """
+
+    trajectory: list[list[float]]
+    raw_trajectory: list[list[float]]
+    corrections: tuple[LandmarkCorrection, ...]
+    detection_count: int
+    discarded_count: int
+    rssi_threshold_dbm: float
+    data_path: str
+    detections: tuple[LandmarkObservation, ...] = ()
+    landmarks: tuple[Landmark, ...] = ()
+    ranging_consistency: tuple[RangingConsistency, ...] = ()
+    step_headings: list[StepHeading] | None = None
+    step_lengths: list[float] | None = None
+
+
+@dataclass(frozen=True)
 class TrajectoryResult:
     """PDR/PF と出力領域を結ぶ解析結果。"""
 
@@ -286,3 +439,4 @@ class TrajectoryResult:
     step_headings: list[StepHeading]
     prepared: PreparedPdrSteps
     particle: ParticleFilterResult | None = None
+    landmark: LandmarkCorrectionResult | None = None

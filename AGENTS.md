@@ -29,6 +29,12 @@
 
 - `src/rikka/cli/` は Click ベースの CLI を定義します。
 - `src/rikka/common/config/` の既定値は CLI のデフォルトにも使われます。
+- `src/rikka/ble/` は BLE CSV の読み込み、RSSI によるランドマーク検出、
+  サンプル生成を担当し、軌跡への反映方式には依存しません。
+- `src/rikka/landmark/` は検出元や PDR / PF に依存しない、座標変換と
+  検出から歩への割り当てを担当します。
+- PF のランドマーク反映は `particle/lib/landmark.py` に置き、通常 PDR の
+  完全座標補正を particle 側から呼び出しません。
 - `src/rikka/pdr/` は通常 PDR、`src/rikka/particle/` は地図拘束付き PF の実装です。
 - `src/rikka/plot/` は CSV・図・アニメーションの書き出しを担当します。
 - 通常 PDR と particle filter は `prepare_pdr_steps()` のステップ情報を共有します。
