@@ -22,6 +22,7 @@ import click
 
 from ..common.config import (
     BLE_DATA_PATH,
+    BLE_LANDMARK_ANCHORS,
     BLE_LANDMARK_ENABLED,
     BLE_MAX_CORRECTION_M,
     BLE_MAX_WARP_SPAN_M,
@@ -88,6 +89,7 @@ from ..common.lib.validation import (
     STEP_DETECTION_METHODS,
     STEP_LENGTH_METHODS,
 )
+from ..common.settings import merge_landmark_anchors
 
 _DATA_DIR_DEFAULT = DATA_DIR
 _BLE_DATA_DEFAULT = BLE_DATA_PATH
@@ -253,7 +255,11 @@ def _resolve_ble_inputs(
 
     from ..ble.lib.loader import load_ble_landmarks  # noqa: PLC0415
 
-    landmarks = load_ble_landmarks(local_position_path)
+    landmarks = merge_landmark_anchors(
+        load_ble_landmarks(local_position_path),
+        BLE_LANDMARK_ANCHORS,
+        coordinate_source="BLE_pos.csv",
+    )
     if not landmarks:
         raise ValueError(
             f"BLE_pos.csv に座標が確定した端末がありません: {local_position_path}"

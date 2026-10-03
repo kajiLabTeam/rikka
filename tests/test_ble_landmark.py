@@ -25,6 +25,7 @@ from rikka.ble.lib.sample import (
 )
 from rikka.ble.pipeline import run_ble_landmark_detection, run_ble_ranging_input
 from rikka.cli import commands as cli_commands
+from rikka.cli import options as cli_options
 from rikka.cli.commands import run as run_command
 from rikka.cli.options import _resolve_ble_inputs, cli
 from rikka.common import settings as settings_module
@@ -34,6 +35,7 @@ from rikka.common.lib.models import (
     BleObservation,
     FloorMap,
     Landmark,
+    LandmarkCorrection,
     LandmarkCorrectionResult,
     LandmarkDetection,
     LandmarkRange,
@@ -53,7 +55,10 @@ from rikka.landmark.lib.timing import evaluate_landmark_timing
 from rikka.pdr.lib.landmark_correction import apply_landmark_corrections
 from rikka.pdr.pipeline import run_pdr
 from rikka.plot import pipeline as plot_pipeline
-from rikka.plot.lib.animation import plot_particle_filter_trajectory
+from rikka.plot.lib.animation import (
+    _draw_animation_landmarks,
+    plot_particle_filter_trajectory,
+)
 from rikka.plot.lib.outputs import _build_landmark_corrections_dataframe
 from rikka.plot.lib.trajectory import plot_trajectory
 
@@ -229,6 +234,84 @@ def test_resolve_ble_inputs_prefers_files_in_measurement_directory(
 
     assert data_path == str(tmp_path / "BLE.csv")
     assert landmarks == (Landmark("elpis_001", 2050.0, 1870.0),)
+
+
+def test_resolve_ble_inputs_merges_anchor_and_keeps_path_loss(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ローカル座標とパスロスを維持して設定済みアンカー情報を結合する。"""
+    (tmp_path / "BLE.csv").touch()
+    pd.DataFrame(
+        [
+            {
+                "beacon_id": "elpis_001",
+                "device_name": "elpis_001",
+                "mac_address": "DC:0D:30:1E:33:91",
+                "raw_data_suffix": "656c7069735f303031",
+                "pixel_x": 2050,
+                "pixel_y": 1870,
+                "tx_power_dbm": -61.0,
+                "path_loss_n": 2.5,
+                "rssi_sigma_db": 3.0,
+            }
+        ]
+    ).to_csv(tmp_path / "BLE_pos.csv", index=False)
+    monkeypatch.setattr(
+        cli_options,
+        "BLE_LANDMARK_ANCHORS",
+        (("elpis_001", 0.3, 90.0, 10.0, True),),
+    )
+
+    _, landmarks = _resolve_ble_inputs(
+        str(tmp_path),
+        True,
+        "input/ble/sample_rssi.csv",
+    )
+
+    assert landmarks is not None
+    landmark = landmarks[0]
+    assert (landmark.pixel_x, landmark.pixel_y) == (2050.0, 1870.0)
+    assert landmark.position_sigma_m == 0.3
+    assert landmark.heading_deg == 90.0
+    assert landmark.heading_sigma_deg == 10.0
+    assert landmark.heading_bidirectional
+    assert landmark.path_loss_model is not None
+    assert landmark.path_loss_model.tx_power_dbm == -61.0
+    assert landmark.path_loss_model.path_loss_n == 2.5
+    assert landmark.path_loss_model.rssi_sigma_db == 3.0
+
+
+def test_resolve_ble_inputs_rejects_anchor_without_local_coordinate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ローカル座標表にない設定済みアンカーIDを黙って無視しない。"""
+    (tmp_path / "BLE.csv").touch()
+    pd.DataFrame(
+        [
+            {
+                "beacon_id": "elpis_001",
+                "device_name": "elpis_001",
+                "mac_address": "DC:0D:30:1E:33:91",
+                "raw_data_suffix": "656c7069735f303031",
+                "pixel_x": 2050,
+                "pixel_y": 1870,
+            }
+        ]
+    ).to_csv(tmp_path / "BLE_pos.csv", index=False)
+    monkeypatch.setattr(
+        cli_options,
+        "BLE_LANDMARK_ANCHORS",
+        (("unknown", 0.3, None, 15.0, False),),
+    )
+
+    with pytest.raises(ValueError, match="BLE_pos.csv 未定義"):
+        _resolve_ble_inputs(
+            str(tmp_path),
+            True,
+            "input/ble/sample_rssi.csv",
+        )
 
 
 def test_load_ble_observations_rejects_missing_column(tmp_path: Path) -> None:
@@ -1253,6 +1336,48 @@ def test_plot_particle_trajectory_distinguishes_heading_anchor(
     assert "確定ランドマーク（位置・方位）" in labels
     assert "確定方位" in labels
     plt.close("all")
+
+
+def test_animation_correction_line_ends_at_actual_after_position() -> None:
+    """アニメーションの赤線はランドマーク座標でなく実補正後位置へ結ぶ。"""
+    correction = LandmarkCorrection(
+        step_index=0,
+        timestamp_s=1.0,
+        beacon_id="beacon_1",
+        rssi_dbm=-45.0,
+        before_x=1.0,
+        before_y=2.0,
+        landmark_x=8.0,
+        landmark_y=9.0,
+        after_x=3.0,
+        after_y=4.0,
+        applied=True,
+    )
+    landmark = LandmarkCorrectionResult(
+        trajectory=[[0.0, 0.0], [3.0, 4.0]],
+        raw_trajectory=[[0.0, 0.0], [1.0, 2.0]],
+        corrections=(correction,),
+        detection_count=1,
+        discarded_count=0,
+        rssi_threshold_dbm=-55.0,
+        data_path="ble.csv",
+    )
+    fig, ax = plt.subplots()
+
+    _draw_animation_landmarks(
+        ax,
+        landmark,
+        frame=1,
+        gx_mean=0.0,
+        gz_mean=0.0,
+        origin_px=(0, 0),
+        scale=1.0,
+    )
+
+    correction_line = ax.lines[-1]
+    np.testing.assert_allclose(correction_line.get_xdata(), [1.0, 3.0])
+    np.testing.assert_allclose(correction_line.get_ydata(), [2.0, 4.0])
+    plt.close(fig)
 
 
 def test_run_help_includes_ble_landmark_option() -> None:

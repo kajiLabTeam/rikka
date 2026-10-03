@@ -147,9 +147,7 @@ def _draw_animation_landmarks(
     before_px, before_py = compute_pixel_coords(
         before[:, 0], before[:, 1], gx_mean, gz_mean, origin_px, scale
     )
-    after = np.asarray(
-        [(item.landmark_x, item.landmark_y) for item in done], dtype=float
-    )
+    after = np.asarray([(item.after_x, item.after_y) for item in done], dtype=float)
     after_px, after_py = compute_pixel_coords(
         after[:, 0], after[:, 1], gx_mean, gz_mean, origin_px, scale
     )
