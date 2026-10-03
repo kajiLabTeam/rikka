@@ -10,7 +10,7 @@
     dataclass の構築時に値を一度検証し、検証済み設定を下流へ渡す。
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -282,13 +282,17 @@ class ParticleSettings:
         )
 
 
-def _build_landmarks_with_anchors(
-    landmark_rows: tuple[tuple[str, float, float], ...],
+def merge_landmark_anchors(
+    landmarks: tuple[Landmark, ...],
     anchor_rows: tuple[tuple[str, float, float | None, float, bool], ...],
+    *,
+    coordinate_source: str,
 ) -> tuple[Landmark, ...]:
-    """座標定義へ beacon_id が一致する確定情報を結合する。"""
-    validated = validate_landmarks(landmark_rows)
-    known_ids = {beacon_id for beacon_id, _, _ in validated}
+    """座標・パスロスを維持し、beacon_id が一致する確定情報を結合する。"""
+    validate_landmarks(
+        tuple((item.beacon_id, item.pixel_x, item.pixel_y) for item in landmarks)
+    )
+    known_ids = {item.beacon_id for item in landmarks}
     anchors: dict[str, tuple[float, float | None, float, bool]] = {}
     for (
         beacon_id,
@@ -299,7 +303,7 @@ def _build_landmarks_with_anchors(
     ) in anchor_rows:
         if beacon_id not in known_ids:
             raise ValueError(
-                "BLE_LANDMARK_ANCHORS に BLE_LANDMARKS_PX 未定義の "
+                f"BLE_LANDMARK_ANCHORS に {coordinate_source} 未定義の "
                 f"beacon_id があります: {beacon_id}"
             )
         if beacon_id in anchors:
@@ -313,24 +317,38 @@ def _build_landmarks_with_anchors(
             bidirectional,
         )
 
-    landmarks = []
-    for beacon_id, pixel_x, pixel_y in validated:
-        anchor = anchors.get(beacon_id)
+    merged = []
+    for landmark in landmarks:
+        anchor = anchors.get(landmark.beacon_id)
         if anchor is None:
-            landmarks.append(Landmark(beacon_id, pixel_x, pixel_y))
+            merged.append(landmark)
             continue
-        landmarks.append(
-            Landmark(
-                beacon_id,
-                pixel_x,
-                pixel_y,
+        merged.append(
+            replace(
+                landmark,
                 position_sigma_m=anchor[0],
                 heading_deg=anchor[1],
                 heading_sigma_deg=anchor[2],
                 heading_bidirectional=anchor[3],
             )
         )
-    return tuple(landmarks)
+    return tuple(merged)
+
+
+def _build_landmarks_with_anchors(
+    landmark_rows: tuple[tuple[str, float, float], ...],
+    anchor_rows: tuple[tuple[str, float, float | None, float, bool], ...],
+) -> tuple[Landmark, ...]:
+    """設定の座標定義からランドマークを作り、確定情報を結合する。"""
+    validated = validate_landmarks(landmark_rows)
+    return merge_landmark_anchors(
+        tuple(
+            Landmark(beacon_id, pixel_x, pixel_y)
+            for beacon_id, pixel_x, pixel_y in validated
+        ),
+        anchor_rows,
+        coordinate_source="BLE_LANDMARKS_PX",
+    )
 
 
 @dataclass(frozen=True)
