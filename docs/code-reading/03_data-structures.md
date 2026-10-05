@@ -21,6 +21,9 @@
 | [`StepMotionPosterior`](../../src/rikka/common/lib/models.py#L172) | [`estimate_adaptive_pdr()`](../../src/rikka/pdr/lib/fusion/adaptive.py#L288) | 4状態確率、方位・歩幅・offsetの平均/標準偏差 | PDR確定値、PF proposal |
 | [`PreparedPdrSteps`](../../src/rikka/common/lib/models.py#L230) | [`prepare_pdr_steps_with_settings()`](../../src/rikka/pdr/lib/preparation.py#L111) | 前処理DF、歩列、通常軌跡、観測・事後分布 | PDR/PF境界 |
 | [`ParticleFilterResult`](../../src/rikka/common/lib/models.py#L260) | [`particle.pipeline.run_particle()`](../../src/rikka/particle/pipeline.py#L28) | 代表軌跡、各歩の粒子、診断、可視化stage | 出力領域 |
+| `MeasurementConfig` | `walk_config.csv` | 起点pixel、初期方位、任意身長 | CLI設定解決 |
+| `PathLossModel` | 共通既定または`BLE_pos.csv` | `tx_power_dbm`, `path_loss_n`, `rssi_sigma_db` | BLE距離変換、PF尤度 |
+| `LandmarkRange` | BLE pipeline | 時刻、ID、生/平滑RSSI、推定距離とσ | PDR warp、PF ranging |
 | [`TrajectoryResult`](../../src/rikka/common/lib/models.py#L280) | PDR/PF pipeline | 軌跡、歩幅、時刻、方位、prepared、任意particle | CLI/plot境界 |
 
 ## StepHeading の重要フィールド

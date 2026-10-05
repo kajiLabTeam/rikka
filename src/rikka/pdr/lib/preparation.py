@@ -27,6 +27,7 @@ from ...common.config import (
     USER_HEIGHT_M,
     compute_weinberg_k,
 )
+from ...common.lib.integrate import integrate_steps
 from ...common.lib.models import PreparedPdrSteps
 from ...common.lib.sensors import process_sensor_data
 from ...common.settings import (
@@ -37,7 +38,6 @@ from ...common.settings import (
     StepSettings,
 )
 from .fusion.protocol import MOTION_ESTIMATORS
-from .integrate import integrate_steps
 from .motion_state.evidence import (
     build_particle_motion_headings,
     build_step_motion_evidences,

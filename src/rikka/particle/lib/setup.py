@@ -13,6 +13,8 @@
 import numpy as np
 
 from ...common.lib.validation import (
+    PF_LANDMARK_MODES,
+    validate_choice,
     validate_forward_heading_source,
     validate_motion_heading_correction,
     validate_non_negative_parameter,
@@ -96,8 +98,37 @@ def setup(ctx: ParticleRuntime) -> None:
     ctx.motion_predictive_weight_power = validate_non_negative_parameter(
         "motion_predictive_weight_power", ctx.motion_predictive_weight_power
     )
+    ctx.landmark_range_weight_power = validate_non_negative_parameter(
+        "landmark_range_weight_power", ctx.landmark_range_weight_power
+    )
     if ctx.path_selection not in {"current", "sequence"}:
         raise ValueError("path_selection は current または sequence を指定してください")
+    validate_choice("pf_landmark_mode", ctx.landmark_mode, PF_LANDMARK_MODES)
+    ctx.landmark_sigma_m = validate_positive_parameter(
+        "landmark_sigma_m", ctx.landmark_sigma_m
+    )
+    ctx.landmark_reset_sigma_m = validate_positive_parameter(
+        "landmark_reset_sigma_m", ctx.landmark_reset_sigma_m
+    )
+    ctx.landmark_max_jump_m = validate_positive_parameter(
+        "landmark_max_jump_m", ctx.landmark_max_jump_m
+    )
+    ctx.landmark_reset_spread_ratio = validate_positive_parameter(
+        "landmark_reset_spread_ratio", ctx.landmark_reset_spread_ratio
+    )
+    ctx.landmark_reset_min_distance_m = validate_non_negative_parameter(
+        "landmark_reset_min_distance_m", ctx.landmark_reset_min_distance_m
+    )
+    ctx.landmark_reset_heading_sigma = validate_non_negative_parameter(
+        "landmark_reset_heading_sigma", ctx.landmark_reset_heading_sigma
+    )
+    ctx.landmark_anchor_warn_jump_m = validate_positive_parameter(
+        "landmark_anchor_warn_jump_m", ctx.landmark_anchor_warn_jump_m
+    )
+    if not 0.0 <= ctx.landmark_likelihood_floor < 1.0:
+        raise ValueError(
+            "landmark_likelihood_floor は 0 以上 1 未満を指定してください。"
+        )
     if ctx.recovery_max_attempts <= 0:
         raise ValueError("recovery_max_attempts は正の整数を指定してください")
     ctx.adaptive_stride_state = bool(

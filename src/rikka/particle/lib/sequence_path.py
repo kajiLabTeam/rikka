@@ -7,7 +7,8 @@
 利用先:
     particle 結果確定段階が sequence 選択モードで使用する。
 処理フロー:
-    各経路の未支持反転を数えてスコアを補正し、降順に合法性を検証する。
+    各経路の急な反転と区間内に累積した未支持反転を数えてスコアを補正し、
+    降順に合法性を検証する。
 """
 
 import numpy as np
@@ -47,15 +48,31 @@ def _unsupported_reversal_count(
         )
     )
     unsupported_count = 0
+    gradual_reversal_active = False
     for moving_index, path_delta in enumerate(path_deltas, start=1):
-        if path_delta < np.deg2rad(135.0):
-            continue
         current_step = int(moving_step_indices[moving_index])
-        window_start = max(0, current_step - window_steps + 1)
+        window_start = max(0, current_step - window_steps)
         recent_yaw = float(np.nansum(sensor_deltas[window_start:current_step]))
         recent_turning = bool(np.any(turning_evidence[window_start : current_step + 1]))
-        if recent_yaw < np.deg2rad(60.0) and not recent_turning:
+        supported = recent_yaw >= np.deg2rad(60.0) or recent_turning
+        if path_delta >= np.deg2rad(135.0) and not supported:
             unsupported_count += 1
+            gradual_reversal_active = True
+            continue
+
+        # 1歩ずつの曲がりが小さくても、同じ期間のセンサー変化で説明できない
+        # 折り返しは区間単位で検出する。停止歩は方位の基準点に使わない。
+        first_moving = int(np.searchsorted(moving_step_indices, window_start))
+        interval_delta = float(
+            np.arctan2(
+                np.sin(path_headings[moving_index] - path_headings[first_moving]),
+                np.cos(path_headings[moving_index] - path_headings[first_moving]),
+            )
+        )
+        gradual_reversal = abs(interval_delta) >= np.deg2rad(135.0) and not supported
+        if gradual_reversal and not gradual_reversal_active:
+            unsupported_count += 1
+        gradual_reversal_active = gradual_reversal
     return unsupported_count
 
 
@@ -69,6 +86,7 @@ def _select_sequence_map_path(
     scale: float,
     sensor_headings: np.ndarray | None = None,
     turning_evidence: np.ndarray | None = None,
+    allowed_jump_steps: set[int] | None = None,
 ) -> tuple[np.ndarray, list[str], list[int | None]]:
     """累積事後スコア最大の合法な単一祖先経路を返す。"""
     if particle_paths.ndim != 3 or particle_paths.shape[2:] != (2,):
@@ -103,9 +121,8 @@ def _select_sequence_map_path(
 
     for selected_index in np.argsort(-penalized_scores, kind="stable"):
         selected_path = particle_paths[int(selected_index)]
-        if (
-            n_times > 1
-            and not _evaluate_particle_transitions(
+        if n_times > 1:
+            valid_transitions = _evaluate_particle_transitions(
                 selected_path[:-1],
                 selected_path[1:],
                 map_gray,
@@ -113,9 +130,17 @@ def _select_sequence_map_path(
                 gz_mean,
                 origin_px,
                 scale,
-            ).all()
-        ):
-            continue
+            )
+            if allowed_jump_steps:
+                jump_indices = np.asarray(
+                    [step - 1 for step in allowed_jump_steps], dtype=int
+                )
+                jump_indices = jump_indices[
+                    (jump_indices >= 0) & (jump_indices < len(valid_transitions))
+                ]
+                valid_transitions[jump_indices] = True
+            if not valid_transitions.all():
+                continue
         return (
             selected_path.copy(),
             ["sequence_map_ancestry"] * n_times,

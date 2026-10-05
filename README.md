@@ -116,6 +116,156 @@ uv run rikka particle --no-plot --pf-seed 10 \
 uv run rikka sensor
 ```
 
+## BLE ランドマーク補正
+
+既知座標に置いた BLE ビーコンの RSSI が閾値以上になったとき、通常 PDR または
+particle filter にランドマーク位置を反映できます。BLE 測位自体は既定で無効です。
+
+実測では計測ディレクトリに `BLE.csv`、`BLE_pos.csv`、`walk_config.csv` を置きます。
+起点・方位を計測ごとに解決してから、PF のRSSI測距尤度を使います。
+
+```sh
+uv run python agent/agent_diagnose_ble_ranging.py \
+  -d input/senser_data_withBLE/natsuki/WithBLE_1
+uv run rikka particle \
+  -d input/senser_data_withBLE/natsuki/WithBLE_1 \
+  --ble-landmark --pf-landmark-mode ranging --no-plot
+```
+
+`walk_config.csv` がある場合の解決順は、CLI明示値、計測設定、共通既定値です。
+診断は `corr(RSSI, log10(distance)) <= -0.5` かつパスロス係数
+`1.5 <= n <= 4.0` を合格条件とします。RSSIから逆算した探索起点は検算用であり、
+実測起点の代わりにはしません。
+
+実測データがない場合は、回帰テスト用サンプルを先に生成できます。
+
+```sh
+uv run rikka ble-sample
+uv run rikka run --ble-landmark --no-plot
+uv run rikka particle --ble-landmark --no-plot
+```
+
+`ble-sample` は既定で、対象データのPDR軌跡とビーコンの距離からRSSIを生成します。
+評価用に正解軌跡を使う場合は次のように指定します。従来の固定ピーク時刻方式は
+`--mode time` で利用できます。
+
+```sh
+uv run rikka ble-sample \
+  -d input/sensor_data/natsuki/1turn_rightsidestep_3turn_leftsidestep \
+  --source truth \
+  --truth-csv "input/correct_path/1turn_rightsidestep_3turn_leftsidestep/walk_trace (3).csv"
+```
+
+BLE CSV は次の3列を持ちます。
+
+| 列 | 内容 |
+|---|---|
+| `timestamp_s` | phyphox の実験開始からの経過秒 |
+| `beacon_id` | `BLE_LANDMARKS_PX` に登録するビーコン識別子 |
+| `rssi_dbm` | 受信 RSSI [dBm] |
+
+ランドマーク座標は `src/rikka/common/config/__init__.py` の
+`BLE_LANDMARKS_PX` に `(beacon_id, pixel_x, pixel_y)` で設定します。
+`pixel_x` と `pixel_y` は `--origin-px` と同じ、フロアマップ画像の左上を
+`(0, 0)` とするピクセル座標です。補正時に `--origin-px` と `--scale` を
+使って PDR のメートル座標へ変換します。既定の検出下限は -70 dBm です。
+ピーク時刻は5サンプルの移動中央値で安定化します。
+
+改札・自動ドア・踊り場のように、通過した事実から位置を確定できる地点は
+`BLE_LANDMARK_ANCHORS` へ追加します。既定値は空で、通常ランドマークの挙動には
+影響しません。
+
+```python
+BLE_LANDMARK_ANCHORS = (
+    # beacon_id, 位置σ[m], 方位[deg], 方位σ[deg], 双方向か
+    ("beacon_3", 0.3, 90.0, 15.0, True),
+)
+```
+
+方位は `0=+X`、`90=+Y`、反時計回りが正です。方位を確定しない場合は3要素目を
+`None` にします。確定ランドマークはPFの距離比と5m上限によらず指定σの範囲へ
+粒子を再配置し、方位指定時は絶対方位差を減衰しない補正項へ反映します。大きな
+ジャンプは停止せず警告します。強制補正なので、実測データで検出時刻と通過時刻が
+一致することを確認してから設定してください。
+
+- `--ble-landmark`: BLE 補正を有効化
+- `--ble-data PATH`: BLE CSV を指定
+- `--ble-rssi-threshold DBM`: 検出下限を変更
+- `--ble-release-margin DB` / `--ble-release-streak N`: ラッチ解除条件
+- `--ble-sync-window S`: 同時受信としてまとめる時刻窓
+- `--ble-correction snap|warp|similarity`: 通常PDRの補正方式。`warp` は直前拘束
+  からの累積歩行距離比で残差を過去へ配分します。`similarity` は直前アンカーを
+  固定して過去区間を回転・等方スケールし、同じ量を確定方位と歩幅へ反映します。
+  既定の `snap` は後方互換のため維持しています。
+- `--ble-preflight warn|error|off`: RSSI距離整合FAIL時の扱い
+- `--ble-max-correction M` / `--ble-max-warp-span M`: 補正移動量とwarp区間の上限
+- `--ble-retrofit-forward hold|freeze`: `similarity` の回転・倍率を後続歩にも保持するか、
+  検出歩までで固定するかを選びます。既定は `hold` です。
+- `--ble-retrofit-max-heading`、`--ble-retrofit-stride-scale-min/max`、
+  `--ble-retrofit-min-span`: 回転角・歩幅倍率・最小アンカー間距離の安全条件です。
+- `--ble-retrofit-map-check off|warn|enforce`: 地図違反を無視、警告、減衰後も
+  違反する補正の棄却、のいずれかで扱います。減衰列は
+  `--ble-retrofit-damp-factor` を複数指定して変更できます。
+
+実測ログの検出は、閾値以上が3観測続くこと、同一ビーコンの10秒cooldown、
+6dB以上のピークprominenceを要求します。合成BLEは既存goldenとの互換性のため、
+従来の1接近1検出規則を維持します。
+
+実測値へ差し替える場合は、同じ3列と経過秒の時間軸へ整形し、
+`--ble-data <実測CSV>` を指定します。絶対時刻だけの場合は、phyphox の
+`meta/time.csv` にある START の `system time` を引いて経過秒へ変換してください。
+Thingsup形式を `--ble-data` で明示した場合、同じディレクトリに `BLE_pos.csv` が
+無ければ入力エラーになります。既定ランドマークへの無警告フォールバックは行いません。
+
+BLE 有効時は `output/<timestamp>/landmark_corrections.csv` に検出時刻、RSSI、
+補正前座標、ランドマーク座標、補正後座標、検出距離、最接近時間差、アンカーの
+位置・方位設定を保存します。`similarity` では回転角、歩幅倍率、減衰係数、
+地図違反辺数、棄却理由も保存します。補正後の `step_headings.csv` には累積方位補正、
+累積歩幅倍率を保存し、`step_lengths.csv` と再積分すると軌跡に一致します。
+`trajectory.png`（PFでは `pf_trajectory.png`）には、`BLE_pos.csv` で座標が
+確定した全ビーコンを星印で表示し、補正前後の軌跡と補正地点を重ねて描画します。
+最終歩より後で補正できなかった検出は `step=-1`、`applied=False` としてCSVに残ります。
+
+particle filter では `--pf-landmark-mode` で反映方式を選びます。
+
+- `none`: 検出を軌跡へ反映しない。BLE 無効時と固定 seed の結果が一致します。
+- `observation`: ランドマーク距離の下限付きガウス尤度を粒子重みと
+  sequence 経路スコアへ加えます。
+- `reset`: ランドマーク周辺の歩行可能位置へ粒子を再配置します。比較実験用で、
+  位置以外の heading drift・stride scale・motion state は引き継ぎます。祖先経路が
+  不連続になるため、reset 使用時の代表軌跡は `pf-path-selection` にかかわらず
+  時点別の current 経路を使います。
+- `hybrid`（既定）: ランドマーク距離が粒子群の広がりの4倍以内ならobservation、
+  それより遠く、かつ距離が2mを超える場合はresetを使います。通常resetの距離が
+  5mを超える検出は安全のため再配置せず、通常のPF更新を続けます。確定
+  ランドマークはこの判定より優先されます。
+- `ranging`: RSSI領域でパスロスモデルの期待値と観測値を比較します。弱いRSSIは
+  遠い粒子を支持し、resetを行わないため、祖先経路の再重み付けで検出前の軌跡にも
+  観測が反映されます。`pf-path-selection=sequence` では合法な単一祖先経路を選びます。
+  実測BLEではこの方式を使用します。
+
+`--pf-landmark-retrofit` は既定で無効です。確定ランドマークが粒子を再配置した歩で、
+代表経路選択後のアンカー直前区間だけを相似変換し、位置ジャンプを解消します。
+粒子履歴と重みは変更せず、変換後の全辺が歩行可能な場合だけ採用します。
+
+観測尤度の既定値は `sigma=1.0m`、`floor=0.05` です。合成BLEと対応する正解軌跡の
+6 seed評価で選んだ値なので、実測BLE取得後には再校正が必要です。PF の
+`landmark_corrections.csv` にある
+`before/after` は反映前後の粒子重み付き平均、`raw_trajectory` の描画は同じ歩列から
+作った通常 PDR 軌跡を表します。
+
+ランドマーク測位は推定方式ごとに責務を分離しています。
+
+- `ble/`: BLE CSV、RSSI 判定、サンプル生成
+- `landmark/lib/`: 検出元や推定方式に依存しない座標変換、歩割り当て、時間整合評価、
+  アンカー固定の相似変換
+- `pdr/lib/landmark_correction.py`: 通常 PDR 固有の完全座標補正
+- `particle/lib/landmark.py`: PF 固有の観測尤度と reset 再配置
+- `common/lib/models.py`: PDR / PF が共有する `LandmarkRange`、`PathLossModel` など
+
+`ble.pipeline.run_ble_landmark_detection()` は軌跡を変更せず、検出列だけを返します。
+通常 PDR は検出を完全座標補正に使い、PF は同じ検出を観測尤度または再配置へ使います。
+
 ## データフロー
 
 `rikka.__init__.main()` から Click の `cli.options` に入り、
@@ -150,8 +300,12 @@ flowchart TD
     sidestep --> prepared["prepare_pdr_steps_with_settings()\nPreparedPdrSteps"]
 
     prepared --> pdr_branch{"コマンド"}
-    pdr_branch -->|rikka run / pdr| det_traj["TrajectoryResult\n通常 PDR 軌跡"]
+    ble_csv["input/ble/*.csv"] --> ble_pipeline["ble.pipeline.run_ble_landmark_detection()\nLandmarkDetection 列"]
+    pdr_branch -->|rikka run / pdr| pdr_landmark["pdr.lib.landmark_correction\n通常PDRの完全座標補正"]
+    ble_pipeline --> pdr_landmark
+    pdr_landmark --> det_traj["TrajectoryResult\n通常 PDR 軌跡"]
     pdr_branch -->|rikka particle| particle_pipeline["particle.pipeline.run_particle()"]
+    ble_pipeline --> particle_pipeline
     particle_pipeline --> pf["particle.lib.runner.run_particle_steps()\n地図拘束 / 重み / 再標本化 / recovery"]
 
     floormap["input/Floormap_building14_5floor.png"] --> pf_map["FloorMap\n通路/壁判定"]

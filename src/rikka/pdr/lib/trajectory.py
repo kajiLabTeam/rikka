@@ -24,13 +24,13 @@ from ...common.config import (
     STEP_LENGTH_METHOD,
     WEINBERG_K,
 )
+from ...common.lib.integrate import integrate_steps
 from ...common.lib.models import StepHeading, StepSegment
 from ...common.lib.time_utils import _step_output_time
 from ...common.settings import MotionStateSettings
 from .heading.device_orientation import estimate_device_orientation_mode
 from .heading.motion import resolve_motion_heading_correction
 from .heading.resolver import resolve_step_heading
-from .integrate import integrate_steps
 from .motion_state.clustering import smooth_step_headings
 from .motion_state.heading_policy import stabilize_trajectory_headings
 from .motion_state.refinement import refine_step_headings_with_motion_model

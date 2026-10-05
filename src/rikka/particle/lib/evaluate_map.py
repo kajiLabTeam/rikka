@@ -7,12 +7,20 @@
 利用先:
     particle/lib/runner が提案・重み計算の後に呼び出す。
 処理フロー:
-    地図違反時は局所復旧、checkpoint再生、fallback、位置保持を順に試し、
-    通常経路ではESSに基づいて再標本化して次状態を確定する。
+    確定ランドマークでは距離上限によらず既知位置へ粒子を再配置し、通常のreset方式
+    では既存ガードの範囲内だけ再配置する。それ以外の地図違反時は局所復旧、checkpoint
+    再生、fallback、位置保持を順に試し、通常経路ではESSに基づいて再標本化する。
 """
+
+import sys
 
 import numpy as np
 
+from .landmark import (
+    meter_walkable_mask,
+    reset_particles_to_landmark,
+    resolve_anchor_heading,
+)
 from .proposal import _normalize_angle
 from .recovery.apply import (
     _apply_checkpoint_replay,
@@ -95,9 +103,282 @@ def _resample_or_keep(ctx: ParticleRuntime) -> None:
     ctx.next_path_log_scores = ctx.candidate_path_log_scores
 
 
+def _reset_to_landmark(ctx: ParticleRuntime) -> None:
+    """現在歩のランドマーク周辺へ位置だけを再配置し、履歴重みを初期化する。"""
+    if ctx.landmark_xy is None:
+        raise RuntimeError("内部エラー: reset対象ランドマークがありません。")
+
+    if ctx.landmark_before_position is None:
+        raise RuntimeError("内部エラー: reset前の代表位置がありません。")
+    reset_origin = np.asarray(ctx.landmark_before_position, dtype=float)
+
+    def is_walkable(points: np.ndarray) -> np.ndarray:
+        walkable = meter_walkable_mask(
+            points,
+            ctx.map_gray,
+            ctx.gx_mean,
+            ctx.gz_mean,
+            ctx.origin_px,
+            ctx.scale,
+        )
+        within_jump = (
+            np.linalg.norm(points - reset_origin, axis=1) <= ctx.landmark_max_jump_m
+        )
+        return np.asarray(walkable & within_jump, dtype=bool)
+
+    ctx.particles = reset_particles_to_landmark(
+        ctx.n_particles,
+        ctx.landmark_xy,
+        ctx.landmark_reset_sigma_m,
+        ctx.rng,
+        is_walkable,
+    )
+    ctx.heading_correction = ctx.proposed_correction
+    ctx.heading_drift = _normalize_angle(
+        ctx.proposed_drift
+        + ctx.rng.normal(
+            0.0,
+            ctx.landmark_reset_heading_sigma,
+            ctx.n_particles,
+        )
+    )
+    ctx.stride_scale = ctx.proposed_stride_scale
+    ctx.motion_state = ctx.proposed_motion_state
+    ctx.weights = np.full(ctx.n_particles, 1.0 / ctx.n_particles)
+    ctx.posterior_weights = ctx.weights.copy()
+    ctx.parent_indices = np.arange(ctx.n_particles, dtype=int)
+    ctx.next_path_log_scores = np.zeros(ctx.n_particles, dtype=float)
+    ctx.valid_transition = is_walkable(ctx.particles)
+    ctx.valid_count = int(np.count_nonzero(ctx.valid_transition))
+    ctx.valid_weight_mask = ctx.valid_transition.copy()
+    ctx.valid_weight_count = ctx.valid_count
+    ctx.valid_weight_mass = 1.0
+    ctx.ess_after_observation = float(ctx.n_particles)
+    ctx.effective_step_lengths_for_diagnostics = ctx.sl.copy()
+    ctx.resampled = True
+    ctx.recovery_attempted = False
+    ctx.recovery_mode = "landmark_reset"
+    ctx.recovery_valid_count = ctx.valid_count
+    ctx.landmark_applied = True
+    ctx.landmark_reset_steps.add(ctx.step_number)
+
+
+def _anchor_position_requested(ctx: ParticleRuntime) -> bool:
+    """確定位置から十分離れており、粒子再配置が必要かを返す。"""
+    landmark = ctx.landmark_definition
+    if (
+        landmark is None
+        or landmark.position_sigma_m is None
+        or ctx.landmark_before_position is None
+        or ctx.landmark_xy is None
+    ):
+        return False
+    distance = float(
+        np.linalg.norm(
+            np.asarray(ctx.landmark_before_position) - np.asarray(ctx.landmark_xy)
+        )
+    )
+    return distance > 2.0 * landmark.position_sigma_m
+
+
+def _anchor_to_landmark(ctx: ParticleRuntime) -> None:
+    """確定ランドマーク周辺へ距離上限なしで粒子を再配置する。"""
+    landmark = ctx.landmark_definition
+    if (
+        landmark is None
+        or landmark.position_sigma_m is None
+        or ctx.landmark_xy is None
+        or ctx.landmark_before_position is None
+    ):
+        raise RuntimeError("内部エラー: 確定対象ランドマークがありません。")
+
+    distance = float(
+        np.linalg.norm(
+            np.asarray(ctx.landmark_before_position) - np.asarray(ctx.landmark_xy)
+        )
+    )
+    if distance > ctx.landmark_anchor_warn_jump_m:
+        print(
+            f"警告: 確定ランドマーク {landmark.beacon_id} への補正距離 "
+            f"{distance:.2f}mが警告値 {ctx.landmark_anchor_warn_jump_m:.2f}mを"
+            "超えています。設定座標を確認してください。",
+            file=sys.stderr,
+        )
+
+    def is_walkable(points: np.ndarray) -> np.ndarray:
+        return meter_walkable_mask(
+            points,
+            ctx.map_gray,
+            ctx.gx_mean,
+            ctx.gz_mean,
+            ctx.origin_px,
+            ctx.scale,
+        )
+
+    ctx.particles = reset_particles_to_landmark(
+        ctx.n_particles,
+        ctx.landmark_xy,
+        landmark.position_sigma_m,
+        ctx.rng,
+        is_walkable,
+    )
+    ctx.heading_correction = ctx.proposed_correction
+    ctx.heading_drift = _normalize_angle(
+        ctx.proposed_drift
+        + ctx.rng.normal(
+            0.0,
+            ctx.landmark_reset_heading_sigma,
+            ctx.n_particles,
+        )
+    )
+    ctx.stride_scale = ctx.proposed_stride_scale
+    ctx.motion_state = ctx.proposed_motion_state
+    ctx.weights = np.full(ctx.n_particles, 1.0 / ctx.n_particles)
+    ctx.posterior_weights = ctx.weights.copy()
+    ctx.parent_indices = np.arange(ctx.n_particles, dtype=int)
+    ctx.next_path_log_scores = np.zeros(ctx.n_particles, dtype=float)
+    ctx.valid_transition = is_walkable(ctx.particles)
+    ctx.valid_count = int(np.count_nonzero(ctx.valid_transition))
+    ctx.valid_weight_mask = ctx.valid_transition.copy()
+    ctx.valid_weight_count = ctx.valid_count
+    ctx.valid_weight_mass = 1.0
+    ctx.ess_after_observation = float(ctx.n_particles)
+    ctx.effective_step_lengths_for_diagnostics = ctx.sl.copy()
+    ctx.resampled = True
+    ctx.recovery_attempted = False
+    ctx.recovery_mode = "landmark_anchor"
+    ctx.recovery_valid_count = ctx.valid_count
+    ctx.landmark_applied = True
+    ctx.landmark_reset_steps.add(ctx.step_number)
+    ctx.landmark_anchor_steps.add(ctx.step_number)
+    if landmark.heading_deg is not None:
+        _apply_anchor_heading(ctx)
+
+
+def _resample_for_anchor_heading(ctx: ParticleRuntime) -> None:
+    """位置を動かさず、有効な事後粒子を一様重みのアンカー状態へ移す。"""
+    if ctx.valid_weight_mass <= 0.0:
+        _anchor_to_landmark(ctx)
+        return
+    normalized = ctx.posterior_weights / ctx.valid_weight_mass
+    indices = _systematic_resample(normalized, ctx.rng)
+    ctx.particles = ctx.proposed_particles[indices]
+    ctx.heading_correction = ctx.proposed_correction[indices]
+    ctx.heading_drift = ctx.proposed_drift[indices]
+    ctx.stride_scale = ctx.proposed_stride_scale[indices]
+    ctx.motion_state = ctx.proposed_motion_state[indices]
+    ctx.weights = np.full(ctx.n_particles, 1.0 / ctx.n_particles)
+    ctx.posterior_weights = ctx.weights.copy()
+    ctx.parent_indices = indices
+    ctx.next_path_log_scores = np.zeros(ctx.n_particles, dtype=float)
+    ctx.valid_transition = ctx.valid_transition[indices]
+    ctx.valid_count = int(np.count_nonzero(ctx.valid_transition))
+    ctx.valid_weight_mask = ctx.valid_transition.copy()
+    ctx.valid_weight_count = ctx.valid_count
+    ctx.valid_weight_mass = 1.0
+    ctx.ess_after_observation = float(ctx.n_particles)
+    ctx.effective_step_lengths_for_diagnostics = ctx.sl[indices]
+    ctx.resampled = True
+    ctx.recovery_attempted = False
+    ctx.recovery_valid_count = ctx.valid_count
+
+
+def _apply_anchor_heading(ctx: ParticleRuntime) -> None:
+    """現在の粒子配列へ確定絶対方位を補正項として注入する。"""
+    landmark = ctx.landmark_definition
+    if landmark is None or landmark.heading_deg is None:
+        raise RuntimeError("内部エラー: 確定対象の方位がありません。")
+    base_headings = ctx.particle_base_headings[ctx.parent_indices]
+    current_headings = _normalize_angle(
+        base_headings + ctx.heading_correction + ctx.heading_drift
+    )
+    ctx.heading_correction, ctx.heading_drift = resolve_anchor_heading(
+        base_headings,
+        current_headings,
+        landmark.heading_deg,
+        landmark.heading_sigma_deg,
+        landmark.heading_bidirectional,
+        ctx.rng,
+    )
+    ctx.recovery_mode = "landmark_anchor_heading"
+    ctx.landmark_applied = True
+
+
+def _landmark_reset_requested(ctx: ParticleRuntime) -> bool:
+    """現在のmodeと粒子群の広がりからresetが必要かを返す。
+
+    reset と hybrid のどちらも「reset のばら撒き幅より誤差が十分大きい」ことを求める。
+    誤差が ``landmark_reset_sigma_m`` と同程度のときに撒き直すと不確かさが増え、
+    代表軌跡が往復して折り返す。hybrid はさらに「観測尤度では届かないほど遠い」
+    ことも求め、粒子群の広がりで届く範囲は observation に任せる。
+    """
+    if (
+        ctx.landmark_mode not in {"reset", "hybrid"}
+        or ctx.landmark_definition is not None
+        and ctx.landmark_definition.position_sigma_m is not None
+    ):
+        return False
+    if ctx.landmark_before_position is None or ctx.landmark_xy is None:
+        return False
+    distance = float(
+        np.linalg.norm(
+            np.asarray(ctx.landmark_before_position) - np.asarray(ctx.landmark_xy)
+        )
+    )
+    if distance <= ctx.landmark_reset_min_distance_m:
+        return False
+    if ctx.landmark_mode == "reset":
+        return True
+    if ctx.landmark_position_spread_rms_m is None:
+        return False
+    spread = max(ctx.landmark_position_spread_rms_m, 1e-9)
+    return distance > ctx.landmark_reset_spread_ratio * spread
+
+
+def _landmark_reset_within_limit(ctx: ParticleRuntime) -> bool:
+    """reset先までの代表距離が安全上限以内かを返す。"""
+    if ctx.landmark_before_position is None or ctx.landmark_xy is None:
+        return False
+    distance = float(
+        np.linalg.norm(
+            np.asarray(ctx.landmark_before_position) - np.asarray(ctx.landmark_xy)
+        )
+    )
+    if distance <= ctx.landmark_max_jump_m:
+        return True
+    beacon_id = (
+        "unknown"
+        if ctx.landmark_detection is None
+        else ctx.landmark_detection.beacon_id
+    )
+    print(
+        f"警告: ランドマーク {beacon_id} へのreset距離 {distance:.2f}mが "
+        f"上限 {ctx.landmark_max_jump_m:.2f}mを超えたためスキップします。",
+        file=sys.stderr,
+    )
+    return False
+
+
 def resolve_map_constraints(ctx: ParticleRuntime) -> None:
     """地図制約違反を復旧し、通常粒子はESSに応じて再標本化する。"""
     _reset_recovery_diagnostics(ctx)
+    landmark = ctx.landmark_definition
+    if (
+        ctx.landmark_mode != "ranging"
+        and landmark is not None
+        and landmark.position_sigma_m is not None
+    ):
+        if _anchor_position_requested(ctx) or ctx.recovery_attempted:
+            _anchor_to_landmark(ctx)
+            return
+        if landmark.heading_deg is not None:
+            _resample_for_anchor_heading(ctx)
+            _apply_anchor_heading(ctx)
+            return
+    if ctx.landmark_detection is not None and _landmark_reset_requested(ctx):
+        if _landmark_reset_within_limit(ctx):
+            _reset_to_landmark(ctx)
+            return
     if not ctx.recovery_attempted:
         _resample_or_keep(ctx)
         return

@@ -2,7 +2,7 @@
 
 役割:
     メートル座標の軌跡をフロアマップのピクセル座標へ変換し、ステップ分類、方位、
-    始点・終点を重ねた画像として表示・保存する。
+    始点・終点、BLE ランドマーク補正を重ねた画像として表示・保存する。
 依存元:
     ``config`` から地図の既定値、``models`` から ``StepHeading`` を取得し、
     NumPy、Pandas、Matplotlib を座標変換と描画に利用する。
@@ -17,16 +17,27 @@
 from pathlib import Path
 
 import matplotlib.cm as cm
+import matplotlib.patheffects as path_effects
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.axes import Axes
 from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize
+from matplotlib.patches import Circle
 
-from ...common.config import FLOORMAP_ORIGIN_PX, FLOORMAP_PATH, FLOORMAP_SCALE
+from ...common.config import (
+    BLE_PLOT_MIN_CORRECTION_M,
+    FLOORMAP_ORIGIN_PX,
+    FLOORMAP_PATH,
+    FLOORMAP_SCALE,
+)
 from ...common.lib.floormap import compute_pixel_coords, pixel_vector_from_heading
-from ...common.lib.models import StepHeading
+from ...common.lib.models import (
+    LandmarkCorrection,
+    LandmarkCorrectionResult,
+    StepHeading,
+)
 from ...matplotlib_config import configure_japanese_font
 
 _compute_pixel_coords = compute_pixel_coords
@@ -178,6 +189,372 @@ def _plot_heading_overlay(
         )
 
 
+def _plot_landmark_overlay(
+    ax: Axes,
+    landmark: LandmarkCorrectionResult | None,
+    gx_mean: float,
+    gz_mean: float,
+    origin_px: tuple[int, int],
+    scale: float,
+    raw_label: str = "補正前軌跡",
+) -> None:
+    """補正前軌跡、ランドマーク位置、補正発生地点を重ねて描画する。"""
+    if landmark is None:
+        return
+
+    raw = np.asarray(landmark.raw_trajectory, dtype=float)
+    if raw.ndim == 2 and raw.shape[1] == 2 and len(raw) >= 2:
+        raw_px, raw_py = _compute_pixel_coords(
+            raw[:, 0], raw[:, 1], gx_mean, gz_mean, origin_px, scale
+        )
+        ax.plot(
+            raw_px,
+            raw_py,
+            linestyle="--",
+            color="gray",
+            linewidth=1.4,
+            alpha=0.6,
+            zorder=1,
+            label=raw_label,
+        )
+
+    applied = [item for item in landmark.corrections if item.applied]
+    _plot_landmark_positions(ax, landmark, applied, gx_mean, gz_mean, origin_px, scale)
+    _plot_range_circles(ax, landmark, gx_mean, gz_mean, origin_px, scale)
+    rejected = [item for item in landmark.corrections if not item.applied]
+    if rejected:
+        rejected_points = np.asarray(
+            [(item.before_x, item.before_y) for item in rejected], dtype=float
+        )
+        rx, ry = _compute_pixel_coords(
+            rejected_points[:, 0],
+            rejected_points[:, 1],
+            gx_mean,
+            gz_mean,
+            origin_px,
+            scale,
+        )
+        ax.scatter(
+            rx,
+            ry,
+            marker="x",
+            s=90,
+            color="black",
+            linewidths=2.0,
+            zorder=10,
+            label="棄却されたBLE検出",
+        )
+    if not applied:
+        return
+
+    unique = list(
+        {
+            (item.beacon_id, item.landmark_x, item.landmark_y): item for item in applied
+        }.values()
+    )
+    _plot_anchor_heading_arrows(ax, unique, gx_mean, gz_mean, origin_px, scale)
+
+    landmark_x = np.array([item.landmark_x for item in applied], dtype=float)
+    landmark_y = np.array([item.landmark_y for item in applied], dtype=float)
+    lx, ly = _compute_pixel_coords(
+        landmark_x, landmark_y, gx_mean, gz_mean, origin_px, scale
+    )
+
+    before_x = np.array([item.before_x for item in applied], dtype=float)
+    before_y = np.array([item.before_y for item in applied], dtype=float)
+    bx, by = _compute_pixel_coords(
+        before_x,
+        before_y,
+        gx_mean,
+        gz_mean,
+        origin_px,
+        scale,
+    )
+    after_x = np.array([item.after_x for item in applied], dtype=float)
+    after_y = np.array([item.after_y for item in applied], dtype=float)
+    ax_after, ay_after = _compute_pixel_coords(
+        after_x, after_y, gx_mean, gz_mean, origin_px, scale
+    )
+    ax.scatter(
+        bx,
+        by,
+        marker="X",
+        s=110,
+        color="red",
+        edgecolors="black",
+        linewidths=0.8,
+        zorder=9,
+        label="ランドマーク補正",
+    )
+    residual_label = True
+    correction_label = True
+    for index, item in enumerate(applied):
+        ax.plot(
+            [bx[index], lx[index]],
+            [by[index], ly[index]],
+            color="royalblue",
+            linestyle=":",
+            linewidth=1.0,
+            alpha=0.7,
+            zorder=8,
+            label="観測残差（補正ではない）" if residual_label else None,
+        )
+        residual_label = False
+        movement = float(
+            np.hypot(item.after_x - item.before_x, item.after_y - item.before_y)
+        )
+        if movement >= BLE_PLOT_MIN_CORRECTION_M:
+            ax.plot(
+                [bx[index], ax_after[index]],
+                [by[index], ay_after[index]],
+                color="red",
+                linewidth=1.4,
+                alpha=0.85,
+                zorder=9,
+                label="実際の補正移動" if correction_label else None,
+            )
+            correction_label = False
+
+
+def _plot_range_circles(
+    ax: Axes,
+    landmark: LandmarkCorrectionResult,
+    gx_mean: float,
+    gz_mean: float,
+    origin_px: tuple[int, int],
+    scale: float,
+) -> None:
+    """推定距離をビーコン中心の円として描く。"""
+    label_added = False
+    for item in landmark.corrections:
+        if item.estimated_distance_m is None:
+            continue
+        lx, ly = _compute_pixel_coords(
+            np.asarray([item.landmark_x]),
+            np.asarray([item.landmark_y]),
+            gx_mean,
+            gz_mean,
+            origin_px,
+            scale,
+        )
+        circle = Circle(
+            (float(lx[0]), float(ly[0])),
+            item.estimated_distance_m / scale,
+            fill=False,
+            color="deepskyblue",
+            linestyle="--",
+            linewidth=1.0,
+            alpha=0.5,
+            label="RSSI推定距離" if not label_added else None,
+        )
+        ax.add_patch(circle)
+        label_added = True
+
+
+def _plot_landmark_positions(
+    ax: Axes,
+    landmark: LandmarkCorrectionResult,
+    applied: list[LandmarkCorrection],
+    gx_mean: float,
+    gz_mean: float,
+    origin_px: tuple[int, int],
+    scale: float,
+) -> None:
+    """登録済みBLE位置を検出の有無にかかわらず地図へ描画する。"""
+    applied_by_id = {item.beacon_id: item for item in applied}
+    configured_ids = {item.beacon_id for item in landmark.landmarks}
+    groups: tuple[tuple[list[tuple[str, float, float]], str, int, str, str], ...] = (
+        (
+            [],
+            "*",
+            420,
+            "magenta",
+            "ランドマーク",
+        ),
+        (
+            [],
+            "D",
+            260,
+            "deepskyblue",
+            "確定ランドマーク（位置）",
+        ),
+        (
+            [],
+            "P",
+            300,
+            "darkorange",
+            "確定ランドマーク（位置・方位）",
+        ),
+    )
+    for definition in landmark.landmarks:
+        correction = applied_by_id.get(definition.beacon_id)
+        position_sigma = (
+            definition.position_sigma_m
+            if correction is None
+            else correction.anchor_position_sigma_m
+        )
+        heading = (
+            definition.heading_deg
+            if correction is None
+            else correction.anchor_heading_deg
+        )
+        group_index = 0 if position_sigma is None else 1 if heading is None else 2
+        groups[group_index][0].append(
+            (
+                definition.beacon_id,
+                float(definition.pixel_x),
+                float(definition.pixel_y),
+            )
+        )
+
+    fallback = [item for item in applied if item.beacon_id not in configured_ids]
+    if fallback:
+        fallback_x, fallback_y = _compute_pixel_coords(
+            np.asarray([item.landmark_x for item in fallback], dtype=float),
+            np.asarray([item.landmark_y for item in fallback], dtype=float),
+            gx_mean,
+            gz_mean,
+            origin_px,
+            scale,
+        )
+        for item, pixel_x, pixel_y in zip(
+            fallback, fallback_x, fallback_y, strict=True
+        ):
+            group_index = (
+                0
+                if item.anchor_position_sigma_m is None
+                else 1
+                if item.anchor_heading_deg is None
+                else 2
+            )
+            groups[group_index][0].append(
+                (item.beacon_id, float(pixel_x), float(pixel_y))
+            )
+
+    label_index = 0
+    label_offsets = ((12, -14), (12, 14), (-12, -14), (-12, 14))
+    for points, marker, size, color, label in groups:
+        if not points:
+            continue
+        coordinates = np.asarray(
+            [(pixel_x, pixel_y) for _, pixel_x, pixel_y in points], dtype=float
+        )
+        ax.scatter(
+            coordinates[:, 0],
+            coordinates[:, 1],
+            marker=marker,
+            s=size * 1.18,
+            facecolors="none",
+            edgecolors="white",
+            linewidths=5.0,
+            alpha=0.95,
+            zorder=10,
+        )
+        ax.scatter(
+            coordinates[:, 0],
+            coordinates[:, 1],
+            marker=marker,
+            s=size,
+            facecolors="none",
+            edgecolors=color,
+            linewidths=2.6,
+            zorder=11,
+            label=label,
+        )
+        for beacon_id, pixel_x, pixel_y in points:
+            offset_x, offset_y = label_offsets[label_index % len(label_offsets)]
+            ax.annotate(
+                beacon_id,
+                xy=(pixel_x, pixel_y),
+                xytext=(offset_x, offset_y),
+                textcoords="offset points",
+                horizontalalignment="left" if offset_x > 0 else "right",
+                verticalalignment="bottom" if offset_y > 0 else "top",
+                fontsize=9,
+                fontweight="bold",
+                color=color,
+                arrowprops={
+                    "arrowstyle": "-",
+                    "color": color,
+                    "linewidth": 1.2,
+                },
+                path_effects=[
+                    path_effects.Stroke(linewidth=3.5, foreground="white"),
+                    path_effects.Normal(),
+                ],
+                zorder=12,
+                annotation_clip=False,
+            )
+            label_index += 1
+
+
+def _plot_anchor_heading_arrows(
+    ax: Axes,
+    corrections: list[LandmarkCorrection],
+    gx_mean: float,
+    gz_mean: float,
+    origin_px: tuple[int, int],
+    scale: float,
+) -> None:
+    """方位確定ランドマークへ設定方位を示す矢印を描く。"""
+    heading_items = [
+        item for item in corrections if item.anchor_heading_deg is not None
+    ]
+    if not heading_items:
+        return
+    xs, ys = _compute_pixel_coords(
+        np.asarray([item.landmark_x for item in heading_items], dtype=float),
+        np.asarray([item.landmark_y for item in heading_items], dtype=float),
+        gx_mean,
+        gz_mean,
+        origin_px,
+        scale,
+    )
+    vectors = np.asarray(
+        [
+            _pixel_vector_from_heading(
+                np.radians(item.anchor_heading_deg),
+                1.0,
+                gx_mean,
+                gz_mean,
+                scale,
+            )
+            for item in heading_items
+            if item.anchor_heading_deg is not None
+        ],
+        dtype=float,
+    )
+    ax.quiver(
+        xs,
+        ys,
+        vectors[:, 0],
+        vectors[:, 1],
+        angles="xy",
+        scale_units="xy",
+        scale=1.0,
+        color="darkorange",
+        width=0.006,
+        zorder=9,
+        label="確定方位",
+    )
+    bidirectional = np.asarray(
+        [item.anchor_heading_bidirectional for item in heading_items], dtype=bool
+    )
+    if np.any(bidirectional):
+        ax.quiver(
+            xs[bidirectional],
+            ys[bidirectional],
+            -vectors[bidirectional, 0],
+            -vectors[bidirectional, 1],
+            angles="xy",
+            scale_units="xy",
+            scale=1.0,
+            color="darkorange",
+            width=0.006,
+            zorder=9,
+        )
+
+
 def plot_trajectory(
     trajectory: list[list[float]],
     gx_mean: float = 0.0,
@@ -187,6 +564,7 @@ def plot_trajectory(
     scale: float = FLOORMAP_SCALE,
     output_dir: Path | None = None,
     step_headings: list[StepHeading] | None = None,
+    landmark: LandmarkCorrectionResult | None = None,
 ) -> None:
     """推定した2次元歩行軌跡をフロアマップ上にプロットする。"""
     configure_japanese_font()
@@ -210,6 +588,8 @@ def plot_trajectory(
     pts = np.column_stack([px, py]).reshape(-1, 1, 2)
     segments = np.concatenate([pts[:-1], pts[1:]], axis=1)
     lc = LineCollection(segments.tolist(), cmap=cmap, norm=norm, zorder=2)
+    if landmark is not None:
+        lc.set_label("補正後軌跡")
     lc.set_array(np.arange(n - 1))
     ax.add_collection(lc)
     # 各ステップ点を同じカラーマップで描画
@@ -221,6 +601,14 @@ def plot_trajectory(
         ax,
         trajectory,
         step_headings,
+        gx_mean,
+        gz_mean,
+        origin_px,
+        scale,
+    )
+    _plot_landmark_overlay(
+        ax,
+        landmark,
         gx_mean,
         gz_mean,
         origin_px,

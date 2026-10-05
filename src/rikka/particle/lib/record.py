@@ -10,6 +10,9 @@
     履歴・診断・stageを元と同じ順序で記録する。
 """
 
+import numpy as np
+
+from ...common.lib.models import LandmarkCorrection, LandmarkRange
 from ...particle.lib.proposal import (
     _normalize_angle,
 )
@@ -20,7 +23,55 @@ from .diagnostics import _build_step_diagnostics
 from .state import ParticleRuntime
 
 
+def _record_landmark_event(ctx: ParticleRuntime) -> None:
+    """現在歩で実際に反映したランドマークの補正前後位置を記録する。"""
+    if (
+        ctx.landmark_mode == "none"
+        or ctx.landmark_detection is None
+        or ctx.landmark_xy is None
+        or ctx.landmark_before_position is None
+    ):
+        return
+    after = np.average(ctx.particles, axis=0, weights=ctx.weights)
+    detection = ctx.landmark_detection
+    landmark = ctx.landmark_definition
+    ctx.landmark_events.append(
+        LandmarkCorrection(
+            step_index=ctx.step_number - 1,
+            timestamp_s=detection.timestamp_s,
+            beacon_id=detection.beacon_id,
+            rssi_dbm=detection.rssi_dbm,
+            before_x=ctx.landmark_before_position[0],
+            before_y=ctx.landmark_before_position[1],
+            landmark_x=ctx.landmark_xy[0],
+            landmark_y=ctx.landmark_xy[1],
+            after_x=float(after[0]),
+            after_y=float(after[1]),
+            applied=ctx.landmark_applied,
+            anchor_position_sigma_m=(
+                None if landmark is None else landmark.position_sigma_m
+            ),
+            anchor_heading_deg=None if landmark is None else landmark.heading_deg,
+            anchor_heading_sigma_deg=(
+                None
+                if landmark is None or landmark.position_sigma_m is None
+                else landmark.heading_sigma_deg
+            ),
+            anchor_heading_bidirectional=(
+                False if landmark is None else landmark.heading_bidirectional
+            ),
+            estimated_distance_m=(
+                detection.distance_m if isinstance(detection, LandmarkRange) else None
+            ),
+            correction_mode=(
+                "ranging" if ctx.landmark_mode == "ranging" else ctx.landmark_mode
+            ),
+        )
+    )
+
+
 def record(ctx: ParticleRuntime) -> None:
+    _record_landmark_event(ctx)
     ctx.heading_correction_history.append(ctx.heading_correction.copy())
     ctx.heading_drift_history.append(ctx.heading_drift.copy())
     ctx.motion_state_history.append(ctx.motion_state.copy())
@@ -75,6 +126,10 @@ def record(ctx: ParticleRuntime) -> None:
                 recovery_replay_steps=ctx.recovery_replay_steps,
                 recovery_candidate_branch_count=ctx.recovery_candidate_branch_count,
                 recovery_selected_branch_count=ctx.recovery_selected_branch_count,
+                landmark_detection=ctx.landmark_detection,
+                landmark_before_position=ctx.landmark_before_position,
+                landmark_xy=ctx.landmark_xy,
+                landmark_likelihood_mean=ctx.landmark_likelihood_mean,
             )
         )
     if ctx.recorder.stages_enabled:
