@@ -19,7 +19,15 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from ...common.lib.models import StepHeading, StepMotionEvidence, StepMotionPosterior
+from ...common.lib.models import (
+    Landmark,
+    LandmarkCorrection,
+    LandmarkObservation,
+    LandmarkRange,
+    StepHeading,
+    StepMotionEvidence,
+    StepMotionPosterior,
+)
 from .recorder import (
     ParticleFilterStepDiagnostics,
     ParticlePathComparison,
@@ -84,6 +92,21 @@ class ParticleRuntime:
     preserve_recovery_branches: bool
     motion_predictive_weight_power: float
     path_selection: str
+    landmark_detections: tuple[LandmarkObservation, ...]
+    landmark_ranging_observations: tuple[LandmarkRange, ...]
+    landmarks: tuple[Landmark, ...]
+    landmark_mode: str
+    landmark_sigma_m: float
+    landmark_likelihood_floor: float
+    landmark_range_weight_power: float
+    landmark_reset_sigma_m: float
+    landmark_max_jump_m: float
+    landmark_reset_spread_ratio: float
+    landmark_reset_min_distance_m: float
+    landmark_reset_heading_sigma: float
+    landmark_anchor_warn_jump_m: float
+    landmark_retrofit: bool
+    landmark_events_collector: list[LandmarkCorrection] | None
 
     adaptive_recovery_scale: bool = field(init=False)
     adaptive_stride_state: bool = field(init=False)
@@ -119,6 +142,24 @@ class ParticleRuntime:
     heading_process_sigma: float = field(init=False)
     healthy_checkpoint_steps: list[int] = field(init=False)
     indices: np.ndarray = field(init=False)
+    landmark_before_position: tuple[float, float] | None = field(init=False)
+    landmark_applied: bool = field(init=False)
+    landmark_by_step: dict[int, LandmarkObservation] = field(init=False)
+    landmark_observations_by_step: dict[int, tuple[LandmarkRange, ...]] = field(
+        init=False
+    )
+    landmark_observations: tuple[LandmarkRange, ...] = field(init=False)
+    landmark_detection: LandmarkObservation | None = field(init=False)
+    landmark_definition: Landmark | None = field(init=False)
+    landmark_definitions: dict[str, Landmark] = field(init=False)
+    landmark_events: list[LandmarkCorrection] = field(init=False)
+    landmark_likelihood: np.ndarray | None = field(init=False)
+    landmark_likelihood_mean: float | None = field(init=False)
+    landmark_position_spread_rms_m: float | None = field(init=False)
+    landmark_anchor_steps: set[int] = field(init=False)
+    landmark_meters: dict[str, tuple[float, float]] = field(init=False)
+    landmark_xy: tuple[float, float] | None = field(init=False)
+    landmark_reset_steps: set[int] = field(init=False)
     map_gray: np.ndarray = field(init=False)
     motion_evidence: StepMotionEvidence = field(init=False)
     motion_evidences: tuple[StepMotionEvidence, ...] | list[StepMotionEvidence] = field(

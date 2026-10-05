@@ -14,9 +14,14 @@
 import numpy as np
 
 from ...common.config import (
+    BLE_PATH_LOSS_N,
+    BLE_PATH_LOSS_TX_POWER_DBM,
+    BLE_RSSI_SIGMA_DB,
     SIDESTEP_LENGTH_SCALE,
     TURNING_LENGTH_SCALE,
 )
+from ...common.lib.models import PathLossModel
+from ...particle.lib.landmark import landmark_likelihood, landmark_range_likelihood
 from ...particle.lib.map_constraints import (
     _evaluate_particle_transitions,
 )
@@ -31,6 +36,92 @@ from ...particle.lib.resampling import (
 )
 from ...particle.lib.weighting import weight
 from .state import ParticleRuntime
+
+
+def _resolve_landmark_observation(ctx: ParticleRuntime) -> None:
+    """現在歩のランドマークと、observation方式の尤度・診断値を解決する。"""
+    ctx.landmark_detection = None
+    ctx.landmark_observations = ()
+    ctx.landmark_definition = None
+    ctx.landmark_xy = None
+    ctx.landmark_likelihood = None
+    ctx.landmark_likelihood_mean = None
+    ctx.landmark_position_spread_rms_m = None
+    ctx.landmark_before_position = None
+    ctx.landmark_applied = False
+    if ctx.landmark_mode == "none":
+        return
+    ctx.landmark_detection = ctx.landmark_by_step.get(ctx.step_number)
+    if ctx.landmark_mode == "ranging":
+        ctx.landmark_observations = ctx.landmark_observations_by_step.get(
+            ctx.step_number, ()
+        )
+    if ctx.landmark_detection is None and not ctx.landmark_observations:
+        return
+    if ctx.landmark_detection is not None:
+        ctx.landmark_definition = ctx.landmark_definitions[
+            ctx.landmark_detection.beacon_id
+        ]
+        ctx.landmark_xy = ctx.landmark_meters[ctx.landmark_detection.beacon_id]
+    base_weights = weight(
+        ctx.weights_before,
+        ctx.valid_transition,
+        ctx.stride_observation_likelihood,
+        ctx.state_predictive_likelihoods,
+        ctx.motion_predictive_weight_power,
+    )
+    base_mass = float(base_weights.sum())
+    normalized = base_weights / base_mass if base_mass > 0.0 else ctx.weights_before
+    center = np.average(ctx.proposed_particles, axis=0, weights=normalized)
+    ctx.landmark_before_position = (float(center[0]), float(center[1]))
+    ctx.landmark_position_spread_rms_m = float(
+        np.sqrt(
+            np.sum(
+                normalized * np.sum(np.square(ctx.proposed_particles - center), axis=1)
+            )
+        )
+    )
+    if ctx.landmark_mode == "ranging":
+        log_likelihood = np.zeros(ctx.n_particles, dtype=float)
+        for observation in ctx.landmark_observations:
+            definition = ctx.landmark_definitions[observation.beacon_id]
+            model = definition.path_loss_model or PathLossModel(
+                BLE_PATH_LOSS_TX_POWER_DBM,
+                BLE_PATH_LOSS_N,
+                BLE_RSSI_SIGMA_DB,
+            )
+            likelihood = landmark_range_likelihood(
+                ctx.proposed_particles,
+                ctx.landmark_meters[observation.beacon_id],
+                observation.smoothed_rssi_dbm,
+                model,
+                ctx.landmark_likelihood_floor,
+            )
+            log_likelihood += np.log(likelihood)
+        ctx.landmark_likelihood = np.exp(
+            ctx.landmark_range_weight_power * log_likelihood
+        )
+        ctx.landmark_likelihood_mean = float(
+            np.sum(normalized * ctx.landmark_likelihood)
+        )
+        ctx.landmark_applied = bool(ctx.landmark_observations) or (
+            ctx.landmark_detection is not None
+        )
+        return
+    if ctx.landmark_definition is None or ctx.landmark_xy is None:
+        raise RuntimeError("内部エラー: 検出ランドマークの定義がありません。")
+    if ctx.landmark_definition.position_sigma_m is not None:
+        return
+    if ctx.landmark_mode not in {"observation", "hybrid"}:
+        return
+    ctx.landmark_likelihood = landmark_likelihood(
+        ctx.proposed_particles,
+        ctx.landmark_xy,
+        ctx.landmark_sigma_m,
+        ctx.landmark_likelihood_floor,
+    )
+    ctx.landmark_likelihood_mean = float(np.sum(normalized * ctx.landmark_likelihood))
+    ctx.landmark_applied = True
 
 
 def propose(ctx: ParticleRuntime) -> None:
@@ -149,12 +240,14 @@ def propose(ctx: ParticleRuntime) -> None:
                 / ctx.stride_prior_sigma
             )
         )
+    _resolve_landmark_observation(ctx)
     ctx.posterior_weights = weight(
         ctx.weights_before,
         ctx.valid_transition,
         ctx.stride_observation_likelihood,
         ctx.state_predictive_likelihoods,
         ctx.motion_predictive_weight_power,
+        ctx.landmark_likelihood,
     )
     ctx.posterior_weights_for_stages = (
         ctx.posterior_weights.copy() if ctx.recorder.stages_enabled else None
@@ -166,6 +259,8 @@ def propose(ctx: ParticleRuntime) -> None:
                 ctx.motion_predictive_weight_power
                 * np.log(ctx.state_predictive_likelihoods)
             )
+        if ctx.landmark_likelihood is not None:
+            ctx.observation_log_likelihood += np.log(ctx.landmark_likelihood)
     ctx.candidate_path_log_scores = np.where(
         ctx.valid_transition,
         ctx.path_log_scores_before + ctx.observation_log_likelihood,

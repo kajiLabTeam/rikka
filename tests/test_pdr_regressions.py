@@ -1,5 +1,6 @@
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -19,9 +20,10 @@ from rikka.common.lib.pdr_math import (
     _validate_positive_parameter,
     _validate_scale,
 )
-from rikka.common.lib.sensors import process_sensor_data
+from rikka.common.lib.sensors import load_sensor_data, process_sensor_data
 from rikka.common.lib.time_utils import _sample_gyro_angle
 from rikka.particle.lib.branches import branch_preserving_resample
+from rikka.particle.lib.finalize import _retrofit_landmark_anchor_jumps
 from rikka.particle.lib.map_constraints import (
     _evaluate_particle_transitions,
     _normalize_floormap_gray,
@@ -130,6 +132,41 @@ def _forward_step_heading(
         motion_reject_reason=None,
         trajectory_movement_type="forward",
     )
+
+
+def test_load_sensor_data_accepts_experiment_time_headers(tmp_path: Path) -> None:
+    """BLE併記データの phyphox 列名を標準列名へ変換する。"""
+    pd.DataFrame(
+        {
+            "Experiment Time (s)": [0.01, 0.02],
+            "Acceleration X (m/s^2)": [1.0, 2.0],
+            "Acceleration Y (m/s^2)": [3.0, 4.0],
+            "Acceleration Z (m/s^2)": [5.0, 6.0],
+        }
+    ).to_csv(tmp_path / "Accelerometer.csv", index=False)
+    pd.DataFrame(
+        {
+            "Experiment Time (s)": [0.01, 0.02],
+            "Gyroscope X (rad/s)": [0.1, 0.2],
+            "Gyroscope Y (rad/s)": [0.3, 0.4],
+            "Gyroscope Z (rad/s)": [0.5, 0.6],
+        }
+    ).to_csv(tmp_path / "Gyroscope.csv", index=False)
+
+    df_acc, df_gyro = load_sensor_data(tmp_path)
+
+    assert df_acc[["t", "x", "y", "z"]].to_dict("list") == {
+        "t": [0.01, 0.02],
+        "x": [1.0, 2.0],
+        "y": [3.0, 4.0],
+        "z": [5.0, 6.0],
+    }
+    assert df_gyro[["t", "x", "y", "z"]].to_dict("list") == {
+        "t": [0.01, 0.02],
+        "x": [0.1, 0.2],
+        "y": [0.3, 0.4],
+        "z": [0.5, 0.6],
+    }
 
 
 def test_process_sensor_data_resets_index_and_uses_time_delta_for_gyro() -> None:
@@ -522,6 +559,27 @@ def test_run_particle_filter_seed_makes_particles_deterministic(tmp_path) -> Non
     np.testing.assert_allclose(first[3], second[3])
 
 
+def test_pf_landmark_retrofit_removes_selected_path_anchor_jump() -> None:
+    """PF代表経路だけを後処理し、確定アンカー歩の位置ジャンプを除く。"""
+    context = SimpleNamespace(
+        landmark_retrofit=True,
+        landmark_anchor_steps={3},
+        selected_path=np.asarray(
+            [[0.0, 0.0], [1.0, 0.0], [2.0, 0.0], [10.0, 10.0], [11.0, 10.0]]
+        ),
+        map_gray=np.full((30, 30), 255.0),
+        gx_mean=0.0,
+        gz_mean=1.0,
+        origin_px=(5, 5),
+        scale=1.0,
+    )
+
+    _retrofit_landmark_anchor_jumps(context)
+
+    np.testing.assert_allclose(context.selected_path[2], context.selected_path[3])
+    np.testing.assert_allclose(context.selected_path[3:], [[10.0, 10.0], [11.0, 10.0]])
+
+
 def test_particle_filter_diagnostics_field_order_is_stable() -> None:
     assert tuple(ParticleFilterStepDiagnostics.__dataclass_fields__) == (
         "step",
@@ -552,6 +610,10 @@ def test_particle_filter_diagnostics_field_order_is_stable() -> None:
         "motion_state_transition_count",
         "motion_reliability",
         "calibration_reliability",
+        "landmark_beacon_id",
+        "landmark_distance_m",
+        "landmark_nearest_delta_s",
+        "landmark_likelihood_mean",
         "resampled",
         "recovery_attempted",
         "recovery_mode",

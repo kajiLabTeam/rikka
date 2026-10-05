@@ -30,6 +30,7 @@ from .lib.frames import (
 from .lib.outputs import (
     _build_direction_posteriors_dataframe,
     _build_gyro_bias_dataframe,
+    _build_landmark_corrections_dataframe,
     _build_motion_posteriors_dataframe,
     _build_step_headings_dataframe,
     _build_step_length_observations_dataframe,
@@ -106,6 +107,12 @@ def write_outputs(result: TrajectoryResult, output_dir: Path) -> pd.DataFrame:
             output_dir / "step_segments.csv",
             "Step segments",
         )
+    if result.landmark is not None:
+        _write_csv(
+            _build_landmark_corrections_dataframe(result.landmark),
+            output_dir / "landmark_corrections.csv",
+            "Landmark corrections",
+        )
     if result.particle is not None:
         columns = [field.name for field in fields(ParticleFilterStepDiagnostics)]
         _write_csv(
@@ -180,12 +187,20 @@ def _render_trajectory(
     output_dir: Path,
 ) -> None:
     """通常PDRとPFで共通の引数を使って軌跡図を描画する。"""
-    plotter = (
-        plot_particle_filter_trajectory
-        if result.particle is not None
-        else plot_trajectory
-    )
-    plotter(
+    if result.particle is not None:
+        plot_particle_filter_trajectory(
+            result.trajectory,
+            gx_mean=result.prepared.gx_mean,
+            gz_mean=result.prepared.gz_mean,
+            floormap_path=settings.floormap_path,
+            origin_px=settings.origin_px,
+            scale=settings.scale,
+            output_dir=output_dir,
+            step_headings=result.step_headings,
+            landmark=result.landmark,
+        )
+        return
+    plot_trajectory(
         result.trajectory,
         gx_mean=result.prepared.gx_mean,
         gz_mean=result.prepared.gz_mean,
@@ -194,6 +209,7 @@ def _render_trajectory(
         scale=settings.scale,
         output_dir=output_dir,
         step_headings=result.step_headings,
+        landmark=result.landmark,
     )
 
 
@@ -255,6 +271,7 @@ def _render_particle_artifacts(
             origin_px=settings.origin_px,
             scale=settings.scale,
             output_path=output_dir / "particle_filter.mp4",
+            landmark=result.landmark,
         )
 
 

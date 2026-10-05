@@ -19,6 +19,7 @@
 |---|---|
 | 入力・推定 | [入力と前処理](10_data-loading-and-preprocessing.md) / [歩検出](11_step-detection.md) / [方位推定](12_heading-estimation.md) / [運動状態推定](13_motion-state-estimation.md) / [歩幅と軌跡](14_step-length-and-trajectory.md) |
 | 地図拘束 | [particle filter](15_particle-filter.md) / [マップ制約と復旧](16_map-matching-and-recovery.md) |
+| 外部測位 | [BLE ランドマーク測位](17_ble-landmark.md)（前提知識なしで読める10分の概要） |
 | 結果利用 | [評価](18_evaluation.md) / [保存・表示](19_output-and-visualization.md) |
 | 横断整理 | [標準設定と切替](30_active-configurations.md) / [精度比較](31_accuracy-comparison.md) |
 | 会議用 | [確認質問](50_questions.md) / [今後の改善案](60_future-improvements.md) |
