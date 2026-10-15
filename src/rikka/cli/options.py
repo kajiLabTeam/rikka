@@ -1177,5 +1177,81 @@ def ble_sample(
     print(f"Sample BLE RSSI saved to {path} ({rows} rows)")
 
 
+@cli.command(name="evaluate")
+@click.option(
+    "--estimated-csv",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    required=True,
+    help="評価対象の推定軌跡CSV",
+)
+@click.option(
+    "--truth-csv",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    required=True,
+    help="比較対象の正解軌跡CSV",
+)
+@click.option(
+    "--coordinate-system",
+    type=click.Choice(("pixel", "meter")),
+    default="pixel",
+    show_default=True,
+    help="推定・正解軌跡の座標系",
+)
+@click.option(
+    "--floor-scale",
+    type=float,
+    default=_SCALE_DEFAULT,
+    show_default=True,
+    callback=_validate_cli_positive_float,
+    help="pixel座標の1pxあたりのメートル数",
+)
+@click.option(
+    "--tolerance-m",
+    type=float,
+    default=1.0,
+    show_default=True,
+    callback=_validate_cli_non_negative_float,
+    help="許容誤差以内率に使う許容誤差 [m]",
+)
+@click.option(
+    "--output-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=Path("output/evaluation"),
+    show_default=True,
+    help="評価CSVと集計JSONの出力先",
+)
+def evaluate(
+    estimated_csv: Path,
+    truth_csv: Path,
+    coordinate_system: str,
+    floor_scale: float,
+    tolerance_m: float,
+    output_dir: Path,
+) -> None:
+    """推定軌跡CSVを正解軌跡CSVと比較する。"""
+    from ..common.lib.trajectory_evaluation import (  # noqa: PLC0415
+        evaluate_trajectory_csv,
+        write_evaluation_outputs,
+    )
+
+    evaluation, summary = evaluate_trajectory_csv(
+        estimated_csv,
+        truth_csv,
+        coordinate_system=coordinate_system,
+        floor_scale=floor_scale,
+        tolerance_m=tolerance_m,
+    )
+    csv_path, json_path = write_evaluation_outputs(
+        evaluation,
+        summary,
+        output_dir,
+    )
+    click.echo(f"評価CSV: {csv_path}")
+    click.echo(f"集計JSON: {json_path}")
+    click.echo(f"RMSE: {summary.rmse_m:.3f} m")
+    click.echo(f"MAE: {summary.mae_m:.3f} m")
+    click.echo(f"評価対象率: {summary.point_coverage_rate:.1f}%")
+
+
 def main() -> None:
     cli()
