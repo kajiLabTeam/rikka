@@ -2,7 +2,10 @@ from pathlib import Path
 
 import pytest
 
-from rikka.common.lib.trajectory_evaluation import evaluate_trajectory_csv
+from rikka.common.lib.trajectory_evaluation import (
+    evaluate_trajectory_csv,
+    write_evaluation_failure,
+)
 
 
 def _write_csv(path: Path, rows: str) -> Path:
@@ -75,3 +78,12 @@ def test_evaluate_rejects_truth_without_timestamp(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="正解軌跡CSVのtimestamp_sには空欄"):
         evaluate_trajectory_csv(estimated, truth, coordinate_system="meter")
+
+
+def test_write_evaluation_failure_creates_failure_summary(tmp_path: Path) -> None:
+    path = write_evaluation_failure(tmp_path, "正解軌跡と時刻が重なりません")
+
+    assert path.read_text(encoding="utf-8") == (
+        '{\n  "schema_version": "1",\n  "status": "failed",\n'
+        '  "error": "正解軌跡と時刻が重なりません"\n}\n'
+    )
