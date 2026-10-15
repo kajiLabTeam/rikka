@@ -8,8 +8,8 @@
 利用先:
     PDR pipelineがparticle filter実行後の軌跡表示と任意のanimation保存に使用する。
 処理フロー:
-    メートル座標を画素座標へ変換して地図へ重ね、動画はMP4保存を試み、利用できない
-    場合は同名のGIFへフォールバックする。
+    メートル座標を画素座標へ変換して地図へ重ね、動画はWebMを優先して保存する。
+    WebMを生成できない場合はMP4、MP4も生成できない場合はGIFへフォールバックする。
 """
 
 from pathlib import Path
@@ -181,11 +181,14 @@ def save_particle_animation(
     floormap_path: str | Path = FLOORMAP_PATH,
     origin_px: tuple[int, int] = FLOORMAP_ORIGIN_PX,
     scale: float = FLOORMAP_SCALE,
-    output_path: Path | str = Path("output/particle_filter.mp4"),
+    output_path: Path | str = Path("output/particle_filter.webm"),
     fps: int = 10,
     landmark: LandmarkCorrectionResult | None = None,
-) -> None:
-    """PF の各ステップのパーティクル分布をフロアマップ上に描画し MP4 として保存する。
+) -> Path:
+    """PF の各ステップのパーティクル分布を動画として保存する。
+
+    WebMを優先し、エンコーダーが利用できない場合はMP4、最後にGIFへ
+    フォールバックする。返り値は実際に保存されたファイルのパスである。
 
     Args:
         all_particles: 全ステップのパーティクル位置 shape=(T, N, 2)
@@ -196,7 +199,7 @@ def save_particle_animation(
         floormap_path: フロアマップ画像のパス
         origin_px: 軌跡起点のピクセル座標
         scale: 1ピクセルあたりのメートル数
-        output_path: 出力ファイルパス（.mp4）
+        output_path: WebM出力ファイルパス（通常は ``.webm``）
         fps: フレームレート
         landmark: BLE ランドマーク補正結果。粒子が寄る先を確認できるよう、
             ランドマーク位置を全フレームへ、補正が起きた歩を該当フレーム以降へ描く
@@ -262,13 +265,40 @@ def save_particle_animation(
 
     anim = FuncAnimation(fig, update, frames=len(all_particles), interval=1000 // fps)
 
-    output_path = Path(output_path)
+    output_path = Path(output_path).with_suffix(".webm")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        anim.save(str(output_path), writer=FFMpegWriter(fps=fps))
+        anim.save(
+            str(output_path),
+            writer=FFMpegWriter(
+                fps=fps,
+                codec="libvpx-vp9",
+                extra_args=["-crf", "35", "-b:v", "0", "-pix_fmt", "yuv420p"],
+            ),
+        )
         print(f"Animation saved to {output_path}")
-    except Exception:
-        gif_path = output_path.with_suffix(".gif")
-        anim.save(str(gif_path), writer=PillowWriter(fps=fps))
-        print(f"ffmpeg が見つかりません。GIF として保存しました: {gif_path}")
-    plt.close(fig)
+        plt.close(fig)
+        return output_path
+    except Exception as webm_error:
+        mp4_path = output_path.with_suffix(".mp4")
+        try:
+            anim.save(
+                str(mp4_path),
+                writer=FFMpegWriter(
+                    fps=fps,
+                    codec="libx264",
+                    extra_args=["-pix_fmt", "yuv420p", "-movflags", "+faststart"],
+                ),
+            )
+            print(f"WebMを生成できないためMP4へフォールバックしました: {mp4_path}")
+            plt.close(fig)
+            return mp4_path
+        except Exception as mp4_error:
+            gif_path = output_path.with_suffix(".gif")
+            anim.save(str(gif_path), writer=PillowWriter(fps=fps))
+            print(
+                "WebMとMP4を生成できないためGIFへフォールバックしました: "
+                f"{gif_path} ({webm_error}; {mp4_error})"
+            )
+            plt.close(fig)
+            return gif_path
