@@ -22,7 +22,8 @@ AI エージェントや sandbox 環境で `uv` の既定キャッシュに対�
 UV_CACHE_DIR=.uv-cache uv run pytest
 ```
 
-パーティクルフィルタの MP4 アニメーション出力には `ffmpeg` が必要です。
+パーティクルフィルタのアニメーション出力は WebM を優先し、生成できない場合は MP4、
+MP4も生成できない場合は GIF にフォールバックします。WebM/MP4の出力には `ffmpeg` が必要です。
 
 ```sh
 brew install ffmpeg
@@ -316,7 +317,7 @@ flowchart TD
     pf_path --> pf_result["TrajectoryResult\nPF補正軌跡・diagnostics"]
     pf_result --> plot_pipeline
     floormap --> plot_pipeline
-    plot_pipeline --> output_dir["output/<timestamp>/\nCSV / PNG / MP4 または GIF"]
+    plot_pipeline --> output_dir["output/<timestamp>/\nCSV / PNG / WebM・MP4 または GIF"]
 ```
 
 センサー波形だけを確認する `sensor` コマンドは、軌跡推定までは進まず、
@@ -536,7 +537,7 @@ uv run rikka run \
 |---|---|
 | `pf_trajectory.png` | PF の平均優先、または反転抑制された単一祖先軌跡 |
 | `particle_diagnostics.csv` | 各歩のESS、有効粒子数、位置・方位分散、歩幅倍率、recovery、軌跡選択モード |
-| `particle_filter.mp4` / `.gif` | パーティクル分布アニメーション |
+| `particle_filter.webm` / `.mp4` / `.gif` | パーティクル分布アニメーション |
 | `particle_frames/step_*.png` | 明示保存時の開始・提案・壁判定・重み・選択/復旧・確定と方位ローズ |
 | `particle_paths_comparison.png` | 明示保存時の加重平均・単一祖先・個別粒子経路と方位変化の比較 |
 

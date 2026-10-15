@@ -12,7 +12,7 @@
 |---|---|
 | 入力データ | `TrajectoryResult` と3種のsettings |
 | 入力元 | [`cli.commands.run()`](../../src/rikka/cli/commands.py#L81) |
-| 出力データ | CSV、PNG、MP4/GIF、console summary |
+| 出力データ | CSV、PNG、WebM/MP4/GIF、console summary |
 | 出力先 | `output/<timestamp>/`、sensor図のみ入力dir |
 | 主な型 | DataFrame、Matplotlib figure、NumPy |
 | 単位 | CSVごとにm/s/rad→deg変換 |
@@ -25,7 +25,7 @@
 3. adaptive/robust/PF時だけ対応診断CSVを追加します。
 4. `plot=True` なら軌跡、歩幅、歩ベクトル図を保存・表示します。
 5. PFでは設定に応じてstage画像、経路比較、animationを保存します。
-6. ffmpeg利用不可時はGIFへfallbackします。
+6. WebMを優先し、生成できない場合はMP4、最後にGIFへフォールバックします。
 
 ## 4. 使用している計算・判定
 
@@ -45,7 +45,7 @@
 | [`write_outputs`](../../src/rikka/plot/pipeline.py#L51) | 同上 | CSV一式 | result/path | DataFrame | CLI |
 | [`render`](../../src/rikka/plot/pipeline.py#L128) | 同上 | 図・PF成果物分岐 | result/settings | なし | CLI |
 | [`_build_step_headings_dataframe`](../../src/rikka/plot/lib/outputs.py#L226) | `plot/lib/outputs.py` | heading診断表 | StepHeading列 | DataFrame | write |
-| [`save_particle_animation`](../../src/rikka/plot/lib/animation.py#L93) | `plot/lib/animation.py` | MP4/GIF | 粒子履歴 | file | render |
+| [`save_particle_animation`](../../src/rikka/plot/lib/animation.py#L176) | `plot/lib/animation.py` | WebM/MP4/GIF | 粒子履歴 | file | render |
 | [`save_particle_step_frames`](../../src/rikka/plot/lib/frames.py#L421) | `plot/lib/frames.py` | 段階別画像 | stage/diagnostics | paths | render |
 
 ## 6. 呼び出し関係
@@ -79,7 +79,7 @@ flowchart LR
 - CSVがplotフラグに関係なく保存される点
 - 条件付きCSVの生成条件
 - `movement_type` と `trajectory_movement_type` の両方を保存する理由
-- animationのMP4/GIF fallback
+- animationのWebM/MP4/GIF fallback
 - 大容量stage画像が既定無効であること
 
 ## 10. 関連ファイル

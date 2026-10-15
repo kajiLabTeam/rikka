@@ -47,7 +47,7 @@
 ## ログ上は成功しているが数値評価がない処理
 
 - `paper_vertical_threshold` は回帰テスト・CSV出力経路がありますが、歩数正解との数値表はありません。
-- MP4→GIF fallback、CSV/図保存は動作確認対象であり精度比較対象ではありません。
+- WebM→MP4→GIF fallback、CSV/図保存は動作確認対象であり精度比較対象ではありません。
 - Phase G import移行はgolden一致・180 tests成功ですが、アルゴリズム精度改善ではありません。
 
 ## 比較時の注意
