@@ -87,6 +87,28 @@ uv run rikka run --no-plot
 uv run rikka pdr
 ```
 
+## 推定軌跡の精度評価
+
+解析で生成した推定軌跡CSVと、同じフロア座標系で作成した正解軌跡CSVを、
+記録開始からの経過秒で突き合わせて評価できます。既存のrikka出力では、
+先頭に時刻が空の初期位置が入るため、その行は評価せず、2点目以降を対象にします。
+正解軌跡の範囲外にある推定点も評価対象から除外します。
+
+```sh
+uv run rikka evaluate \
+  --estimated-csv output/trajectory.csv \
+  --truth-csv input/correct_path/my_walk/walk_trace.csv \
+  --floor-scale 0.01 \
+  --tolerance-m 1.0 \
+  --output-dir output/evaluation
+```
+
+`floor_scale` は1pxあたりのメートル数です。既定の座標系はフロアマップの
+ピクセル座標で、評価結果として点ごとの誤差を `evaluation.csv`、MSE・RMSE・
+MAE・P95・最大誤差・許容誤差内率・評価対象率を `evaluation.json` に保存します。
+メートル座標のCSVを評価する場合は `--coordinate-system meter` を指定し、
+`--floor-scale` は不要です。
+
 パーティクルフィルタ付きで実行します。
 
 ```sh
