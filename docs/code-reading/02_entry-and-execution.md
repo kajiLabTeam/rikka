@@ -72,7 +72,7 @@ sequenceDiagram
 | PF入口 | [`particle/pipeline.py::run_particle()`](../../src/rikka/particle/pipeline.py#L28) | PF付き `TrajectoryResult` |
 | PF低水準 | [`particle/lib/runner.py::run_particle_steps()`](../../src/rikka/particle/lib/runner.py#L74) | 軌跡、歩幅、時刻、全粒子、方位 |
 | CSV保存 | [`plot/pipeline.py::write_outputs()`](../../src/rikka/plot/pipeline.py#L51) | 共通・方式固有CSV |
-| 図・動画 | [`plot/pipeline.py::render()`](../../src/rikka/plot/pipeline.py#L128) | PNG、MP4またはGIF |
+| 図・動画 | [`plot/pipeline.py::render()`](../../src/rikka/plot/pipeline.py#L128) | PNG、WebM、MP4またはGIF |
 
 ## CLIで切り替える主な実験条件
 

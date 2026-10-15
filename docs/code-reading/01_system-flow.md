@@ -23,7 +23,7 @@ flowchart TD
     PDR -->|TrajectoryResult| CLI[cli.commands.run]
     PF -->|粒子・診断付きTrajectoryResult| CLI
     CLI -->|軌跡・歩幅・方位・診断| Output[plot.pipeline]
-    Output -->|CSV・PNG・MP4/GIF| Files[output/timestamp]
+    Output -->|CSV・PNG・WebM/MP4/GIF| Files[output/timestamp]
     Files -.->|正規化弧長300点など| Eval[agent/agent_evaluate_*]
     Truth[正解軌跡CSV] -->|相対XY m| Eval
 ```
