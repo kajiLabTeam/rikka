@@ -201,3 +201,20 @@ def write_evaluation_outputs(
         encoding="utf-8",
     )
     return csv_path, json_path
+
+
+def write_evaluation_failure(output_dir: str | Path, error: str) -> Path:
+    """評価失敗をMioへ伝える集計JSONを書き出す。"""
+    directory = Path(output_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    json_path = directory / "evaluation.json"
+    json_path.write_text(
+        json.dumps(
+            {"schema_version": "1", "status": "failed", "error": error},
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return json_path
