@@ -270,7 +270,7 @@ def _render_particle_artifacts(
             floormap_path=settings.floormap_path,
             origin_px=settings.origin_px,
             scale=settings.scale,
-            output_path=output_dir / "particle_filter.mp4",
+            output_path=output_dir / "particle_filter.webm",
             landmark=result.landmark,
         )
 
