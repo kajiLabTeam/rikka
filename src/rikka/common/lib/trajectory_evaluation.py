@@ -145,7 +145,11 @@ def evaluate_trajectory_csv(
         )
         estimated_xy = estimated.loc[evaluated, ["x", "y"]].to_numpy(dtype=float)
         delta = estimated_xy - truth_at_estimated
-        scale = floor_scale if coordinate_system == "pixel" else 1.0
+        if coordinate_system == "pixel":
+            assert floor_scale is not None
+            scale = floor_scale
+        else:
+            scale = 1.0
         # floor_scaleは1pxあたりのメートル数なので、pixel差分に掛ける。
         error_xy_m = delta * float(scale)
         distances = np.linalg.norm(error_xy_m, axis=1)

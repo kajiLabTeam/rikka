@@ -15,16 +15,11 @@ def test_evaluate_csv_ignores_initial_position_and_interpolates_truth(
 ) -> None:
     estimated = _write_csv(
         tmp_path / "estimated.csv",
-        "step_index,timestamp_s,x,y\n"
-        "0,,100,200\n"
-        "1,1,110,200\n"
-        "2,2,120,200\n",
+        "step_index,timestamp_s,x,y\n0,,100,200\n1,1,110,200\n2,2,120,200\n",
     )
     truth = _write_csv(
         tmp_path / "truth.csv",
-        "timestamp_s,x,y\n"
-        "0,100,200\n"
-        "2,100,220\n",
+        "timestamp_s,x,y\n0,100,200\n2,100,220\n",
     )
 
     evaluation, summary = evaluate_trajectory_csv(
@@ -49,16 +44,11 @@ def test_evaluate_meter_coordinates_and_excludes_out_of_range_points(
 ) -> None:
     estimated = _write_csv(
         tmp_path / "estimated.csv",
-        "timestamp_s,x,y\n"
-        ",0,0\n"
-        "1,1,0\n"
-        "3,3,0\n",
+        "timestamp_s,x,y\n,0,0\n1,1,0\n3,3,0\n",
     )
     truth = _write_csv(
         tmp_path / "truth.csv",
-        "timestamp_s,x,y\n"
-        "0,0,0\n"
-        "2,0,0\n",
+        "timestamp_s,x,y\n0,0,0\n2,0,0\n",
     )
 
     _, summary = evaluate_trajectory_csv(
