@@ -244,7 +244,7 @@ BLE_PATH_LOSS_N = 2.0
 BLE_RSSI_SIGMA_DB = 6.0
 
 # 通常 PDR のランドマーク補正方式。既存挙動は snap のまま維持する。
-BLE_PDR_CORRECTION_MODE = "snap"
+BLE_PDR_CORRECTION_MODE = "warp"
 
 # ランドマークとして扱う BLE ビーコンのフロアマップ上の既知座標
 # (beacon_id, pixel_x, pixel_y) の並び。--origin-px と同じ画像左上原点の
