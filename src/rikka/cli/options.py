@@ -176,6 +176,17 @@ def _validate_cli_positive_float(
     return value
 
 
+def _validate_cli_optional_positive_float(
+    _ctx: click.Context,
+    param: click.Parameter,
+    value: float | None,
+) -> float | None:
+    """省略可能な正の float オプションを確認する。"""
+    if value is not None and (not isfinite(value) or value <= 0):
+        raise click.BadParameter(f"{param.name} は有限な正の値を指定してください。")
+    return value
+
+
 def _validate_cli_non_negative_float(
     _ctx: click.Context,
     param: click.Parameter,
@@ -375,8 +386,8 @@ def _common_options(f: click.decorators.FC) -> click.decorators.FC:
         type=float,
         default=_BLE_MAX_WARP_SPAN_DEFAULT,
         show_default=True,
-        callback=_validate_cli_positive_float,
-        help="warpで一度に配分する軌跡区間の上限 [m]",
+        callback=_validate_cli_optional_positive_float,
+        help="warp区間の累積歩行距離上限 [m]（省略時は制限なし）",
     )(f)
     f = click.option(
         "--ble-max-correction",
@@ -641,7 +652,7 @@ def _run_pdr(
     ble_sync_window: float,
     ble_preflight: str,
     ble_max_correction: float,
-    ble_max_warp_span: float,
+    ble_max_warp_span: float | None,
     ble_retrofit_forward: str,
     ble_retrofit_max_heading: float,
     ble_retrofit_stride_scale_min: float,
@@ -748,7 +759,7 @@ def run(
     ble_sync_window: float,
     ble_preflight: str,
     ble_max_correction: float,
-    ble_max_warp_span: float,
+    ble_max_warp_span: float | None,
     ble_retrofit_forward: str,
     ble_retrofit_max_heading: float,
     ble_retrofit_stride_scale_min: float,
@@ -921,7 +932,7 @@ def particle(
     ble_sync_window: float,
     ble_preflight: str,
     ble_max_correction: float,
-    ble_max_warp_span: float,
+    ble_max_warp_span: float | None,
     ble_retrofit_forward: str,
     ble_retrofit_max_heading: float,
     ble_retrofit_stride_scale_min: float,

@@ -170,7 +170,7 @@ def run(
     ble_sync_window: float = BLE_SYNC_WINDOW_S,
     ble_preflight: str = BLE_PREFLIGHT_MODE,
     ble_max_correction: float = BLE_MAX_CORRECTION_M,
-    ble_max_warp_span: float = BLE_MAX_WARP_SPAN_M,
+    ble_max_warp_span: float | None = BLE_MAX_WARP_SPAN_M,
     ble_retrofit_forward: str = BLE_RETROFIT_FORWARD_MODE,
     ble_retrofit_max_heading: float = BLE_RETROFIT_MAX_HEADING_DEG,
     ble_retrofit_stride_scale_min: float = BLE_RETROFIT_STRIDE_SCALE_MIN,
