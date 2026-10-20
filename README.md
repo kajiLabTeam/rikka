@@ -198,7 +198,9 @@ BLE_LANDMARK_ANCHORS = (
   固定して過去区間を回転・等方スケールし、同じ量を確定方位と歩幅へ反映します。
   既定の `snap` は後方互換のため維持しています。
 - `--ble-preflight warn|error|off`: RSSI距離整合FAIL時の扱い
-- `--ble-max-correction M` / `--ble-max-warp-span M`: 補正移動量とwarp区間の上限
+- `--ble-max-correction M`: 実際の補正移動量の上限。既定は5mです。
+- `--ble-max-warp-span M`: warp区間の累積歩行距離上限。累積距離は補正量を
+  表さないため既定では制限せず、必要な実験でだけ明示します。
 - `--ble-retrofit-forward hold|freeze`: `similarity` の回転・倍率を後続歩にも保持するか、
   検出歩までで固定するかを選びます。既定は `hold` です。
 - `--ble-retrofit-max-heading`、`--ble-retrofit-stride-scale-min/max`、
