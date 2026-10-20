@@ -27,7 +27,7 @@ from ..config import (
     WINDOW_GYRO,
 )
 from .gyro_bias import estimate_gyro_bias
-from .time_utils import _gyro_integration_dt
+from .time_utils import _gyro_integration_dt, _sample_count_for_reference_rate
 
 ACC_COLUMNS = {
     "Time (s)": "t",
@@ -102,8 +102,9 @@ def process_sensor_data(
                 )
 
     # 3軸それぞれにLPFをかけて重力ベクトルを推定（スカラーノルムではなくベクトルで推定）
-    # center=True で対称ウィンドウを使用し、位相遅れなく重力方向を推定する
-    roll_args = {"window": WINDOW_ACC, "center": True, "min_periods": 1}
+    # 実時刻で0.8秒相当へ換算した対称ウィンドウを使い、位相遅れを防ぐ
+    acc_window = _sample_count_for_reference_rate(df_acc, WINDOW_ACC)
+    roll_args = {"window": acc_window, "center": True, "min_periods": 1}
     df_acc["gx"] = df_acc["x"].rolling(**roll_args).mean()
     df_acc["gy"] = df_acc["y"].rolling(**roll_args).mean()
     df_acc["gz"] = df_acc["z"].rolling(**roll_args).mean()
@@ -117,6 +118,9 @@ def process_sensor_data(
     df_acc["lin_norm"] = np.sqrt(
         df_acc["lin_x"] ** 2 + df_acc["lin_y"] ** 2 + df_acc["lin_z"] ** 2
     )
+    # 歩検出信号は既存100 Hzデータの挙動を変えないサンプル窓を維持する。
+    # 高レート入力でこの窓まで0.8秒へ拡大すると実測歩を結合するため、
+    # サンプリング周波数に応じたピーク間隔とは別の役割として扱う。
     df_acc["low_lin_norm"] = (
         df_acc["lin_norm"].rolling(window=WINDOW_ACC, center=True, min_periods=1).mean()
     )
@@ -161,8 +165,11 @@ def process_sensor_data(
     df_gyro["gyro_bias_method"] = bias_result.method
     df_gyro.attrs["gyro_bias_result"] = bias_result
     df_gyro["angle"] = np.cumsum(gyro_rate * _gyro_integration_dt(df_gyro))
-    df_gyro["low_angle"] = (
-        df_gyro["angle"].rolling(window=WINDOW_GYRO, center=True, min_periods=1).mean()
-    )
+    gyro_window = _sample_count_for_reference_rate(df_gyro, WINDOW_GYRO)
+    df_gyro["low_angle"] = df_gyro["angle"].rolling(
+        window=gyro_window,
+        center=True,
+        min_periods=1,
+    ).mean()
 
     return df_acc, df_gyro
