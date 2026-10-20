@@ -21,7 +21,10 @@ from rikka.common.lib.pdr_math import (
     _validate_scale,
 )
 from rikka.common.lib.sensors import load_sensor_data, process_sensor_data
-from rikka.common.lib.time_utils import _sample_gyro_angle
+from rikka.common.lib.time_utils import (
+    _sample_count_for_reference_rate,
+    _sample_gyro_angle,
+)
 from rikka.particle.lib.branches import branch_preserving_resample
 from rikka.particle.lib.finalize import _retrofit_landmark_anchor_jumps
 from rikka.particle.lib.map_constraints import (
@@ -389,6 +392,31 @@ def test_sample_gyro_angle_clips_index_when_time_is_unavailable() -> None:
 
     assert _sample_gyro_angle(df_gyro, sample_index=-1) == 1.0
     assert _sample_gyro_angle(df_gyro, sample_index=100) == 3.0
+
+
+def test_sample_count_scales_reference_duration_from_timestamps() -> None:
+    df_100_hz = pd.DataFrame({"t": np.arange(100, dtype=float) / 100.0})
+    df_400_hz = pd.DataFrame({"t": np.arange(400, dtype=float) / 400.0})
+
+    assert _sample_count_for_reference_rate(df_100_hz, 50) == 50
+    assert _sample_count_for_reference_rate(df_400_hz, 50) == 200
+    assert _sample_count_for_reference_rate(pd.DataFrame(index=range(10)), 50) == 50
+
+
+def test_peak_detection_keeps_same_physical_steps_at_different_sample_rates() -> None:
+    def build_signal(sample_rate: int) -> pd.DataFrame:
+        times = np.arange(0.0, 2.0, 1.0 / sample_rate)
+        signal = np.zeros(len(times))
+        for step_time in (0.3, 0.9, 1.5):
+            signal[int(round(step_time * sample_rate))] = 3.0
+            signal[int(round((step_time + 0.15) * sample_rate))] = 2.0
+        return pd.DataFrame({"t": times, "low_lin_norm": signal})
+
+    result_100_hz = detect_step_result(build_signal(100), method="peak")
+    result_400_hz = detect_step_result(build_signal(400), method="peak")
+
+    assert len(result_100_hz.peaks) == 3
+    assert len(result_400_hz.peaks) == 3
 
 
 def test_sample_gyro_angle_returns_none_for_empty_or_nan_fallback() -> None:

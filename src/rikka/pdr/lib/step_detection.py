@@ -27,13 +27,15 @@ from ...common.config import (
     STEP_VERTICAL_THRESHOLD_PERCENTILE,
 )
 from ...common.lib.models import StepDetectionResult, StepSegment
+from ...common.lib.time_utils import _sample_count_for_reference_rate
 
 
 def _detect_steps_by_peak(df_acc: pd.DataFrame) -> StepDetectionResult:
     """既存方式: 平滑化線形加速度ノルムからステップピークを検出する。"""
+    peak_distance = _sample_count_for_reference_rate(df_acc, PEAK_DISTANCE)
     peaks, _ = find_peaks(
         df_acc["low_lin_norm"].to_numpy(),
-        distance=PEAK_DISTANCE,
+        distance=peak_distance,
         height=PEAK_HEIGHT,
     )
     return StepDetectionResult(
@@ -95,9 +97,13 @@ def _detect_steps_by_vertical_threshold(df_acc: pd.DataFrame) -> StepDetectionRe
     filled = values.copy()
     median = float(np.nanmedian(filled[finite]))
     filled[~finite] = median
+    smooth_window = _sample_count_for_reference_rate(
+        df_acc,
+        STEP_VERTICAL_SMOOTH_WINDOW,
+    )
     smoothed = (
         pd.Series(filled)
-        .rolling(window=STEP_VERTICAL_SMOOTH_WINDOW, center=True, min_periods=1)
+        .rolling(window=smooth_window, center=True, min_periods=1)
         .mean()
         .to_numpy(dtype=float)
     )
@@ -136,15 +142,19 @@ def _detect_steps_by_vertical_threshold(df_acc: pd.DataFrame) -> StepDetectionRe
         contact_index = start + local_index
         contacts.append((contact_index, float(raw_contact_signal[contact_index])))
 
-    contacts = _suppress_close_contacts(contacts)
+    min_distance = _sample_count_for_reference_rate(df_acc, PEAK_DISTANCE)
+    contacts = _suppress_close_contacts(contacts, min_distance=min_distance)
     contact_indexes = [index for index, _strength in contacts]
+
+    min_seg_samples = _sample_count_for_reference_rate(df_acc, MIN_SEG_SAMPLES)
+    max_seg_samples = _sample_count_for_reference_rate(df_acc, MAX_SEG_SAMPLES)
 
     segments: list[StepSegment] = []
     for start_index, end_index in zip(
         contact_indexes[:-1], contact_indexes[1:], strict=False
     ):
         seg_len = end_index - start_index
-        if MIN_SEG_SAMPLES <= seg_len <= MAX_SEG_SAMPLES:
+        if min_seg_samples <= seg_len <= max_seg_samples:
             segments.append(
                 StepSegment(
                     start_index=int(start_index),
