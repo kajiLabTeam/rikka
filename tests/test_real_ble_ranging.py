@@ -219,6 +219,51 @@ def test_pdr_warp_distributes_residual_over_past_steps() -> None:
     assert result.corrections[0].correction_mode == "warp"
 
 
+def test_pdr_warp_allows_long_interval_by_default() -> None:
+    """累積歩行距離が長くても補正量が上限内ならwarpを適用する。"""
+    trajectory = [[float(index), 0.0] for index in range(21)]
+    result = apply_landmark_corrections(
+        trajectory,
+        [float(index) for index in range(1, 21)],
+        detections=(LandmarkRange(20.0, "b1", -59.0, 0.0, 0.1, -59.0),),
+        landmarks=(Landmark("b1", 22.0, 0.0),),
+        floormap=FloorMap("map.png", (0, 0), 1.0),
+        data_path="ble.csv",
+        rssi_threshold_dbm=-70.0,
+        gx_mean=0.0,
+        gz_mean=1.0,
+        correction_mode="warp",
+        max_correction_m=5.0,
+    )
+
+    assert result.corrections[0].applied
+    assert result.corrections[0].warp_span_m == pytest.approx(20.0)
+    assert result.trajectory[-1] == pytest.approx([22.0, 0.0])
+
+
+def test_pdr_warp_respects_explicit_interval_limit() -> None:
+    """明示した累積歩行距離上限は従来どおりwarpを棄却する。"""
+    trajectory = [[float(index), 0.0] for index in range(21)]
+    result = apply_landmark_corrections(
+        trajectory,
+        [float(index) for index in range(1, 21)],
+        detections=(LandmarkRange(20.0, "b1", -59.0, 0.0, 0.1, -59.0),),
+        landmarks=(Landmark("b1", 22.0, 0.0),),
+        floormap=FloorMap("map.png", (0, 0), 1.0),
+        data_path="ble.csv",
+        rssi_threshold_dbm=-70.0,
+        gx_mean=0.0,
+        gz_mean=1.0,
+        correction_mode="warp",
+        max_correction_m=5.0,
+        max_warp_span_m=15.0,
+    )
+
+    assert not result.corrections[0].applied
+    assert result.corrections[0].warp_span_m == pytest.approx(20.0)
+    assert result.trajectory == trajectory
+
+
 @pytest.mark.parametrize(
     ("forward_mode", "expected"),
     [

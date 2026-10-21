@@ -368,7 +368,7 @@ class BleLandmarkSettings:
     correction_mode: str = BLE_PDR_CORRECTION_MODE
     preflight_mode: str = BLE_PREFLIGHT_MODE
     max_correction_m: float = BLE_MAX_CORRECTION_M
-    max_warp_span_m: float = BLE_MAX_WARP_SPAN_M
+    max_warp_span_m: float | None = BLE_MAX_WARP_SPAN_M
     retrofit_forward_mode: str = BLE_RETROFIT_FORWARD_MODE
     retrofit_max_heading_deg: float = BLE_RETROFIT_MAX_HEADING_DEG
     retrofit_stride_scale_min: float = BLE_RETROFIT_STRIDE_SCALE_MIN
@@ -414,7 +414,8 @@ class BleLandmarkSettings:
         )
         validate_choice("ble_preflight", self.preflight_mode, BLE_PREFLIGHT_MODES)
         validate_positive_parameter("max_correction_m", self.max_correction_m)
-        validate_positive_parameter("max_warp_span_m", self.max_warp_span_m)
+        if self.max_warp_span_m is not None:
+            validate_positive_parameter("max_warp_span_m", self.max_warp_span_m)
         validate_choice(
             "retrofit_forward_mode",
             self.retrofit_forward_mode,

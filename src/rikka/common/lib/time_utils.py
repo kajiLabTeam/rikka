@@ -37,6 +37,23 @@ def _time_values(df: pd.DataFrame) -> np.ndarray | None:
     return times
 
 
+def _sample_count_for_reference_rate(
+    df: pd.DataFrame,
+    reference_samples: int,
+) -> int:
+    """100 Hz基準のサンプル数を入力の実時刻に合わせて換算する。"""
+    if reference_samples < 1:
+        raise ValueError("reference_samples は1以上で指定してください。")
+    times = _time_values(df)
+    if times is None or len(times) < 2:
+        return reference_samples
+    median_dt = float(np.median(np.diff(times)))
+    if not np.isfinite(median_dt) or median_dt <= 0.0:
+        return reference_samples
+    duration_s = reference_samples / SAMPLING_RATE
+    return max(1, int(round(duration_s / median_dt)))
+
+
 def _gyro_integration_dt(df_gyro: pd.DataFrame) -> np.ndarray:
     """ジャイロ積分用のサンプル間隔を返す。時刻列がなければ固定周期を使う。"""
     times = _time_values(df_gyro)
