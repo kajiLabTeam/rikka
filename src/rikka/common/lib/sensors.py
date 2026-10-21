@@ -166,10 +166,14 @@ def process_sensor_data(
     df_gyro.attrs["gyro_bias_result"] = bias_result
     df_gyro["angle"] = np.cumsum(gyro_rate * _gyro_integration_dt(df_gyro))
     gyro_window = _sample_count_for_reference_rate(df_gyro, WINDOW_GYRO)
-    df_gyro["low_angle"] = df_gyro["angle"].rolling(
-        window=gyro_window,
-        center=True,
-        min_periods=1,
-    ).mean()
+    df_gyro["low_angle"] = (
+        df_gyro["angle"]
+        .rolling(
+            window=gyro_window,
+            center=True,
+            min_periods=1,
+        )
+        .mean()
+    )
 
     return df_acc, df_gyro
