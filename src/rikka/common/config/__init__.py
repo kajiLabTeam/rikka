@@ -36,8 +36,9 @@ INITIAL_DIRECTION = 90.0
 # センサーのサンプリングレート [Hz]、角速度積分・時間換算に使用
 SAMPLING_RATE = 100
 
-# 加速度 LPF のウィンドウサイズ（80サンプル = 0.8秒 @ 100Hz）
-# 重力ベクトル推定・低周波成分の平滑化に共用
+# 加速度 LPF の100 Hz基準ウィンドウサイズ（80サンプル = 0.8秒 @ 100Hz）
+# 重力ベクトル推定では実時刻へ換算し、歩検出信号の平滑化では既存互換の
+# サンプル数として使用する
 WINDOW_ACC = 80
 
 # ジャイロ LPF・静止区間検出のウィンドウサイズ（40サンプル = 0.4秒）
@@ -226,7 +227,9 @@ BLE_DETECT_COOLDOWN_S = 10.0
 BLE_DETECT_MIN_PROMINENCE_DB = 6.0
 BLE_PREFLIGHT_MODE = "warn"
 BLE_MAX_CORRECTION_M = 5.0
-BLE_MAX_WARP_SPAN_M = 15.0
+# warp 区間の累積歩行距離は補正量の大きさを表さないため、既定では制限しない。
+# 従来の安全弁が必要な実験では CLI から明示的に上限を指定できる。
+BLE_MAX_WARP_SPAN_M: float | None = None
 BLE_PLOT_MIN_CORRECTION_M = 0.1
 
 # 相似変換による過去軌跡補正。既存 snap / warp の既定挙動には影響しない。

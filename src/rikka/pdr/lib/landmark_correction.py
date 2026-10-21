@@ -174,7 +174,7 @@ def apply_landmark_corrections(
     gz_mean: float,
     correction_mode: str = "snap",
     max_correction_m: float = float("inf"),
-    max_warp_span_m: float = float("inf"),
+    max_warp_span_m: float | None = None,
     retrofit_forward_mode: str = "hold",
     retrofit_max_heading_deg: float = 30.0,
     retrofit_stride_scale_min: float = 0.7,
@@ -264,7 +264,9 @@ def apply_landmark_corrections(
                     trajectory, warp_start_point, endpoint_index
                 )
                 span_exceeded = (
-                    correction_mode == "warp" and candidate_span > max_warp_span_m
+                    correction_mode == "warp"
+                    and max_warp_span_m is not None
+                    and candidate_span > max_warp_span_m
                 )
                 if correction_mode == "similarity":
                     transform = solve_anchor_similarity(
