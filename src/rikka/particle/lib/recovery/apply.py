@@ -130,6 +130,7 @@ def _apply_checkpoint_replay(ctx: ParticleRuntime) -> None:
     """checkpoint再生結果で起点以後の履歴と現在状態を置き換える。"""
     assert ctx.checkpoint_step is not None
     assert ctx.replay_result is not None
+    ctx.history_version += 1
     ctx.recovery = ctx.replay_result.recovery
     ctx.replay_depth = ctx.replay_result.replay_positions.shape[0]
     ctx.position_history = ctx.position_history[: ctx.checkpoint_step + 1]

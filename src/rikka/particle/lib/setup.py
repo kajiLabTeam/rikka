@@ -27,6 +27,25 @@ from .state import ParticleRuntime
 
 
 def setup(ctx: ParticleRuntime) -> None:
+    validate_choice(
+        "proposal_method",
+        ctx.proposal_method,
+        ("legacy", "no-relocation", "candidate-bank"),
+    )
+    if (
+        isinstance(ctx.candidate_count, bool)
+        or not isinstance(ctx.candidate_count, int)
+        or ctx.candidate_count < 1
+    ):
+        raise ValueError("candidate_count は正の整数を指定してください")
+    if ctx.proposal_method != "candidate-bank" and ctx.candidate_count != 1:
+        raise ValueError("candidate_count は candidate-bank 方式でのみ指定できます")
+    if (
+        ctx.proposal_method == "candidate-bank"
+        and ctx.landmark_mode != "none"
+        and (ctx.landmark_detections or ctx.landmark_ranging_observations)
+    ):
+        raise ValueError("candidate-bank は現段階ではBLE観測との併用に対応していません")
     ctx.sidestep_lateral_ratio = validate_positive_parameter(
         "sidestep_lateral_ratio", ctx.sidestep_lateral_ratio
     )

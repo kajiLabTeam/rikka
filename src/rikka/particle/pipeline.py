@@ -174,6 +174,8 @@ def run_particle(
         landmark_anchor_warn_jump_m=settings.landmark_anchor_warn_jump_m,
         landmark_retrofit=settings.landmark_retrofit,
         landmark_events_collector=landmark_events,
+        proposal_method=settings.proposal_method,
+        candidate_count=settings.candidate_count,
     )
     if detections is not None and landmark_settings is not None:
         diagnostics, landmark_events = _attach_landmark_timing(

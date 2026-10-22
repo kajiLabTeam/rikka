@@ -176,5 +176,10 @@ def record(ctx: ParticleRuntime) -> None:
                 after_weights=ctx.weights.copy(),
                 after_motion_state=ctx.motion_state.copy(),
                 after_stride_scale=ctx.stride_scale.copy(),
+                candidate_bank=ctx.candidate_bank,
+                proposal_method=ctx.proposal_method,
+                proposal_history_version=ctx.proposal_history_version,
+                history_version=ctx.history_version,
+                proposal_matches_final_history=ctx.recovery_mode == "none",
             )
         )

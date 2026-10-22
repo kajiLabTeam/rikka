@@ -236,8 +236,26 @@ class ParticleSettings:
     landmark_reset_heading_sigma: float = PF_LANDMARK_RESET_HEADING_SIGMA
     landmark_anchor_warn_jump_m: float = BLE_ANCHOR_WARN_JUMP_M
     landmark_retrofit: bool = PF_LANDMARK_RETROFIT
+    proposal_method: str = "legacy"
+    candidate_count: int = 1
 
     def __post_init__(self) -> None:
+        validate_choice(
+            "proposal_method",
+            self.proposal_method,
+            ("legacy", "no-relocation", "candidate-bank"),
+        )
+        if (
+            isinstance(self.candidate_count, bool)
+            or not isinstance(self.candidate_count, int)
+            or self.candidate_count < 1
+        ):
+            raise ValueError("candidate_count は正の整数を指定してください。")
+        if self.proposal_method != "candidate-bank" and self.candidate_count != 1:
+            raise ValueError(
+                "candidate_count != 1 は proposal_method='candidate-bank' "
+                "の場合だけ指定できます。"
+            )
         validate_scale(self.scale)
         if self.count <= 0:
             raise ValueError("particle_count は正の整数を指定してください。")

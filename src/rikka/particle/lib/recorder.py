@@ -14,6 +14,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .candidate_bank import ParticleCandidateBank
+
 
 @dataclass(frozen=True)
 class ParticleFilterStepDiagnostics:
@@ -100,6 +102,11 @@ class ParticleStepStages:
     after_weights: np.ndarray
     after_motion_state: np.ndarray
     after_stride_scale: np.ndarray | None = None
+    candidate_bank: ParticleCandidateBank | None = None
+    proposal_method: str = "legacy"
+    proposal_history_version: int = 0
+    history_version: int = 0
+    proposal_matches_final_history: bool = True
 
 
 @dataclass(frozen=True)

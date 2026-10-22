@@ -115,6 +115,28 @@ MAE・P95・最大誤差・許容誤差内率・評価対象率を `evaluation.j
 uv run rikka particle
 ```
 
+壁衝突後の候補生成を比較する試験用の方式も選べます。既定の `legacy` は
+従来の円内再配置を維持します。`no-relocation` は円内再配置だけを無効にし、
+既存の生存粒子補充・ESS再標本化・集団復旧を使います。
+
+```sh
+uv run rikka particle --pf-proposal no-relocation --pf-seed 0 --no-plot
+uv run rikka particle --pf-proposal candidate-bank --pf-candidates 8 \
+  --pf-seed 0 --no-plot
+```
+
+`candidate-bank` は各親の通常運動モデルからK個の方位・歩幅・状態・位置を
+一緒に生成し、地図と既存因子Gで候補を選びます。親重みには平均因子 `ΣG/K`
+を掛け、採用候補のGを重ねて掛けません。`--pf-candidates` はこの方式だけで
+使え、既定は1です。K=1は円内再配置なしの単一提案に対応します。
+現段階では実際のBLE観測を用いる `candidate-bank` の実行は拒否します。
+既定の歩幅・方位分布、復旧処理、最終軌跡選択は維持しており、広角探索や
+新しい経路選択は含みません。精度改善を確認した既定方式ではありません。
+
+2計測・6seedでの比較、祖先多様性の低下、残存ジャンプ、検証結果は
+[フェーズ2の実装・比較レポート](docs/pf-phase2-evaluation-20261022/README.md)
+を参照してください。
+
 グラフ表示なしでパーティクルフィルタのアニメーションだけ保存する場合:
 
 ```sh

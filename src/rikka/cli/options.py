@@ -817,6 +817,20 @@ cli.add_command(run, name="pdr")
 
 @cli.command()
 @click.option(
+    "--pf-proposal",
+    type=click.Choice(["legacy", "no-relocation", "candidate-bank"]),
+    default="legacy",
+    show_default=True,
+    help="PFの移動候補生成方式（比較実験用）",
+)
+@click.option(
+    "--pf-candidates",
+    type=click.IntRange(min=1),
+    default=1,
+    show_default=True,
+    help="candidate-bank方式の親粒子ごとの候補数",
+)
+@click.option(
     "--pf-landmark-retrofit/--no-pf-landmark-retrofit",
     default=_PF_LANDMARK_RETROFIT_DEFAULT,
     show_default=True,
@@ -959,12 +973,19 @@ def particle(
     pf_path_selection: str,
     pf_landmark_mode: str,
     pf_landmark_retrofit: bool,
+    pf_proposal: str,
+    pf_candidates: int,
 ) -> None:
     """パーティクルフィルタ + マップマッチングで歩行軌跡を推定する。"""
     from ..common.lib.sensors import load_sensor_data  # noqa: PLC0415
     from .commands import run as _run  # noqa: PLC0415
 
     _validate_gyro_bias_options(gyro_bias_method, gyro_bias)
+    if pf_proposal != "candidate-bank" and pf_candidates != 1:
+        raise click.BadParameter(
+            "1以外の候補数には --pf-proposal candidate-bank が必要です。",
+            param_hint="--pf-candidates",
+        )
     origin_px, direction, height_m = _resolve_measurement_settings(
         ctx,
         data_dir,
@@ -1016,6 +1037,8 @@ def particle(
         pf_path_selection=pf_path_selection,
         pf_landmark_mode=pf_landmark_mode,
         pf_landmark_retrofit=pf_landmark_retrofit,
+        pf_proposal=pf_proposal,
+        pf_candidates=pf_candidates,
         ble_landmark=ble_landmark,
         ble_data_path=ble_data_path,
         ble_rssi_threshold=ble_rssi_threshold,

@@ -146,6 +146,7 @@ def record_checkpoint_replay(ctx: ParticleRuntime) -> None:
                 + replay_offsets
             )
             collector_index = ctx.stages_start_index + history_step - 1
+            previous_stage = recorder.stages[collector_index]
             recorder.stages[collector_index] = ParticleStepStages(
                 step=history_step,
                 timestamp_s=ctx.t_at_steps[history_step - 1],
@@ -169,6 +170,12 @@ def record_checkpoint_replay(ctx: ParticleRuntime) -> None:
                 parent_indices=replay_parent_indices.copy(),
                 resampled=replay_offset == 0,
                 recovery_mode="checkpoint_replayed",
+                # 元の候補を診断用に残すが、再生された辺の生成元とはしない。
+                candidate_bank=previous_stage.candidate_bank,
+                proposal_method=previous_stage.proposal_method,
+                proposal_history_version=previous_stage.proposal_history_version,
+                history_version=ctx.history_version,
+                proposal_matches_final_history=False,
                 recovery_candidate_headings=(
                     ctx.recovery.candidate_headings.copy()
                     if replay_offset == 0

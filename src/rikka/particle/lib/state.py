@@ -36,6 +36,7 @@ from .recorder import (
 )
 
 if TYPE_CHECKING:
+    from .candidate_bank import ParticleCandidateBank
     from .recovery.checkpoint import _CheckpointReplayResult
     from .recovery.local import _RecoveryResult
 
@@ -109,7 +110,12 @@ class ParticleRuntime:
     landmark_anchor_warn_jump_m: float
     landmark_retrofit: bool
     landmark_events_collector: list[LandmarkCorrection] | None
+    proposal_method: str = "legacy"
+    candidate_count: int = 1
 
+    candidate_bank: ParticleCandidateBank | None = field(init=False)
+    history_version: int = field(init=False, default=0)
+    proposal_history_version: int = field(init=False, default=0)
     adaptive_recovery_scale: bool = field(init=False)
     adaptive_stride_state: bool = field(init=False)
     all_particles: np.ndarray = field(init=False)

@@ -154,6 +154,8 @@ def run_particle_steps(
     landmark_anchor_warn_jump_m: float = BLE_ANCHOR_WARN_JUMP_M,
     landmark_retrofit: bool = PF_LANDMARK_RETROFIT,
     landmark_events_collector: list[LandmarkCorrection] | None = None,
+    proposal_method: str = "legacy",
+    candidate_count: int = 1,
 ) -> ParticleStepsResult:
     """準備済み歩列を受け、元と同じ順序でPF段階を実行する。"""
     ctx = ParticleRuntime(
@@ -216,6 +218,8 @@ def run_particle_steps(
         landmark_anchor_warn_jump_m=landmark_anchor_warn_jump_m,
         landmark_retrofit=landmark_retrofit,
         landmark_events_collector=landmark_events_collector,
+        proposal_method=proposal_method,
+        candidate_count=candidate_count,
     )
     setup(ctx)
     initialize(ctx)

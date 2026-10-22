@@ -180,6 +180,8 @@ def run(
     ble_retrofit_map_check: str = BLE_RETROFIT_MAP_CHECK,
     ble_retrofit_damp_factors: tuple[float, ...] = BLE_RETROFIT_DAMP_FACTORS,
     ble_landmarks: tuple[Landmark, ...] | None = None,
+    pf_proposal: str = "legacy",
+    pf_candidates: int = 1,
 ) -> pd.DataFrame:
     """後方互換引数を設定へ変換し、解析と成果物保存を実行する。"""
     if (
@@ -277,6 +279,8 @@ def run(
         landmark_mode=pf_landmark_mode,
         landmark_range_weight_power=pf_landmark_range_weight_power,
         landmark_retrofit=pf_landmark_retrofit,
+        proposal_method=pf_proposal,
+        candidate_count=pf_candidates,
     )
     output_settings = OutputSettings(
         plot=plot,
