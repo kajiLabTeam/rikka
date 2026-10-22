@@ -36,7 +36,7 @@ def test_refactor_golden(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """PDR/PF の軌跡・歩幅・採用方位が完全一致することを確認する。"""
+    """従来の固定peak・legacy PFの軌跡・歩幅・採用方位を固定する。"""
     output_dir = tmp_path / ("pf" if use_particle_filter else "pdr")
     output_dir.mkdir()
     monkeypatch.setattr(plot_pipeline, "create_output_dir", lambda: output_dir)
@@ -50,6 +50,9 @@ def test_refactor_golden(
         save_animation=False,
         particle_seed=42,
         particle_count=100,
+        pf_proposal="legacy",
+        pf_candidates=1,
+        step_detection_method="peak",
     )
 
     actual_lengths = pd.read_csv(output_dir / "step_lengths.csv")[

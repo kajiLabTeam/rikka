@@ -19,10 +19,11 @@ from rikka.common.config import (
     SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
     SIDESTEP_SMOOTHING_METHOD,
     SMOOTHING_MODE,
+    STEP_DETECTION_METHOD,
     WEINBERG_REFERENCE_K,
     compute_weinberg_k,
 )
-from rikka.common.settings import ParticleSettings
+from rikka.common.settings import ParticleSettings, StepSettings
 from rikka.ping import ping
 
 
@@ -101,6 +102,19 @@ def test_run_help_includes_forward_heading_source_option() -> None:
     assert "default: prewalk_guarded" in result.output
 
 
+@pytest.mark.parametrize("command", ["run", "particle", "sensor"])
+def test_step_detection_defaults_to_adaptive_peak(command) -> None:
+    assert STEP_DETECTION_METHOD == "adaptive_peak"
+    assert StepSettings().detection_method == "adaptive_peak"
+    result = CliRunner().invoke(cli, [command, "--help"])
+    assert result.exit_code == 0
+    assert "default: adaptive_peak" in " ".join(result.output.split())
+    option = next(
+        item for item in cli.commands[command].params if item.name == "step_detection"
+    )
+    assert option.default == "adaptive_peak"
+
+
 def test_run_help_includes_adaptive_motion_options() -> None:
     result = CliRunner().invoke(cli, ["run", "--help"])
 
@@ -168,10 +182,32 @@ def test_cli_manual_gyro_bias_requires_bias_value(command: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ("method", "count"),
-    [("legacy", 1), ("no-relocation", 1), ("candidate-bank", 1), ("candidate-bank", 4)],
+    ("method", "count", "cli_args"),
+    [
+        ("legacy", 1, ["--pf-proposal", "legacy", "--pf-candidates", "1"]),
+        (
+            "no-relocation",
+            1,
+            ["--pf-proposal", "no-relocation", "--pf-candidates", "1"],
+        ),
+        (
+            "candidate-bank",
+            1,
+            ["--pf-proposal", "candidate-bank", "--pf-candidates", "1"],
+        ),
+        (
+            "candidate-bank",
+            4,
+            ["--pf-proposal", "candidate-bank", "--pf-candidates", "4"],
+        ),
+        ("candidate-bank", 8, []),
+        ("legacy", 1, ["--pf-proposal", "legacy"]),
+        ("no-relocation", 1, ["--pf-proposal", "no-relocation"]),
+    ],
 )
-def test_particle_cli_forwards_proposal_options(monkeypatch, method, count) -> None:
+def test_particle_cli_forwards_proposal_options(
+    monkeypatch, method, count, cli_args
+) -> None:
     """比較方式と候補数をCLIから解析入口へ渡す。"""
     from rikka.common.lib import sensors
 
@@ -189,14 +225,7 @@ def test_particle_cli_forwards_proposal_options(monkeypatch, method, count) -> N
 
     result = CliRunner().invoke(
         cli,
-        [
-            "particle",
-            "--pf-proposal",
-            method,
-            "--pf-candidates",
-            str(count),
-            "--no-plot",
-        ],
+        ["particle", *cli_args, "--no-plot"],
     )
 
     assert result.exit_code == 0, result.output
@@ -234,10 +263,12 @@ def test_particle_settings_reject_unused_candidate_count(method) -> None:
         ParticleSettings(proposal_method=method, candidate_count=2)
 
 
-def test_particle_settings_preserve_legacy_default_and_validate_method() -> None:
+def test_particle_settings_default_to_bank8_and_preserve_legacy() -> None:
     settings = ParticleSettings()
-    assert settings.proposal_method == "legacy"
-    assert settings.candidate_count == 1
+    assert settings.proposal_method == "candidate-bank"
+    assert settings.candidate_count == 8
+    assert ParticleSettings(proposal_method="legacy").candidate_count == 1
+    assert ParticleSettings(proposal_method="no-relocation").candidate_count == 1
     assert (
         ParticleSettings(
             proposal_method="candidate-bank", candidate_count=4

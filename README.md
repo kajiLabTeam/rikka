@@ -55,10 +55,15 @@ input/
 | `Accelerometer.csv` | `Time (s)`, `Acceleration x/y/z (m/s^2)` または `X/Y/Z (m/s^2)` |
 | `Gyroscope.csv` | `Time (s)`, `Gyroscope x/y/z (rad/s)` または `X/Y/Z (rad/s)` |
 
+Androidロガーの `acce.csv` / `gyro.csv`（`timestamp_ns, wall_time_ms, x, y, z`）
+にも対応します。`metadata.json` の記録開始時刻を使い、単調時計差から経過秒へ
+変換します。CLIは同metadataのstart制約から起点・初期方位を読み取ります。
+明示的なCLI引数と `walk_config.csv` がある場合は、そちらを優先します。
+
 現在の既定入力は次です。
 
 ```python
-DATA_DIR = "input/1019Experiment/PDR Sensor Logger (Research) 2026-10-19 19-17-08"
+DATA_DIR = "input/1021日計測データ/1021_計測1回目"
 ```
 
 別データを使う場合は、CLI の `-d` で指定できます。
@@ -115,11 +120,13 @@ MAE・P95・最大誤差・許容誤差内率・評価対象率を `evaluation.j
 uv run rikka particle
 ```
 
-壁衝突後の候補生成を比較する試験用の方式も選べます。既定の `legacy` は
-従来の円内再配置を維持します。`no-relocation` は円内再配置だけを無効にし、
+現在の既定は `candidate-bank`、親粒子ごとの候補数は8です。
+従来の円内再配置は `--pf-proposal legacy` で選べます。
+`no-relocation` は円内再配置だけを無効にし、
 既存の生存粒子補充・ESS再標本化・集団復旧を使います。
 
 ```sh
+uv run rikka particle --pf-proposal legacy --pf-seed 0 --no-plot
 uv run rikka particle --pf-proposal no-relocation --pf-seed 0 --no-plot
 uv run rikka particle --pf-proposal candidate-bank --pf-candidates 8 \
   --pf-seed 0 --no-plot
@@ -128,10 +135,12 @@ uv run rikka particle --pf-proposal candidate-bank --pf-candidates 8 \
 `candidate-bank` は各親の通常運動モデルからK個の方位・歩幅・状態・位置を
 一緒に生成し、地図と既存因子Gで候補を選びます。親重みには平均因子 `ΣG/K`
 を掛け、採用候補のGを重ねて掛けません。`--pf-candidates` はこの方式だけで
-使え、既定は1です。K=1は円内再配置なしの単一提案に対応します。
+使え、省略時は8です。他の方式では省略時に1へ解決されます。
+K=1は円内再配置なしの単一提案に対応します。
 現段階では実際のBLE観測を用いる `candidate-bank` の実行は拒否します。
 既定の歩幅・方位分布、復旧処理、最終軌跡選択は維持しており、広角探索や
-新しい経路選択は含みません。精度改善を確認した既定方式ではありません。
+新しい経路選択は含みません。既定化はユーザー指定によるもので、測位精度の改善は未確認です。
+実際のBLE観測と組み合わせる場合は `--pf-proposal legacy` を指定してください。
 
 2計測・6seedでの比較、祖先多様性の低下、残存ジャンプ、検証結果は
 [フェーズ2の実装・比較レポート](docs/pf-phase2-evaluation-20261022/README.md)
@@ -391,18 +400,52 @@ flowchart LR
     sensor_plot --> input
 ```
 
+## ケイデンスに応じた歩検出（実験的）
+
+`--step-detection adaptive_peak` で、局所的な歩行周期に応じて近接ピークを
+除外する方式を選べます。現在の既定は `adaptive_peak` です。
+従来方式は `--step-detection peak` で選択できます。
+
+```sh
+# 通常PDR
+uv run rikka run --step-detection adaptive_peak
+
+# 従来PFの歩検出だけを切り替える
+uv run rikka particle --step-detection adaptive_peak --pf-proposal legacy --pf-seed 0
+
+# フェーズ2の候補生成方式と組み合わせる
+uv run rikka particle --step-detection adaptive_peak --pf-proposal candidate-bank --pf-candidates 8 --pf-seed 0
+```
+
+前後3秒の加速度から自己相関と候補間隔を調べ、実時刻でピークを選びます。
+周期の探索範囲は0.33〜1.2秒で、周期が不明な区間は暫定の最小間隔0.4秒を
+使用します。停止・微小振動と弱い副峰を除外し、周期から架空の歩は追加しません。
+前後の信号を使う**オフライン方式**で、`--smoothing causal` でも歩検出自体は
+因果処理になりません。
+
+通常のCSVに加え、`step_detection_diagnostics.csv` に全候補の時刻、推定周期、
+支持指標、最小間隔、突出度、採否と理由を出力します。`confidence` は自己相関または
+候補間隔の支持率であり、正解の確率ではありません。候補なしでもヘッダーを保存します。
+
+1歩と2歩の周期の曖昧さ、端末の振り方、低い信号強度には限界があります。
+1021データでの検出数増加は測位精度の改善を保証せず、1019データでは既存方式より
+検出数が減る例もあります。比較結果は
+[適応歩検出の評価](docs/adaptive-cadence-evaluation-20261022/README.md)を参照してください。
+
 ## 標準設定
 
 `uv run rikka run` の現在の主要な既定値です。
 
 | 項目 | 既定値 | 説明 |
 |---|---:|---|
-| `DATA_DIR` | `input/1019Experiment/PDR Sensor Logger (Research) 2026-10-19 19-17-08` | 入力データ |
+| `DATA_DIR` | `input/1021日計測データ/1021_計測1回目` | 入力データ |
 | `FLOORMAP_PATH` | `input/Floormap_building14_5floor.png` | 背景マップ |
 | `FLOORMAP_ORIGIN_PX` | `(2972, 245)` | 軌跡の開始ピクセル |
 | `FLOORMAP_SCALE` | `0.01` | 1px あたりのメートル数 |
 | `INITIAL_DIRECTION` | `90.0` | 歩行開始方向 [deg] |
-| `STEP_DETECTION_METHOD` | `peak` | ステップ検出 |
+| `STEP_DETECTION_METHOD` | `adaptive_peak` | 周期に応じた歩検出（オフライン） |
+| `PF_PROPOSAL_METHOD` | `candidate-bank` | PFの候補生成方式 |
+| `PF_CANDIDATE_COUNT` | `8` | candidate-bankの親粒子ごとの候補数 |
 | `HEADING_METHOD` | `gyro_accel_motion` | 方位・移動方向推定 |
 | `FORWARD_HEADING_SOURCE` | `body` | 通常歩行はジャイロ由来の体・端末方向を使用 |
 | `GYRO_BIAS_METHOD` | `prewalk_guarded` | 小さい歩行前biasだけを採用し、端末回転の誤認を抑制 |

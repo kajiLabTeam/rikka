@@ -1,7 +1,7 @@
 """PDR のステップ検出手法。
 
 役割:
-    線形加速度ノルムのピーク方式、または上下加速度の閾値方式で歩行イベントを検出し、
+    線形加速度ノルムの固定・周期適応ピーク方式、上下加速度の閾値方式で歩を検出し、
     ピーク位置・1歩区間・診断値を ``StepDetectionResult`` にまとめる。
 依存元:
     ``config`` から距離・高さ・区間長・閾値、``models`` から結果型を取得し、
@@ -10,7 +10,8 @@
     ``trajectory.prepare_pdr_steps`` と ``sensor_plot`` がステップ列を作るために使い、
     検証コードから ``detect_steps`` を直接利用できる。
 処理フロー:
-    検証済みの指定方式に応じて候補イベントを抽出し、近接重複や不正区間を除く。
+    指定方式に応じて候補イベントを抽出し、近接重複や不正区間を除く。
+    adaptive_peak は前後の信号を用いるオフライン方式とし、候補診断も返す。
 """
 
 import numpy as np
@@ -28,6 +29,7 @@ from ...common.config import (
 )
 from ...common.lib.models import StepDetectionResult, StepSegment
 from ...common.lib.time_utils import _sample_count_for_reference_rate
+from .adaptive_step_detection import detect_adaptive_peaks
 
 
 def _detect_steps_by_peak(df_acc: pd.DataFrame) -> StepDetectionResult:
@@ -179,6 +181,8 @@ def detect_step_result(
 ) -> StepDetectionResult:
     """指定方式でステップを検出し、互換ピーク列と区間情報を返す。"""
     selected_method = STEP_DETECTION_METHOD if method is None else method
+    if selected_method == "adaptive_peak":
+        return detect_adaptive_peaks(df_acc)
     if selected_method == "paper_vertical_threshold":
         return _detect_steps_by_vertical_threshold(df_acc)
     return _detect_steps_by_peak(df_acc)

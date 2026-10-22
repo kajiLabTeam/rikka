@@ -58,6 +58,7 @@ from .config import (
     HEADING_METHOD,
     INITIAL_DIRECTION,
     MOTION_ESTIMATION,
+    PF_CANDIDATE_COUNT,
     PF_LANDMARK_LIKELIHOOD_FLOOR,
     PF_LANDMARK_MAX_JUMP_M,
     PF_LANDMARK_MODE,
@@ -71,6 +72,7 @@ from .config import (
     PF_MOTION_PREDICTIVE_WEIGHT_POWER,
     PF_NUM_PARTICLES,
     PF_PATH_SELECTION,
+    PF_PROPOSAL_METHOD,
     PF_STEP_FRAMES_ARROWS,
     PF_STEP_FRAMES_DPI,
     SIDESTEP_LATERAL_RATIO,
@@ -236,8 +238,8 @@ class ParticleSettings:
     landmark_reset_heading_sigma: float = PF_LANDMARK_RESET_HEADING_SIGMA
     landmark_anchor_warn_jump_m: float = BLE_ANCHOR_WARN_JUMP_M
     landmark_retrofit: bool = PF_LANDMARK_RETROFIT
-    proposal_method: str = "legacy"
-    candidate_count: int = 1
+    proposal_method: str = PF_PROPOSAL_METHOD
+    candidate_count: int | None = None
 
     def __post_init__(self) -> None:
         validate_choice(
@@ -245,6 +247,13 @@ class ParticleSettings:
             self.proposal_method,
             ("legacy", "no-relocation", "candidate-bank"),
         )
+        # 候補数を省略した場合だけ方式に合わせて補完し、明示された不正値は拒否する。
+        if self.candidate_count is None:
+            object.__setattr__(
+                self,
+                "candidate_count",
+                PF_CANDIDATE_COUNT if self.proposal_method == "candidate-bank" else 1,
+            )
         if (
             isinstance(self.candidate_count, bool)
             or not isinstance(self.candidate_count, int)

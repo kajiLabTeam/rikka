@@ -86,7 +86,13 @@ def particle_landmark_results() -> dict[str, TrajectoryResult]:
         "beacon_2",
         -45.0,
     )
-    base_settings = {"count": 120, "seed": 0}
+    # 実BLE観測に対応する従来方式の挙動を、標準方式の変更から独立に検証する。
+    base_settings = {
+        "count": 120,
+        "seed": 0,
+        "proposal_method": "legacy",
+        "candidate_count": 1,
+    }
     return {
         "baseline": run_particle(
             prepared,
@@ -141,8 +147,7 @@ def particle_landmark_results() -> dict[str, TrajectoryResult]:
             ParticleSettings(
                 landmark_mode="hybrid",
                 landmark_reset_min_distance_m=1000.0,
-                count=120,
-                seed=0,
+                **base_settings,
             ),
             detections=(hybrid_detection,),
             landmark_settings=landmark_settings,
@@ -153,8 +158,7 @@ def particle_landmark_results() -> dict[str, TrajectoryResult]:
             ParticleSettings(
                 landmark_mode="reset",
                 landmark_reset_min_distance_m=1000.0,
-                count=120,
-                seed=0,
+                **base_settings,
             ),
             detections=(detection,),
             landmark_settings=landmark_settings,
@@ -164,8 +168,7 @@ def particle_landmark_results() -> dict[str, TrajectoryResult]:
             floormap,
             ParticleSettings(
                 landmark_mode="observation",
-                count=120,
-                seed=0,
+                **base_settings,
             ),
             detections=(far_detection,),
             landmark_settings=anchor_settings,
@@ -175,8 +178,7 @@ def particle_landmark_results() -> dict[str, TrajectoryResult]:
             floormap,
             ParticleSettings(
                 landmark_mode="observation",
-                count=120,
-                seed=0,
+                **base_settings,
             ),
             detections=(far_detection,),
             landmark_settings=anchor_heading_settings,

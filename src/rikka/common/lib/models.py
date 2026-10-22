@@ -2,7 +2,7 @@
 
 役割:
     ステップ区間、検出結果、方位候補、ジャイロ補正結果、確定移動量、前処理済み
-    PDR 一式、BLE ランドマーク補正結果、PFの履歴修正候補を共有型として定義する。
+    PDR 一式、歩検出候補診断、BLE補正結果、PFの履歴修正候補を共有型として定義する。
 依存元:
     ``config`` から ``PreparedPdrSteps`` の既定値を取得し、NumPy と Pandas の型を
     配列・DataFrame フィールドに使用する。
@@ -36,6 +36,22 @@ class StepSegment(NamedTuple):
     contact_index: int
 
 
+class StepCandidateDiagnostic(NamedTuple):
+    """適応歩検出の候補と採否。周期が不確かな場合は period_s が None。
+
+    confidence は自己相関または候補間隔の支持率であり、正解である確率ではない。
+    """
+
+    sample_index: int
+    timestamp_s: float
+    period_s: float | None
+    confidence: float
+    min_interval_s: float
+    prominence: float
+    accepted: bool
+    reason: str
+
+
 class StepDetectionResult(NamedTuple):
     """ステップ検出結果。既存互換用ピーク列と論文方式用区間を併せて持つ。"""
 
@@ -44,6 +60,7 @@ class StepDetectionResult(NamedTuple):
     segments: tuple[StepSegment, ...]
     threshold: float | None
     polarity: int | None
+    diagnostics: tuple[StepCandidateDiagnostic, ...] = ()
 
 
 class StepHeading(NamedTuple):

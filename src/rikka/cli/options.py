@@ -51,11 +51,13 @@ from ..common.config import (
     HEADING_METHOD,
     INITIAL_DIRECTION,
     MOTION_ESTIMATION,
+    PF_CANDIDATE_COUNT,
     PF_LANDMARK_MODE,
     PF_LANDMARK_RETROFIT,
     PF_MOTION_PREDICTIVE_WEIGHT_POWER,
     PF_NUM_PARTICLES,
     PF_PATH_SELECTION,
+    PF_PROPOSAL_METHOD,
     PF_STEP_FRAMES_ARROWS,
     PF_STEP_FRAMES_DPI,
     SIDESTEP_LATERAL_RATIO,
@@ -286,7 +288,7 @@ def _resolve_measurement_settings(
     direction: float,
     height_m: float,
 ) -> tuple[tuple[int, int], float, float]:
-    """CLI明示値を優先しつつ walk_config.csv の計測条件を反映する。"""
+    """CLI明示値を優先し、計測CSVまたはmetadataの開始条件を反映する。"""
     import matplotlib.image as mpimg  # noqa: PLC0415
     from click.core import ParameterSource  # noqa: PLC0415
 
@@ -295,7 +297,11 @@ def _resolve_measurement_settings(
     )
 
     config_path = Path(data_dir) / "walk_config.csv"
-    if not config_path.is_file():
+    android_metadata = all(
+        (Path(data_dir) / name).is_file()
+        for name in ("acce.csv", "gyro.csv", "metadata.json")
+    )
+    if not config_path.is_file() and not android_metadata:
         return origin_px, direction, height_m
     try:
         image = mpimg.imread(floormap)
@@ -537,7 +543,7 @@ def _common_options(f: click.decorators.FC) -> click.decorators.FC:
         type=click.Choice(_STEP_DETECTION_CHOICES),
         default=_STEP_DETECTION_DEFAULT,
         show_default=True,
-        help="ステップ検出手法",
+        help="ステップ検出手法（adaptive_peak はオフライン）",
     )(f)
     f = click.option(
         "--heading-method",
@@ -819,16 +825,16 @@ cli.add_command(run, name="pdr")
 @click.option(
     "--pf-proposal",
     type=click.Choice(["legacy", "no-relocation", "candidate-bank"]),
-    default="legacy",
+    default=PF_PROPOSAL_METHOD,
     show_default=True,
-    help="PFの移動候補生成方式（比較実験用）",
+    help="PFの移動候補生成方式",
 )
 @click.option(
     "--pf-candidates",
     type=click.IntRange(min=1),
-    default=1,
-    show_default=True,
-    help="candidate-bank方式の親粒子ごとの候補数",
+    default=None,
+    show_default=f"candidate-bank: {PF_CANDIDATE_COUNT}, その他: 1",
+    help="candidate-bank方式の親粒子ごとの候補数（省略時は方式に合わせる）",
 )
 @click.option(
     "--pf-landmark-retrofit/--no-pf-landmark-retrofit",
@@ -974,13 +980,15 @@ def particle(
     pf_landmark_mode: str,
     pf_landmark_retrofit: bool,
     pf_proposal: str,
-    pf_candidates: int,
+    pf_candidates: int | None,
 ) -> None:
     """パーティクルフィルタ + マップマッチングで歩行軌跡を推定する。"""
     from ..common.lib.sensors import load_sensor_data  # noqa: PLC0415
     from .commands import run as _run  # noqa: PLC0415
 
     _validate_gyro_bias_options(gyro_bias_method, gyro_bias)
+    if pf_candidates is None:
+        pf_candidates = PF_CANDIDATE_COUNT if pf_proposal == "candidate-bank" else 1
     if pf_proposal != "candidate-bank" and pf_candidates != 1:
         raise click.BadParameter(
             "1以外の候補数には --pf-proposal candidate-bank が必要です。",
@@ -1074,7 +1082,7 @@ def particle(
     type=click.Choice(_STEP_DETECTION_CHOICES),
     default=_STEP_DETECTION_DEFAULT,
     show_default=True,
-    help="ステップ検出手法",
+    help="ステップ検出手法（adaptive_peak はオフライン）",
 )
 @click.option(
     "--gyro-bias-method",

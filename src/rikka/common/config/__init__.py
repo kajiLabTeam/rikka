@@ -18,7 +18,7 @@ from math import isfinite
 # Data directory path
 # Change this path to use different input data
 
-DATA_DIR = "input/1019Experiment/PDR Sensor Logger (Research) 2026-10-19 18-52-40"
+DATA_DIR = "input/1021日計測データ/1021_計測3回目"
 
 # フロアマップ設定
 # 背景として表示するフロアマップ画像のパス
@@ -85,7 +85,8 @@ PEAK_HEIGHT = 1.0
 # ステップ検出手法
 # "peak": 既存の線形加速度ノルムピーク検出
 # "paper_vertical_threshold": 論文方式に寄せた上下加速度閾値による1歩区間抽出
-STEP_DETECTION_METHOD = "peak"
+# "adaptive_peak": 局所周期に応じて実時刻で近接ピークを除外（実験的・オフライン）
+STEP_DETECTION_METHOD = "adaptive_peak"
 
 # 論文寄せステップ検出のパラメータ
 # 上下加速度の接地インパルス候補を軽く平滑化して閾値判定する
@@ -166,6 +167,10 @@ K_FORWARD = 9.0
 
 # パーティクルフィルタ設定
 PF_NUM_PARTICLES = 500
+
+# 標準のPF候補生成。legacyは明示指定で引き続き利用できる。
+PF_PROPOSAL_METHOD = "candidate-bank"
+PF_CANDIDATE_COUNT = 8
 # 方位ばらつきは「おおむね -30〜+30 度」を 2シグマ相当の範囲として設計する。
 # 初期値と1歩ごとの σ は AR(1) の定常標準偏差が約 15 度になるよう選んだ。
 PF_SIGMA_INIT_HEADING = 0.26  # 初期方向ばらつき [rad]（約 14.9 度）

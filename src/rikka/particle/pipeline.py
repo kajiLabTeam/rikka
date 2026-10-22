@@ -140,6 +140,8 @@ def run_particle(
             prepared.gx_mean,
             prepared.gz_mean,
         )
+    candidate_count = settings.candidate_count
+    assert candidate_count is not None  # 設定構築時に方式別の整数へ解決済み。
     trajectory, lengths, times, all_particles, headings = run_particle_steps(
         prepared.gx_mean,
         prepared.gz_mean,
@@ -175,7 +177,7 @@ def run_particle(
         landmark_retrofit=settings.landmark_retrofit,
         landmark_events_collector=landmark_events,
         proposal_method=settings.proposal_method,
-        candidate_count=settings.candidate_count,
+        candidate_count=candidate_count,
     )
     if detections is not None and landmark_settings is not None:
         diagnostics, landmark_events = _attach_landmark_timing(

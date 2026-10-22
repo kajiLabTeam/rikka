@@ -50,6 +50,7 @@ from ..common.config import (
     PF_MOTION_PREDICTIVE_WEIGHT_POWER,
     PF_NUM_PARTICLES,
     PF_PATH_SELECTION,
+    PF_PROPOSAL_METHOD,
     PF_STEP_FRAMES_ARROWS,
     PF_STEP_FRAMES_DPI,
     SIDESTEP_LATERAL_RATIO,
@@ -180,8 +181,8 @@ def run(
     ble_retrofit_map_check: str = BLE_RETROFIT_MAP_CHECK,
     ble_retrofit_damp_factors: tuple[float, ...] = BLE_RETROFIT_DAMP_FACTORS,
     ble_landmarks: tuple[Landmark, ...] | None = None,
-    pf_proposal: str = "legacy",
-    pf_candidates: int = 1,
+    pf_proposal: str = PF_PROPOSAL_METHOD,
+    pf_candidates: int | None = None,
 ) -> pd.DataFrame:
     """後方互換引数を設定へ変換し、解析と成果物保存を実行する。"""
     if (

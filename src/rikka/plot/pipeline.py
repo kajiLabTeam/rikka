@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 
 from ..common.config import SAMPLING_RATE
-from ..common.lib.models import FloorMap, TrajectoryResult
+from ..common.lib.models import FloorMap, StepCandidateDiagnostic, TrajectoryResult
 from ..common.settings import OutputSettings, ParticleSettings, PdrSettings
 from ..particle.lib.recorder import ParticleFilterStepDiagnostics
 from .lib.animation import plot_particle_filter_trajectory, save_particle_animation
@@ -87,6 +87,15 @@ def write_outputs(result: TrajectoryResult, output_dir: Path) -> pd.DataFrame:
         output_dir / "step_length_observations.csv",
         "Step length observations",
     )
+    if prepared.step_detection.method == "adaptive_peak":
+        _write_csv(
+            pd.DataFrame(
+                [item._asdict() for item in prepared.step_detection.diagnostics],
+                columns=list(StepCandidateDiagnostic._fields),
+            ),
+            output_dir / "step_detection_diagnostics.csv",
+            "Step detection diagnostics",
+        )
     if prepared.motion_posteriors:
         _write_csv(
             _build_motion_posteriors_dataframe(prepared.motion_posteriors),
