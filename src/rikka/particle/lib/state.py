@@ -86,6 +86,8 @@ class ParticleRuntime:
     recovery_valid_ratio: float
     recovery_heading_sigma: float
     recovery_max_attempts: int
+    invalid_relocation_radius_m: float
+    invalid_relocation_attempts: int
     diagnostics_collector: list[ParticleFilterStepDiagnostics] | None
     stage_collector: list[ParticleStepStages] | None
     path_comparison_collector: list[ParticlePathComparison] | None
@@ -124,6 +126,8 @@ class ParticleRuntime:
     diagnostic_motion_state_before: np.ndarray = field(init=False)
     diagnostics_start_index: int = field(init=False)
     effective_heading_rejuvenation_sigma: float = field(init=False)
+    relocated_invalid_count: int = field(init=False)
+    realized_step_lengths: np.ndarray = field(init=False)
     effective_rejuvenation_sigma: float = field(init=False)
     effective_step_lengths_for_diagnostics: np.ndarray = field(init=False)
     effective_stride_init_sigma: float = field(init=False)

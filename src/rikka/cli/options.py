@@ -864,6 +864,12 @@ cli.add_command(run, name="pdr")
     help="代表軌跡候補の比較図を保存",
 )
 @click.option(
+    "--history-candidate",
+    is_flag=True,
+    default=False,
+    help="前向きPFを維持し、過去軌跡の修正候補を別CSV・比較図へ保存（試作）",
+)
+@click.option(
     "--step-frames-dpi",
     type=click.IntRange(min=1),
     default=_PF_STEP_FRAMES_DPI_DEFAULT,
@@ -946,6 +952,7 @@ def particle(
     step_frames_arrows: int,
     step_frames_dpi: int,
     save_path_comparison: bool,
+    history_candidate: bool,
     pf_particles: int,
     pf_seed: int | None,
     motion_predictive_weight_power: float,
@@ -982,6 +989,7 @@ def particle(
         step_frames_arrows=step_frames_arrows,
         step_frames_dpi=step_frames_dpi,
         save_path_comparison=save_path_comparison,
+        history_candidate=history_candidate,
         use_particle_filter=True,
         floormap_path=floormap,
         origin_px=origin_px,

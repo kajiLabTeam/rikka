@@ -31,6 +31,7 @@ from ...particle.lib.proposal import (
     _normalize_angle,
     _sample_motion_states,
 )
+from ...particle.lib.relocate import relocate_invalid_particles
 from ...particle.lib.resampling import (
     _effective_sample_size,
 )
@@ -214,7 +215,6 @@ def propose(ctx: ParticleRuntime) -> None:
     ctx.proposed_particles = ctx.particles_before.copy()
     ctx.proposed_particles[:, 0] += ctx.sl * np.cos(ctx.theta)
     ctx.proposed_particles[:, 1] += ctx.sl * np.sin(ctx.theta)
-    ctx.effective_step_lengths_for_diagnostics = ctx.sl.copy()
     ctx.valid_transition = _evaluate_particle_transitions(
         ctx.particles_before,
         ctx.proposed_particles,
@@ -224,6 +224,30 @@ def propose(ctx: ParticleRuntime) -> None:
         ctx.origin_px,
         ctx.scale,
     )
+    # 壁や地図外へ出た粒子は、重み0で捨てる前に前歩位置中心の円内へ戻す。
+    (
+        ctx.proposed_particles,
+        ctx.valid_transition,
+        ctx.relocated_invalid_count,
+    ) = relocate_invalid_particles(
+        ctx.particles_before,
+        ctx.proposed_particles,
+        ctx.valid_transition,
+        ctx.invalid_relocation_radius_m,
+        ctx.invalid_relocation_attempts,
+        ctx.rng,
+        ctx.map_gray,
+        ctx.gx_mean,
+        ctx.gz_mean,
+        ctx.origin_px,
+        ctx.scale,
+    )
+    # 再配置した粒子の実移動量は提案歩幅と一致しないため、診断には提案値では
+    # なく実座標の変位を使う。再配置が無効なら提案歩幅と一致する。
+    ctx.realized_step_lengths = np.linalg.norm(
+        ctx.proposed_particles - ctx.particles_before, axis=1
+    )
+    ctx.effective_step_lengths_for_diagnostics = ctx.realized_step_lengths.copy()
     ctx.valid_count = int(np.count_nonzero(ctx.valid_transition))
     ctx.valid_weight_mask = ctx.valid_transition & (ctx.weights_before > 0.0)
     ctx.valid_weight_count = int(np.count_nonzero(ctx.valid_weight_mask))

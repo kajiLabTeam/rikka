@@ -55,8 +55,10 @@ PFの各提案移動が通路内に収まるかをフロアマップ全画素で
 flowchart TD
     Proposal --> Check[全画素線分判定]
     Check -->|十分な有効粒子| ESS{ESS < 0.5N?}
-    ESS -->|yes| Resample
-    ESS -->|no| Keep
+    ESS -->|yes| Full[全粒子を再標本化・重みを均等化]
+    ESS -->|no| Dead{重み0の粒子あり?}
+    Dead -->|yes| Resample[死亡枠だけ補充・生存粒子を保持]
+    Dead -->|no| Keep
     Check -->|有効率 < 5%| Local[local recovery]
     Local -->|失敗| Replay[checkpoint replay]
     Replay -->|失敗| Fallback
@@ -65,7 +67,7 @@ flowchart TD
 
 ## 7. 現在の利用状態
 
-- 全画素壁判定、ESS再標本化、recovery順: PF実行時に標準使用。
+- 全画素壁判定、低ESS時の全体再標本化、それ以外での死亡枠補充、recovery順をPF実行時に標準使用する。
 - checkpoint replay: 条件成立時のみ使用。
 - branch preserving recovery: 実験機能、既定無効。
 - [`_snap_trajectory_to_walkable_pixels`](../../src/rikka/particle/lib/map_constraints.py#L170): 実装はあるが、現行PF主経路からの呼び出し元は見つかりません。

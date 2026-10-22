@@ -26,7 +26,7 @@
    歩幅倍率と1歩の歩幅を決めます。
 4. 粒子位置を提案し、移動線分全体のmap有効性を判定します。
 5. map、歩幅、tempered運動状態尤度で重みを更新します。
-6. 必要ならrecovery、そうでなければESS判定でsystematic resamplingします。
+6. 必要ならrecovery、そうでなければESSが0.5N未満なら全粒子をsystematic resamplingします。それ以外では生存粒子を保持し、重み0の枠だけを補充します。
 7. 全時点の履歴からcurrent経路とsingle-ancestor sequenceを作り、guardで選びます。
 
 ## 4. 使用している計算・判定
@@ -35,7 +35,8 @@
 - 歩幅倍率事前平均1.03、初期sigma 0.05、保持0.995、範囲0.90〜1.15。
 - 1歩ノイズ `PF_SIGMA_STEP_LENGTH_RATIO=0.01`。
 - 重み: `prior * map_valid * stride_likelihood * state_likelihood^0.1`。
-- `ESS=1/sum(w²)`、500粒子の50%未満で再標本化。
+- `ESS=1/sum(w²)`。500粒子では観測後ESSが250未満なら全500粒子を選び直し、重みを1/500に戻す。250以上では死亡枠のみ補充する。
+- 死亡枠だけの補充では親の合計重みを元の枠と複製先で分け、生存枠の状態を保持する。方位・歩幅の追加ノイズは、全体再標本化では全枠、部分補充では補充先だけに加える。
 - 記録motion reliabilityが0.90〜0.92で、再標本化後headingノイズを0.009→0.004radへ線形縮小。
 - `sequence` は未支持反転数がcurrentより厳密に少ない場合だけ採用します。
 

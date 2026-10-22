@@ -135,6 +135,7 @@ def run(
     step_frames_arrows: int = PF_STEP_FRAMES_ARROWS,
     step_frames_dpi: int = PF_STEP_FRAMES_DPI,
     save_path_comparison: bool = False,
+    history_candidate: bool = False,
     floormap_path: str | Path = FLOORMAP_PATH,
     origin_px: tuple[int, int] = FLOORMAP_ORIGIN_PX,
     scale: float = FLOORMAP_SCALE,
@@ -181,7 +182,9 @@ def run(
     ble_landmarks: tuple[Landmark, ...] | None = None,
 ) -> pd.DataFrame:
     """後方互換引数を設定へ変換し、解析と成果物保存を実行する。"""
-    if (save_step_frames or save_path_comparison) and not use_particle_filter:
+    if (
+        save_step_frames or save_path_comparison or history_candidate
+    ) and not use_particle_filter:
         raise ValueError("粒子可視化の保存には use_particle_filter=True が必要です。")
     floormap = FloorMap(str(floormap_path), origin_px, scale)
     landmark_settings = (
@@ -307,7 +310,8 @@ def run(
             ranging_observations=(
                 None if particle_ble is None else particle_ble.observations
             ),
-            landmark_settings=landmark_settings,
+            landmark_settings=landmark_settings if ble_landmark else None,
+            history_candidate=history_candidate,
         )
     _print_prepared_summary(result.prepared, pdr_settings)
     output_dir = plot_pipeline.create_output_dir()

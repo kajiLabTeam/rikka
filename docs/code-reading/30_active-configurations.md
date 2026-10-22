@@ -33,7 +33,7 @@ Python APIでは [`cli.commands.run()`](../../src/rikka/cli/commands.py#L81) の
 | 歩heading sigma | 0.01rad | 低水準API | [`PF_SIGMA_HEADING`](../../src/rikka/common/config/__init__.py#L169) | propose | 現行採用値 |
 | drift保持 | 0.85 | 低水準API | [`PF_HEADING_DRIFT_RETENTION`](../../src/rikka/common/config/__init__.py#L178) | propose | 長期保持は不採用 |
 | stride事前 | 平均1.03、範囲0.90〜1.15 | 低水準API | `PF_STRIDE_SCALE_*` | setup/propose | 1.08以上は不採用 |
-| ESS | 0.5N | 低水準API | [`PF_RESAMPLE_ESS_RATIO`](../../src/rikka/common/config/__init__.py#L179) | evaluate_map | 標準使用 |
+| ESS | 0.5N未満で全粒子を再標本化。それ以外は死亡枠のみ補充 | 低水準API | [`PF_RESAMPLE_ESS_RATIO`](../../src/rikka/common/config/__init__.py#L179) | evaluate_map | 標準使用 |
 | recovery開始 | 有効率5%未満 | 低水準API | [`PF_RECOVERY_VALID_RATIO`](../../src/rikka/common/config/__init__.py#L183) | propose | 標準使用 |
 | motion重み指数 | 0.1 | `--motion-predictive-weight-power` | config | weighting | EXP-020改善 |
 | 代表経路 | sequence guard | current | [`PF_PATH_SELECTION`](../../src/rikka/common/config/__init__.py#L192) | finalize | sequenceは反転改善時のみ採用 |

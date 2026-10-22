@@ -2,7 +2,7 @@
 
 役割:
     ステップ区間、検出結果、方位候補、ジャイロ補正結果、確定移動量、前処理済み
-    PDR 一式と BLE ランドマーク補正結果を NamedTuple / dataclass として定義する。
+    PDR 一式、BLE ランドマーク補正結果、PFの履歴修正候補を共有型として定義する。
 依存元:
     ``config`` から ``PreparedPdrSteps`` の既定値を取得し、NumPy と Pandas の型を
     配列・DataFrame フィールドに使用する。
@@ -259,6 +259,58 @@ class PreparedPdrSteps:
 
 
 @dataclass(frozen=True)
+class ParticleHistoryStep:
+    """元の位置と履歴修正候補の対応。粒子間の接続は実際の系譜とは区別する。"""
+
+    step: int
+    timestamp_s: float
+    original_x_m: float
+    original_y_m: float
+    candidate_x_m: float
+    candidate_y_m: float
+    correction_m: float
+    original_displacement_m: float
+    candidate_displacement_m: float
+    source_particle: int | None
+    source_weight: float | None
+    source_offset_rad: float | None
+    source_stride_scale: float | None
+    source_motion_state: int | None
+    connection: str
+
+
+@dataclass(frozen=True)
+class ParticleRelocationEvent:
+    """通常提案を円内再配置で置き換えた記録。補充による複製は含めない。"""
+
+    step: int
+    particle: int
+    previous_x_m: float
+    previous_y_m: float
+    proposed_x_m: float
+    proposed_y_m: float
+    relocated_x_m: float
+    relocated_y_m: float
+    replacement_m: float
+    realized_displacement_m: float
+    descendants: int
+
+
+@dataclass(frozen=True)
+class ParticleHistoryCandidate:
+    """前向きPFと独立した事後の経路候補。精度の向上を意味しない。"""
+
+    trajectory: list[list[float]]
+    steps: tuple[ParticleHistoryStep, ...]
+    relocations: tuple[ParticleRelocationEvent, ...]
+    status: str
+    objective_original: float | None
+    objective_candidate: float | None
+    search_radius_m: float
+    max_candidates: int
+
+
+@dataclass(frozen=True)
 class ParticleFilterResult:
     """particle filter の代表軌跡と描画・診断用状態。"""
 
@@ -267,6 +319,7 @@ class ParticleFilterResult:
     diagnostics: tuple[Any, ...] = ()
     stages: tuple[Any, ...] = ()
     path_comparisons: tuple[Any, ...] = ()
+    history_candidate: ParticleHistoryCandidate | None = None
 
 
 @dataclass(frozen=True)

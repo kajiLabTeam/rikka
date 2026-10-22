@@ -69,7 +69,7 @@ class ParticleFilterStepDiagnostics:
 
 @dataclass(frozen=True)
 class ParticleStepStages:
-    """1歩分の段階別パーティクル状態。可視化専用で、推定には使用しない。"""
+    """1歩分の段階状態。可視化と事後解析用で、前向き推定には使用しない。"""
 
     step: int
     timestamp_s: float
@@ -99,6 +99,7 @@ class ParticleStepStages:
     after_offsets: np.ndarray
     after_weights: np.ndarray
     after_motion_state: np.ndarray
+    after_stride_scale: np.ndarray | None = None
 
 
 @dataclass(frozen=True)

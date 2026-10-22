@@ -8,8 +8,9 @@
 利用先:
     PDR pipelineがparticle filter実行後の軌跡表示と任意のanimation保存に使用する。
 処理フロー:
-    メートル座標を画素座標へ変換して地図へ重ね、動画はWebMを優先して保存する。
-    WebMを生成できない場合はMP4、MP4も生成できない場合はGIFへフォールバックする。
+    メートル座標を画素座標へ変換して地図へ重ね、動画は既定でMP4へ保存する。
+    指定形式を生成できない場合は別の動画形式、最後にGIFへフォールバックする。
+    一時ファイルへ保存し、保存に成功した形式だけを最終ファイル名へ置き換える。
 """
 
 from pathlib import Path
@@ -181,14 +182,15 @@ def save_particle_animation(
     floormap_path: str | Path = FLOORMAP_PATH,
     origin_px: tuple[int, int] = FLOORMAP_ORIGIN_PX,
     scale: float = FLOORMAP_SCALE,
-    output_path: Path | str = Path("output/particle_filter.webm"),
+    output_path: Path | str = Path("output/particle_filter.mp4"),
     fps: int = 10,
     landmark: LandmarkCorrectionResult | None = None,
 ) -> Path:
     """PF の各ステップのパーティクル分布を動画として保存する。
 
-    WebMを優先し、エンコーダーが利用できない場合はMP4、最後にGIFへ
-    フォールバックする。返り値は実際に保存されたファイルのパスである。
+    既定はMP4で、WebMを明示した場合はWebMを優先する。動画を生成できない
+    場合は別の動画形式、最後にGIFへフォールバックする。
+    返り値は実際に保存されたファイルのパスである。
 
     Args:
         all_particles: 全ステップのパーティクル位置 shape=(T, N, 2)
@@ -199,7 +201,7 @@ def save_particle_animation(
         floormap_path: フロアマップ画像のパス
         origin_px: 軌跡起点のピクセル座標
         scale: 1ピクセルあたりのメートル数
-        output_path: WebM出力ファイルパス（通常は ``.webm``）
+        output_path: 出力ファイルパス（既定は ``.mp4``、``.webm`` も指定可能）
         fps: フレームレート
         landmark: BLE ランドマーク補正結果。粒子が寄る先を確認できるよう、
             ランドマーク位置を全フレームへ、補正が起きた歩を該当フレーム以降へ描く
@@ -265,40 +267,52 @@ def save_particle_animation(
 
     anim = FuncAnimation(fig, update, frames=len(all_particles), interval=1000 // fps)
 
-    output_path = Path(output_path).with_suffix(".webm")
+    output_path = Path(output_path)
+    if output_path.suffix.lower() not in {".mp4", ".webm", ".gif"}:
+        output_path = output_path.with_suffix(".mp4")
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    writers = {
+        ".mp4": FFMpegWriter(
+            fps=fps,
+            codec="libx264",
+            extra_args=["-pix_fmt", "yuv420p", "-movflags", "+faststart"],
+        ),
+        ".webm": FFMpegWriter(
+            fps=fps,
+            codec="libvpx-vp9",
+            extra_args=["-crf", "35", "-b:v", "0", "-pix_fmt", "yuv420p"],
+        ),
+        ".gif": PillowWriter(fps=fps),
+    }
+    preferred = output_path.suffix.lower()
+    formats = (
+        [".gif"]
+        if preferred == ".gif"
+        else [preferred, ".webm" if preferred == ".mp4" else ".mp4", ".gif"]
+    )
+    errors: list[str] = []
     try:
-        anim.save(
-            str(output_path),
-            writer=FFMpegWriter(
-                fps=fps,
-                codec="libvpx-vp9",
-                extra_args=["-crf", "35", "-b:v", "0", "-pix_fmt", "yuv420p"],
-            ),
-        )
-        print(f"Animation saved to {output_path}")
+        for suffix in formats:
+            destination = output_path.with_suffix(suffix)
+            temporary = destination.with_name(f"{destination.stem}.tmp{suffix}")
+            try:
+                anim.save(str(temporary), writer=writers[suffix])
+                temporary.replace(destination)
+            except Exception as error:
+                errors.append(f"{suffix}: {error}")
+                if suffix == formats[-1]:
+                    raise
+            else:
+                if errors:
+                    print(
+                        f"指定形式を生成できないため{suffix}へフォールバックしました: "
+                        f"{destination} ({'; '.join(errors)})"
+                    )
+                else:
+                    print(f"Animation saved to {destination}")
+                return destination
+            finally:
+                temporary.unlink(missing_ok=True)
+    finally:
         plt.close(fig)
-        return output_path
-    except Exception as webm_error:
-        mp4_path = output_path.with_suffix(".mp4")
-        try:
-            anim.save(
-                str(mp4_path),
-                writer=FFMpegWriter(
-                    fps=fps,
-                    codec="libx264",
-                    extra_args=["-pix_fmt", "yuv420p", "-movflags", "+faststart"],
-                ),
-            )
-            print(f"WebMを生成できないためMP4へフォールバックしました: {mp4_path}")
-            plt.close(fig)
-            return mp4_path
-        except Exception as mp4_error:
-            gif_path = output_path.with_suffix(".gif")
-            anim.save(str(gif_path), writer=PillowWriter(fps=fps))
-            print(
-                "WebMとMP4を生成できないためGIFへフォールバックしました: "
-                f"{gif_path} ({webm_error}; {mp4_error})"
-            )
-            plt.close(fig)
-            return gif_path
+    raise RuntimeError("動画の保存形式が指定されていません")  # pragma: no cover

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import pytest
 
 from rikka.cli.commands import run as run_pdr
 from rikka.common.config import SIDESTEP_LENGTH_SCALE, TURNING_LENGTH_SCALE
@@ -26,6 +27,7 @@ from rikka.common.lib.time_utils import (
     _sample_gyro_angle,
 )
 from rikka.particle.lib.branches import branch_preserving_resample
+from rikka.particle.lib.evaluate_map import _resample_or_keep
 from rikka.particle.lib.finalize import _retrofit_landmark_anchor_jumps
 from rikka.particle.lib.map_constraints import (
     _evaluate_particle_transitions,
@@ -41,6 +43,10 @@ from rikka.particle.lib.proposal import (
 from rikka.particle.lib.recorder import ParticleFilterStepDiagnostics
 from rikka.particle.lib.recovery.checkpoint import _replay_from_checkpoint
 from rikka.particle.lib.recovery.local import _generate_recovery_candidates
+from rikka.particle.lib.relocate import (
+    _sample_uniform_disk,
+    relocate_invalid_particles,
+)
 from rikka.particle.lib.resampling import (
     _effective_sample_size,
     _systematic_resample,
@@ -690,7 +696,7 @@ def test_particle_filter_fixed_seed_characterization_snapshot(tmp_path) -> None:
     assert len(result) == 5
     np.testing.assert_allclose(
         np.asarray(result[0]),
-        np.array([[0.0, 0.0], [1.0175842, 0.00248184]]),
+        np.array([[0.0, 0.0], [0.97532200, 0.04342845]]),
         rtol=1e-7,
         atol=1e-8,
     )
@@ -698,9 +704,9 @@ def test_particle_filter_fixed_seed_characterization_snapshot(tmp_path) -> None:
         result[3][1, :3],
         np.array(
             [
-                [1.02581267, -0.0136450707],
-                [0.986660999, -0.0158762091],
-                [1.02215898, 0.0438210022],
+                [1.00563160, -0.0520300276],
+                [0.918067143, -0.162543171],
+                [0.914700841, 0.413613685],
             ]
         ),
         rtol=1e-7,
@@ -718,10 +724,10 @@ def test_particle_filter_fixed_seed_characterization_snapshot(tmp_path) -> None:
             diagnostic.stride_scale_mean,
         ],
         [
-            11.999999999999998,
-            0.04693755747666554,
-            1.3329123268479632,
-            1.0172439681875478,
+            11.999999999999996,
+            0.2489382548189977,
+            13.613689716862654,
+            1.0037610539304973,
         ],
     )
     assert diagnostic.resampled is False
@@ -742,6 +748,93 @@ def test_systematic_resampling_is_reproducible() -> None:
     )
 
     assert indices.tolist() == [1, 2, 2]
+
+
+def test_systematic_resampling_skips_zero_weights_at_exact_boundaries() -> None:
+    rng = SimpleNamespace(uniform=lambda low, high: 0.0)
+    indices = _systematic_resample(np.array([0.0, 0.5, 0.0, 0.5]), rng)
+
+    assert indices.tolist() == [1, 1, 3, 3]
+
+
+@pytest.mark.parametrize(
+    ("weights", "expected_resampled", "expected_full"),
+    [
+        ([1.0, 1.0, 0.0, 1.0], True, False),
+        ([1.0, 1.0, 1.0, 1.0], False, False),
+        ([97.0, 1.0, 1.0, 1.0], True, True),
+        ([0.0, 1.0, 0.0, 3.0], True, True),
+        ([0.0, 1.0, 0.0, 0.0], True, True),
+        ([0.0, 1.0, 0.0, 1.0], True, False),
+    ],
+)
+@pytest.mark.parametrize("jitter", [0.0, 0.1])
+def test_particle_resampling_uses_full_population_only_below_ess_threshold(
+    weights, expected_resampled, expected_full, jitter
+) -> None:
+    posterior = np.asarray(weights, dtype=float)
+    normalized = posterior / posterior.sum()
+    positions = np.arange(8, dtype=float).reshape(4, 2)
+    ctx = SimpleNamespace(
+        valid_weight_mass=float(posterior.sum()),
+        posterior_weights=posterior.copy(),
+        ess_after_observation=_effective_sample_size(normalized),
+        resample_ess_ratio=0.5,
+        n_particles=4,
+        rng=np.random.default_rng(7),
+        proposed_particles=positions,
+        proposed_correction=np.arange(4, dtype=float),
+        proposed_drift=np.arange(4, dtype=float) + 10,
+        proposed_stride_scale=np.arange(4, dtype=float) + 20,
+        proposed_motion_state=np.arange(4),
+        effective_heading_rejuvenation_sigma=jitter,
+        adaptive_stride_state=False,
+        stride_scale_rejuvenation_sigma=jitter,
+        stride_rng=np.random.default_rng(8),
+        effective_stride_scale_min=0.0,
+        effective_stride_scale_max=100.0,
+        realized_step_lengths=np.arange(4, dtype=float) + 30,
+        candidate_path_log_scores=np.arange(4, dtype=float) + 40,
+        resampled=False,
+    )
+
+    _resample_or_keep(ctx)
+
+    assert ctx.resampled is expected_resampled
+    assert np.all(ctx.weights > 0.0)
+    assert np.all(normalized[ctx.parent_indices] > 0.0)
+    alive = normalized > 0.0
+    if expected_full:
+        np.testing.assert_allclose(ctx.weights, 0.25)
+    else:
+        np.testing.assert_array_equal(ctx.parent_indices[alive], np.flatnonzero(alive))
+        np.testing.assert_array_equal(ctx.particles[alive], positions[alive])
+        np.testing.assert_array_equal(
+            ctx.heading_drift[alive], ctx.proposed_drift[alive]
+        )
+        np.testing.assert_array_equal(
+            ctx.stride_scale[alive], ctx.proposed_stride_scale[alive]
+        )
+        # 死亡枠だけの補充では親系統の合計重みを保つ。
+        for parent in np.flatnonzero(alive):
+            assert ctx.weights[ctx.parent_indices == parent].sum() == pytest.approx(
+                normalized[parent]
+            )
+    assert ctx.weights.sum() == pytest.approx(1.0)
+    np.testing.assert_array_equal(ctx.particles, positions[ctx.parent_indices])
+    np.testing.assert_array_equal(
+        ctx.motion_state, ctx.proposed_motion_state[ctx.parent_indices]
+    )
+    np.testing.assert_array_equal(
+        ctx.next_path_log_scores, ctx.candidate_path_log_scores[ctx.parent_indices]
+    )
+    if expected_resampled:
+        np.testing.assert_array_equal(
+            ctx.effective_step_lengths_for_diagnostics,
+            ctx.realized_step_lengths[ctx.parent_indices],
+        )
+    else:
+        np.testing.assert_allclose(ctx.weights, normalized)
 
 
 def test_particle_motion_evidence_is_normalized_without_confidence_saturation() -> None:
@@ -1096,7 +1189,9 @@ def test_particle_filter_bounds_heading_drift_in_open_area(tmp_path) -> None:
         diagnostics_collector=diagnostics,
     )
 
-    assert diagnostics[-1].heading_drift_std_deg < 7.5
+    # 既定の方位ばらつきは「おおむね -30〜+30 度」を2シグマ相当とする設計で、
+    # 保持率0.85のAR(1)定常標準偏差は約15度になる。発散していないことを確認する。
+    assert diagnostics[-1].heading_drift_std_deg < 20.0
     assert all(item.trajectory_mode == "weighted_mean" for item in diagnostics)
     trajectory = np.asarray(result[0], dtype=float)
     headings_deg = np.degrees(
@@ -1131,6 +1226,9 @@ def test_particle_filter_learns_and_keeps_persistent_stride_scale(tmp_path) -> N
         stride_scale_process_sigma=0.0,
         stride_scale_rejuvenation_sigma=0.0,
         resample_ess_ratio=0.99,
+        # 壁を越えた粒子が重み0で落ちることを前提にした検証のため、
+        # 円内再配置による復帰は無効化する。
+        invalid_relocation_radius_m=0.0,
         prepared_step_headings=[
             _forward_step_heading(step_index=1, heading=0.0),
             _forward_step_heading(step_index=2, heading=0.0),
@@ -1398,6 +1496,181 @@ def test_adaptive_recovery_uses_absolute_stride_scale_without_compounding() -> N
     assert float(np.mean(result.stride_scale)) < 0.9
 
 
+def test_uniform_disk_sampling_stays_in_circle_and_is_area_uniform() -> None:
+    rng = np.random.default_rng(0)
+    centers = np.zeros((20000, 2), dtype=float)
+
+    points = _sample_uniform_disk(centers, 5.0, rng)
+
+    radii = np.linalg.norm(points, axis=1)
+    assert float(radii.max()) <= 5.0
+    # 面積一様なら半径の分布関数は (r/R)^2 になり、中位数は R/sqrt(2)。
+    # 半径へ一様乱数を使う実装だと中位数が R/2 に寄るため区別できる。
+    assert float(np.median(radii)) == pytest.approx(5.0 / np.sqrt(2.0), abs=0.08)
+
+
+def test_relocate_invalid_particles_keeps_valid_and_moves_invalid_inside_radius(
+    tmp_path,
+) -> None:
+    map_gray = np.zeros((41, 41), dtype=float)
+    map_gray[20, :] = 1.0  # 横1本の歩行可能な廊下
+    floormap_path = tmp_path / "corridor.png"
+    plt.imsave(floormap_path, map_gray, cmap="gray", vmin=0.0, vmax=1.0)
+    gray = _normalize_floormap_gray(plt.imread(floormap_path))
+    origin_px = (20, 20)
+    previous = np.zeros((6, 2), dtype=float)
+    # 前半3粒子は廊下内へ、後半3粒子は壁の中へ提案されたとみなす。
+    proposed = np.array(
+        [
+            [1.0, 0.0],
+            [2.0, 0.0],
+            [3.0, 0.0],
+            [0.0, 6.0],
+            [1.0, 7.0],
+            [-2.0, 8.0],
+        ],
+        dtype=float,
+    )
+    valid = np.array([True, True, True, False, False, False])
+
+    relocated, updated_valid, count = relocate_invalid_particles(
+        previous,
+        proposed,
+        valid,
+        5.0,
+        20,
+        np.random.default_rng(3),
+        gray,
+        gx_mean=0.0,
+        gz_mean=9.8,
+        origin_px=origin_px,
+        scale=1.0,
+    )
+
+    assert count == 3
+    assert updated_valid.all()
+    # 有効粒子は一切動かさない。
+    np.testing.assert_allclose(relocated[:3], proposed[:3])
+    # 無効粒子は前歩位置から半径5m以内の歩行可能画素へ入る。
+    moved = relocated[3:]
+    assert np.all(np.linalg.norm(moved - previous[3:], axis=1) <= 5.0 + 1e-9)
+    assert _evaluate_particle_transitions(
+        previous[3:],
+        moved,
+        gray,
+        0.0,
+        9.8,
+        origin_px,
+        1.0,
+    ).all()
+
+
+def test_relocate_invalid_particles_is_disabled_for_zero_radius(tmp_path) -> None:
+    floormap_path = tmp_path / "open.png"
+    plt.imsave(
+        floormap_path, np.ones((20, 20), dtype=float), cmap="gray", vmin=0.0, vmax=1.0
+    )
+    gray = _normalize_floormap_gray(plt.imread(floormap_path))
+    previous = np.zeros((2, 2), dtype=float)
+    proposed = np.array([[1.0, 0.0], [2.0, 0.0]], dtype=float)
+    valid = np.array([True, False])
+
+    relocated, updated_valid, count = relocate_invalid_particles(
+        previous,
+        proposed,
+        valid,
+        0.0,
+        20,
+        np.random.default_rng(0),
+        gray,
+        gx_mean=0.0,
+        gz_mean=9.8,
+        origin_px=(10, 10),
+        scale=1.0,
+    )
+
+    assert count == 0
+    np.testing.assert_allclose(relocated, proposed)
+    np.testing.assert_array_equal(updated_valid, valid)
+
+
+def test_relocate_invalid_particles_rejects_wall_crossing_candidates(tmp_path) -> None:
+    map_gray = np.zeros((41, 41), dtype=float)
+    map_gray[20, :18] = 1.0
+    map_gray[20, 23:] = 1.0  # 中央を壁で分断した廊下
+    floormap_path = tmp_path / "split_corridor.png"
+    plt.imsave(floormap_path, map_gray, cmap="gray", vmin=0.0, vmax=1.0)
+    gray = _normalize_floormap_gray(plt.imread(floormap_path))
+    origin_px = (10, 20)
+    previous = np.zeros((40, 2), dtype=float)
+    proposed = np.full((40, 2), 30.0, dtype=float)
+    valid = np.zeros(40, dtype=bool)
+
+    relocated, updated_valid, count = relocate_invalid_particles(
+        previous,
+        proposed,
+        valid,
+        5.0,
+        20,
+        np.random.default_rng(11),
+        gray,
+        gx_mean=0.0,
+        gz_mean=9.8,
+        origin_px=origin_px,
+        scale=1.0,
+    )
+
+    assert count > 0
+    # 壁の向こう側（原点から+x方向に8m以上）へは再配置しない。
+    assert float(relocated[updated_valid][:, 0].max()) < 8.0
+
+
+def test_particle_filter_relocates_wall_blocked_particles_before_recovery(
+    tmp_path,
+) -> None:
+    map_gray = np.zeros((41, 41), dtype=float)
+    map_gray[20, :] = 1.0
+    floormap_path = tmp_path / "pf_corridor.png"
+    plt.imsave(floormap_path, map_gray, cmap="gray", vmin=0.0, vmax=1.0)
+
+    def run(radius: float) -> list[ParticleFilterStepDiagnostics]:
+        diagnostics: list[ParticleFilterStepDiagnostics] = []
+        run_particle_filter(
+            np.array([0, 1]),
+            pd.DataFrame({"low_angle": [0.0, 0.0]}),
+            pd.DataFrame({"h_y": [0.0, 0.0], "h_z": [0.0, 0.0]}),
+            gx_mean=0.0,
+            gz_mean=9.8,
+            floormap_path=floormap_path,
+            origin_px=(20, 20),
+            scale=1.0,
+            n_particles=100,
+            # 廊下と直交する方向へ提案させ、全粒子を壁へ当てる。
+            prepared_step_headings=[
+                _forward_step_heading(step_index=1, heading=np.pi / 2),
+                _forward_step_heading(step_index=2, heading=np.pi / 2),
+            ],
+            prepared_step_lengths=[3.0, 3.0],
+            prepared_step_times=[0.0, 1.0],
+            seed=5,
+            invalid_relocation_radius_m=radius,
+            diagnostics_collector=diagnostics,
+        )
+        return diagnostics
+
+    without = run(0.0)
+    with_relocation = run(5.0)
+
+    # 再配置なしでは全粒子が壁へ当たり recovery に落ちる。
+    assert without[0].recovery_attempted is True
+    # 再配置ありでは円内の歩行可能点へ戻り、recovery を必要としない。
+    assert with_relocation[0].recovery_attempted is False
+    # 1画素幅の廊下では棄却サンプリングが試行上限内に成立しない粒子も残るため、
+    # 全粒子ではなく大半が復帰することを確認する。
+    assert with_relocation[0].valid_ratio > 0.9
+    assert without[0].valid_ratio == pytest.approx(0.0)
+
+
 def test_particle_filter_recovers_with_map_aware_direction_candidates(tmp_path) -> None:
     map_gray = np.zeros((21, 21), dtype=float)
     map_gray[1:20, 10] = 1.0
@@ -1436,6 +1709,8 @@ def test_particle_filter_recovers_with_map_aware_direction_candidates(tmp_path) 
         seed=42,
         recovery_valid_ratio=0.5,
         recovery_heading_sigma=0.03,
+        # recovery候補グリッドだけを検証するため、円内再配置は無効化する。
+        invalid_relocation_radius_m=0.0,
         diagnostics_collector=diagnostics,
     )
 

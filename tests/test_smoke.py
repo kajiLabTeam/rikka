@@ -1,7 +1,11 @@
+from types import SimpleNamespace
+from unittest.mock import Mock
+
 import pytest
 from click.testing import CliRunner
 
 from rikka import cli
+from rikka.cli import commands
 from rikka.common.config import (
     FORWARD_HEADING_SOURCE,
     GYRO_BIAS_METHOD,
@@ -19,6 +23,38 @@ from rikka.common.config import (
     compute_weinberg_k,
 )
 from rikka.ping import ping
+
+
+@pytest.mark.parametrize("ble_enabled", [False, True])
+def test_particle_only_receives_landmarks_when_ble_enabled(
+    monkeypatch, ble_enabled
+) -> None:
+    """BLE無効時は未使用座標を渡さず、有効時だけ設定をPFへ渡す。"""
+    prepared = object()
+    monkeypatch.setattr(commands, "_validate_particle_floormap", Mock())
+    monkeypatch.setattr(commands, "_load_floormap_gray", Mock(return_value=None))
+    monkeypatch.setattr(commands, "_validate_landmark_pixels", Mock())
+    monkeypatch.setattr(
+        commands, "run_pdr", Mock(return_value=SimpleNamespace(prepared=prepared))
+    )
+    monkeypatch.setattr(
+        commands,
+        "run_ble_ranging_input",
+        Mock(return_value=SimpleNamespace(detections=(), observations=())),
+    )
+    stop = RuntimeError("PF呼び出し境界までを検証")
+    particle = Mock(side_effect=stop)
+    monkeypatch.setattr(commands, "run_particle", particle)
+
+    with pytest.raises(RuntimeError, match="PF呼び出し境界"):
+        commands.run(use_particle_filter=True, ble_landmark=ble_enabled, plot=False)
+
+    particle.assert_called_once()
+    settings = particle.call_args.kwargs["landmark_settings"]
+    if ble_enabled:
+        assert settings is not None and settings.enabled
+    else:
+        assert settings is None
 
 
 def test_ping_returns_expected_message() -> None:
@@ -53,7 +89,7 @@ def test_default_sidestep_detection_settings_match_selected_standard() -> None:
     assert PF_NUM_PARTICLES == 500
     assert PF_PATH_SELECTION == "sequence"
     assert GYRO_BIAS_METHOD == "prewalk_guarded"
-    assert PF_REJUVENATION_SIGMA_HEADING == pytest.approx(0.009)
+    assert PF_REJUVENATION_SIGMA_HEADING == pytest.approx(0.12)
 
 
 def test_run_help_includes_forward_heading_source_option() -> None:

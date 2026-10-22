@@ -190,6 +190,7 @@ def record_checkpoint_replay(ctx: ParticleRuntime) -> None:
                 after_offsets=replay_offsets.copy(),
                 after_weights=replay_weights.copy(),
                 after_motion_state=ctx.recovery.motion_state.copy(),
+                after_stride_scale=ctx.recovery.stride_scale.copy(),
             )
 
 

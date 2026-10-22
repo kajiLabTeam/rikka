@@ -175,5 +175,6 @@ def record(ctx: ParticleRuntime) -> None:
                 ).copy(),
                 after_weights=ctx.weights.copy(),
                 after_motion_state=ctx.motion_state.copy(),
+                after_stride_scale=ctx.stride_scale.copy(),
             )
         )

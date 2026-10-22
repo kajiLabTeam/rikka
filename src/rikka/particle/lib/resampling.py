@@ -13,13 +13,21 @@
 import numpy as np
 
 
-def _systematic_resample(weights: np.ndarray, rng: np.random.Generator) -> np.ndarray:
-    """系統リサンプリングでインデックス配列を返す。O(N)・分散最小。"""
-    n = len(weights)
+def _systematic_resample(
+    weights: np.ndarray,
+    rng: np.random.Generator,
+    *,
+    sample_count: int | None = None,
+) -> np.ndarray:
+    """指定数（省略時は全粒子数）の親を系統リサンプリングで抽出する。"""
+    n = len(weights) if sample_count is None else sample_count
+    if n <= 0:
+        return np.empty(0, dtype=int)
     positions = (np.arange(n) + rng.uniform(0, 1)) / n
     cumsum = np.cumsum(weights)
     cumsum[-1] = 1.0
-    return np.searchsorted(cumsum, positions)
+    # 累積重みの境界でも重み0の区間を選ばない。
+    return np.searchsorted(cumsum, positions, side="right")
 
 
 def _effective_sample_size(weights: np.ndarray) -> float:

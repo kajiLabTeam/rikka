@@ -22,8 +22,8 @@ AI エージェントや sandbox 環境で `uv` の既定キャッシュに対�
 UV_CACHE_DIR=.uv-cache uv run pytest
 ```
 
-パーティクルフィルタのアニメーション出力は WebM を優先し、生成できない場合は MP4、
-MP4も生成できない場合は GIF にフォールバックします。WebM/MP4の出力には `ffmpeg` が必要です。
+パーティクルフィルタのアニメーション出力は MP4 を優先し、生成できない場合は WebM、
+WebMも生成できない場合は GIF にフォールバックします。MP4/WebMの出力には `ffmpeg` が必要です。
 
 ```sh
 brew install ffmpeg
@@ -58,7 +58,7 @@ input/
 現在の既定入力は次です。
 
 ```python
-DATA_DIR = "input/sensor_data/hiroto/hiroto_1turn_rightsidestep_3turn_leftsidestep"
+DATA_DIR = "input/1019Experiment/PDR Sensor Logger (Research) 2026-10-19 19-17-08"
 ```
 
 別データを使う場合は、CLI の `-d` で指定できます。
@@ -120,6 +120,19 @@ uv run rikka particle
 ```sh
 uv run rikka particle --no-plot --save-animation
 ```
+
+現行の再配置と前向きPFを維持したまま、過去軌跡の修正候補を別に比較する試作です。
+
+```sh
+uv run rikka particle --history-candidate --pf-seed 0 --no-plot
+```
+
+元の`trajectory.csv`とMP4はそのまま保存し、候補のCSV・比較PNGを追加します。
+センサーに沿った再提案は行いません。候補は保存された生存粒子位置と元軌跡から
+地図上の接続を選び直すもので、始点・終点は元の仮境界を保持します。
+全履歴を使う事後処理で、オンラインの直近区間更新や歩幅・方位状態の再推定は
+まだ行いません。滑らかさを優先するため経路を短縮する可能性があります。
+BLE補正が適用された場合は`skipped_landmark`として候補修正を省略します。
 
 問題歩の粒子状態と代表軌跡候補を静止画で確認する場合:
 
@@ -362,9 +375,9 @@ flowchart LR
 
 | 項目 | 既定値 | 説明 |
 |---|---:|---|
-| `DATA_DIR` | `input/sensor_data/hiroto/hiroto_1turn_rightsidestep_3turn_leftsidestep` | 入力データ |
+| `DATA_DIR` | `input/1019Experiment/PDR Sensor Logger (Research) 2026-10-19 19-17-08` | 入力データ |
 | `FLOORMAP_PATH` | `input/Floormap_building14_5floor.png` | 背景マップ |
-| `FLOORMAP_ORIGIN_PX` | `(2050, 400)` | 軌跡の開始ピクセル |
+| `FLOORMAP_ORIGIN_PX` | `(2972, 245)` | 軌跡の開始ピクセル |
 | `FLOORMAP_SCALE` | `0.01` | 1px あたりのメートル数 |
 | `INITIAL_DIRECTION` | `90.0` | 歩行開始方向 [deg] |
 | `STEP_DETECTION_METHOD` | `peak` | ステップ検出 |
@@ -386,7 +399,8 @@ flowchart LR
 | `PF_STRIDE_SCALE_PRIOR_MEAN` | `1.03` | 正解軌跡長から校正したPF歩幅倍率の事前中心 |
 | `PF_STRIDE_SCALE_RETENTION` | `0.995` | 学習した歩幅倍率偏差を次歩へ保持する割合 |
 | `PF_STRIDE_SCALE_MIN / MAX` | `0.90 / 1.15` | PFが保持する歩幅倍率の範囲 |
-| `PF_RESAMPLE_ESS_RATIO` | `0.5` | PFで再標本化を開始するESS比率 |
+| `PF_RESAMPLE_ESS_RATIO` | `0.5` | ESSが粒子数の50%未満なら全粒子を再標本化。それ以外では死亡枠だけ補充 |
+| `PF_INVALID_RELOCATION_RADIUS_M` | `3.0` | 壁衝突した粒子を前歩位置中心の円内へ再配置する半径 [m] |
 | `PF_REJUVENATION_SIGMA_HEADING` | `0.009` | 再標本化後に加える適応方位ノイズの上限 [rad] |
 | `PF_RECOVERY_VALID_RATIO` | `0.05` | PFでmap-aware recoveryを開始する有効粒子率 |
 | `PF_MOTION_PREDICTIVE_WEIGHT_POWER` | `0.1` | 運動状態予測尤度を弱くPF重みへ反映する指数 |
@@ -561,9 +575,13 @@ uv run rikka run \
 |---|---|
 | `pf_trajectory.png` | PF の平均優先、または反転抑制された単一祖先軌跡 |
 | `particle_diagnostics.csv` | 各歩のESS、有効粒子数、位置・方位分散、歩幅倍率、recovery、軌跡選択モード |
-| `particle_filter.webm` / `.mp4` / `.gif` | パーティクル分布アニメーション |
+| `particle_filter.mp4` / `.webm` / `.gif` | パーティクル分布アニメーション |
 | `particle_frames/step_*.png` | 明示保存時の開始・提案・壁判定・重み・選択/復旧・確定と方位ローズ |
 | `particle_paths_comparison.png` | 明示保存時の加重平均・単一祖先・個別粒子経路と方位変化の比較 |
+| `particle_history_candidate.csv` | `--history-candidate`指定時。原点を含む元/候補座標、センサー時刻、修正量、参照粒子・状態、接続の出所 |
+| `particle_history_summary.csv` | 候補の状態、目的関数、修正数・量、経路長、最大/最小歩間変位、微小移動数 |
+| `particle_relocations.csv` | 通常提案を再配置で置き換えたイベント。checkpoint等の復旧で置換された歩は含めない |
+| `particle_history_comparison.png` | 元/候補の地図上の経路と歩間変位の比較。`--no-plot`でも保存 |
 
 ## コード構成
 

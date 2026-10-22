@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 
 from ..common.config import SAMPLING_RATE
-from ..common.lib.models import TrajectoryResult
+from ..common.lib.models import FloorMap, TrajectoryResult
 from ..common.settings import OutputSettings, ParticleSettings, PdrSettings
 from ..particle.lib.recorder import ParticleFilterStepDiagnostics
 from .lib.animation import plot_particle_filter_trajectory, save_particle_animation
@@ -27,6 +27,7 @@ from .lib.frames import (
     save_particle_path_comparison,
     save_particle_step_frames,
 )
+from .lib.history import save_history_comparison, save_history_csv
 from .lib.outputs import (
     _build_direction_posteriors_dataframe,
     _build_gyro_bias_dataframe,
@@ -123,6 +124,9 @@ def write_outputs(result: TrajectoryResult, output_dir: Path) -> pd.DataFrame:
             output_dir / "particle_diagnostics.csv",
             "Particle diagnostics",
         )
+        if result.particle.history_candidate is not None:
+            save_history_csv(result.particle.history_candidate, output_dir)
+            print(f"Particle history candidate saved to {output_dir}")
     return dataframe
 
 
@@ -223,6 +227,16 @@ def _render_particle_artifacts(
     assert result.particle is not None
     prepared = result.prepared
     visualization_paths: list[Path] = []
+    if result.particle.history_candidate is not None:
+        path = output_dir / "particle_history_comparison.png"
+        save_history_comparison(
+            result.particle.history_candidate,
+            FloorMap(str(settings.floormap_path), settings.origin_px, settings.scale),
+            prepared.gx_mean,
+            prepared.gz_mean,
+            path,
+        )
+        visualization_paths.append(path)
     if output.save_step_frames:
         visualization_paths.extend(
             save_particle_step_frames(
@@ -270,7 +284,7 @@ def _render_particle_artifacts(
             floormap_path=settings.floormap_path,
             origin_px=settings.origin_px,
             scale=settings.scale,
-            output_path=output_dir / "particle_filter.webm",
+            output_path=output_dir / "particle_filter.mp4",
             landmark=result.landmark,
         )
 

@@ -131,6 +131,11 @@ def setup(ctx: ParticleRuntime) -> None:
         )
     if ctx.recovery_max_attempts <= 0:
         raise ValueError("recovery_max_attempts は正の整数を指定してください")
+    ctx.invalid_relocation_radius_m = validate_non_negative_parameter(
+        "invalid_relocation_radius_m", ctx.invalid_relocation_radius_m
+    )
+    if ctx.invalid_relocation_attempts < 0:
+        raise ValueError("invalid_relocation_attempts は0以上を指定してください")
     ctx.adaptive_stride_state = bool(
         ctx.prepared_motion_posteriors is not None
         and any(

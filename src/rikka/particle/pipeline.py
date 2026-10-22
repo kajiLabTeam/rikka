@@ -9,6 +9,7 @@
     CLI が ``pdr.pipeline.run_pdr`` の後にPF指定時だけ呼び出す。
 処理フロー:
     診断収集器を用意し、準備済み歩列をrunnerへ渡して共有結果型へまとめる。
+    明示指定時は、前向き結果を維持したまま粒子履歴から別の経路候補を作る。
 """
 
 from dataclasses import replace
@@ -32,6 +33,7 @@ from ..landmark.lib.assignment import (
 )
 from ..landmark.lib.coordinates import build_landmark_meter_map
 from ..landmark.lib.timing import evaluate_landmark_timing
+from .lib.history_correction import build_history_candidate
 from .lib.recorder import (
     ParticleFilterStepDiagnostics,
     ParticlePathComparison,
@@ -115,6 +117,7 @@ def run_particle(
     detections: tuple[LandmarkObservation, ...] | None = None,
     ranging_observations: tuple[LandmarkRange, ...] | None = None,
     landmark_settings: BleLandmarkSettings | None = None,
+    history_candidate: bool = False,
 ) -> TrajectoryResult:
     """準備済みの歩列へ地図拘束を適用する。"""
     diagnostics: list[ParticleFilterStepDiagnostics] = []
@@ -187,6 +190,18 @@ def run_particle(
         diagnostics=tuple(diagnostics),
         stages=tuple(stages),
         path_comparisons=tuple(path_comparisons),
+        history_candidate=(
+            build_history_candidate(
+                trajectory,
+                stages,
+                floormap,
+                prepared.gx_mean,
+                prepared.gz_mean,
+                landmark_constraints=any(event.applied for event in landmark_events),
+            )
+            if history_candidate
+            else None
+        ),
     )
     landmark = None
     if detections is not None and landmark_settings is not None:
