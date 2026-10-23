@@ -79,11 +79,29 @@ def _try_local_recovery(ctx: ParticleRuntime) -> bool:
 def _try_checkpoint_replay(ctx: ParticleRuntime) -> bool:
     """直近の健全checkpointから最大3歩を再生し、成功したかを返す。"""
     ctx.completed_steps = len(ctx.step_lengths)
+    protected_step = ctx.last_hard_anchor_step
+    ctx.landmark_replay_blocked = False
+    if ctx.proposal_method == "candidate-bank":
+        observed_steps = (
+            ctx.landmark_observations_by_step
+            if ctx.landmark_mode == "ranging" and ctx.landmark_range_weight_power > 0
+            else ctx.landmark_by_step
+            if ctx.landmark_mode == "observation"
+            else {}
+        )
+        protected_step = max(
+            [protected_step]
+            + [step for step in observed_steps if step < ctx.step_number]
+        )
+        ctx.landmark_replay_blocked = any(
+            0 < ctx.completed_steps - step <= 3 and step < protected_step
+            for step in ctx.healthy_checkpoint_steps
+        )
     ctx.checkpoint_step = next(
         (
             candidate
             for candidate in ctx.healthy_checkpoint_steps
-            if 0 < ctx.completed_steps - candidate <= 3
+            if 0 < ctx.completed_steps - candidate <= 3 and candidate >= protected_step
         ),
         None,
     )
@@ -130,6 +148,7 @@ def _apply_checkpoint_replay(ctx: ParticleRuntime) -> None:
     """checkpoint再生結果で起点以後の履歴と現在状態を置き換える。"""
     assert ctx.checkpoint_step is not None
     assert ctx.replay_result is not None
+    ctx.history_version += 1
     ctx.recovery = ctx.replay_result.recovery
     ctx.replay_depth = ctx.replay_result.replay_positions.shape[0]
     ctx.position_history = ctx.position_history[: ctx.checkpoint_step + 1]

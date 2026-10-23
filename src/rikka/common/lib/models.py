@@ -2,7 +2,7 @@
 
 役割:
     ステップ区間、検出結果、方位候補、ジャイロ補正結果、確定移動量、前処理済み
-    PDR 一式と BLE ランドマーク補正結果を NamedTuple / dataclass として定義する。
+    PDR 一式、歩検出候補診断、BLE補正結果、PFの履歴修正候補を共有型として定義する。
 依存元:
     ``config`` から ``PreparedPdrSteps`` の既定値を取得し、NumPy と Pandas の型を
     配列・DataFrame フィールドに使用する。
@@ -36,6 +36,22 @@ class StepSegment(NamedTuple):
     contact_index: int
 
 
+class StepCandidateDiagnostic(NamedTuple):
+    """適応歩検出の候補と採否。周期が不確かな場合は period_s が None。
+
+    confidence は自己相関または候補間隔の支持率であり、正解である確率ではない。
+    """
+
+    sample_index: int
+    timestamp_s: float
+    period_s: float | None
+    confidence: float
+    min_interval_s: float
+    prominence: float
+    accepted: bool
+    reason: str
+
+
 class StepDetectionResult(NamedTuple):
     """ステップ検出結果。既存互換用ピーク列と論文方式用区間を併せて持つ。"""
 
@@ -44,6 +60,7 @@ class StepDetectionResult(NamedTuple):
     segments: tuple[StepSegment, ...]
     threshold: float | None
     polarity: int | None
+    diagnostics: tuple[StepCandidateDiagnostic, ...] = ()
 
 
 class StepHeading(NamedTuple):
@@ -259,6 +276,98 @@ class PreparedPdrSteps:
 
 
 @dataclass(frozen=True)
+class ParticleHistoryStep:
+    """元の位置と履歴修正候補の対応。粒子間の接続は実際の系譜とは区別する。"""
+
+    step: int
+    timestamp_s: float
+    original_x_m: float
+    original_y_m: float
+    candidate_x_m: float
+    candidate_y_m: float
+    correction_m: float
+    original_displacement_m: float
+    candidate_displacement_m: float
+    source_particle: int | None
+    source_weight: float | None
+    source_offset_rad: float | None
+    source_stride_scale: float | None
+    source_motion_state: int | None
+    connection: str
+
+
+@dataclass(frozen=True)
+class ParticleRelocationEvent:
+    """通常提案を円内再配置で置き換えた記録。補充による複製は含めない。"""
+
+    step: int
+    particle: int
+    previous_x_m: float
+    previous_y_m: float
+    proposed_x_m: float
+    proposed_y_m: float
+    relocated_x_m: float
+    relocated_y_m: float
+    replacement_m: float
+    realized_displacement_m: float
+    descendants: int
+
+
+@dataclass(frozen=True)
+class ParticleHistoryCandidate:
+    """前向きPFと独立した事後の経路候補。精度の向上を意味しない。"""
+
+    trajectory: list[list[float]]
+    steps: tuple[ParticleHistoryStep, ...]
+    relocations: tuple[ParticleRelocationEvent, ...]
+    status: str
+    objective_original: float | None
+    objective_candidate: float | None
+    search_radius_m: float
+    max_candidates: int
+
+
+@dataclass(frozen=True)
+class HardPositionObservation:
+    """歩行者が指定時刻に指定位置にいた根拠を伴う確定観測。"""
+
+    event_id: str
+    timestamp_s: float
+    pixel_x: float
+    pixel_y: float
+    source: str
+    evidence: str
+    heading_deg: float | None = None
+    floor_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if not all(
+            isinstance(value, str) and value.strip()
+            for value in (self.event_id, self.source, self.evidence)
+        ):
+            raise ValueError("確定位置には event_id, source, evidence が必要です")
+        if not np.isfinite([self.timestamp_s, self.pixel_x, self.pixel_y]).all():
+            raise ValueError("確定位置の時刻・座標には有限値が必要です")
+        if self.heading_deg is not None and not np.isfinite(self.heading_deg):
+            raise ValueError("確定方位には有限値が必要です")
+
+
+@dataclass(frozen=True)
+class HardAnchorCorrection:
+    """歩行移動とは別に適用した位置訂正。step_indexは軌跡ノードの添字。"""
+
+    step_index: int
+    event_id: str
+    timestamp_s: float
+    before_x: float
+    before_y: float
+    target_x: float
+    target_y: float
+    source: str
+    evidence: str
+
+
+@dataclass(frozen=True)
 class ParticleFilterResult:
     """particle filter の代表軌跡と描画・診断用状態。"""
 
@@ -267,6 +376,10 @@ class ParticleFilterResult:
     diagnostics: tuple[Any, ...] = ()
     stages: tuple[Any, ...] = ()
     path_comparisons: tuple[Any, ...] = ()
+    history_candidate: ParticleHistoryCandidate | None = None
+    hard_anchor_corrections: tuple[HardAnchorCorrection, ...] = ()
+    uncorrected_trajectory: list[list[float]] | None = None
+    correction_steps: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -276,6 +389,7 @@ class FloorMap:
     path: str
     origin_px: tuple[int, int]
     scale: float
+    floor_id: str | None = None
 
 
 @dataclass(frozen=True)

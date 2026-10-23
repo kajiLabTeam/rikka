@@ -21,6 +21,8 @@ from ...common.config import (
     FLOORMAP_SCALE,
     FORWARD_HEADING_SOURCE,
     PF_HEADING_DRIFT_RETENTION,
+    PF_INVALID_RELOCATION_ATTEMPTS,
+    PF_INVALID_RELOCATION_RADIUS_M,
     PF_LANDMARK_LIKELIHOOD_FLOOR,
     PF_LANDMARK_MAX_JUMP_M,
     PF_LANDMARK_MODE,
@@ -55,6 +57,8 @@ from ...common.config import (
     SIDESTEP_SUSPECT_MODE,
 )
 from ...common.lib.models import (
+    HardAnchorCorrection,
+    HardPositionObservation,
     Landmark,
     LandmarkCorrection,
     LandmarkObservation,
@@ -65,6 +69,7 @@ from ...common.lib.models import (
 )
 from .evaluate_map import resolve_map_constraints
 from .finalize import finalize
+from .hard_anchor import apply_hard_position
 from .initialize import initialize
 from .propose import propose
 from .record import record
@@ -129,6 +134,8 @@ def run_particle_steps(
     recovery_valid_ratio: float = PF_RECOVERY_VALID_RATIO,
     recovery_heading_sigma: float = PF_RECOVERY_HEADING_SIGMA,
     recovery_max_attempts: int = PF_RECOVERY_MAX_ATTEMPTS,
+    invalid_relocation_radius_m: float = PF_INVALID_RELOCATION_RADIUS_M,
+    invalid_relocation_attempts: int = PF_INVALID_RELOCATION_ATTEMPTS,
     diagnostics_collector: list[ParticleFilterStepDiagnostics] | None = None,
     stage_collector: list[ParticleStepStages] | None = None,
     path_comparison_collector: list[ParticlePathComparison] | None = None,
@@ -150,6 +157,11 @@ def run_particle_steps(
     landmark_anchor_warn_jump_m: float = BLE_ANCHOR_WARN_JUMP_M,
     landmark_retrofit: bool = PF_LANDMARK_RETROFIT,
     landmark_events_collector: list[LandmarkCorrection] | None = None,
+    proposal_method: str = "legacy",
+    candidate_count: int = 1,
+    hard_positions: tuple[HardPositionObservation, ...] = (),
+    floormap_floor_id: str | None = None,
+    hard_anchor_events_collector: list[HardAnchorCorrection] | None = None,
 ) -> ParticleStepsResult:
     """準備済み歩列を受け、元と同じ順序でPF段階を実行する。"""
     ctx = ParticleRuntime(
@@ -189,6 +201,8 @@ def run_particle_steps(
         recovery_valid_ratio=recovery_valid_ratio,
         recovery_heading_sigma=recovery_heading_sigma,
         recovery_max_attempts=recovery_max_attempts,
+        invalid_relocation_radius_m=invalid_relocation_radius_m,
+        invalid_relocation_attempts=invalid_relocation_attempts,
         diagnostics_collector=diagnostics_collector,
         stage_collector=stage_collector,
         path_comparison_collector=path_comparison_collector,
@@ -210,6 +224,11 @@ def run_particle_steps(
         landmark_anchor_warn_jump_m=landmark_anchor_warn_jump_m,
         landmark_retrofit=landmark_retrofit,
         landmark_events_collector=landmark_events_collector,
+        proposal_method=proposal_method,
+        candidate_count=candidate_count,
+        hard_positions=hard_positions,
+        floormap_floor_id=floormap_floor_id,
+        hard_anchor_events_collector=hard_anchor_events_collector,
     )
     setup(ctx)
     initialize(ctx)
@@ -240,6 +259,7 @@ def run_particle_steps(
             continue
         propose(ctx)
         resolve_map_constraints(ctx)
+        apply_hard_position(ctx)
         ctx.ess_after_resampling = _effective_sample_size(ctx.weights)
         ctx.position_history.append(ctx.particles.copy())
         record(ctx)

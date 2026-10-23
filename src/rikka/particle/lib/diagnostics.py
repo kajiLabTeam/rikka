@@ -165,4 +165,9 @@ def _build_step_diagnostics(**values: Any) -> ParticleFilterStepDiagnostics:
         trajectory_source_index=None,
         recovery_candidate_branch_count=(recovery_candidate_branch_count),
         recovery_selected_branch_count=(recovery_selected_branch_count),
+        landmark_update_count=values.get("landmark_update_count", 0),
+        landmark_observation_count=values.get("landmark_observation_count", 0),
+        landmark_floor_fraction=values.get("landmark_floor_fraction"),
+        landmark_rssi_residual_mean_db=values.get("landmark_rssi_residual_mean_db"),
+        landmark_replay_blocked=values.get("landmark_replay_blocked", False),
     )

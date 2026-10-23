@@ -9,6 +9,7 @@
     CLI が ``pdr.pipeline.run_pdr`` の後にPF指定時だけ呼び出す。
 処理フロー:
     診断収集器を用意し、準備済み歩列をrunnerへ渡して共有結果型へまとめる。
+    明示指定時は、前向き結果を維持したまま粒子履歴から別の経路候補を作る。
 """
 
 from dataclasses import replace
@@ -16,6 +17,8 @@ from dataclasses import replace
 from ..ble.lib.ranging_check import run_ranging_preflight
 from ..common.lib.models import (
     FloorMap,
+    HardAnchorCorrection,
+    HardPositionObservation,
     LandmarkCorrection,
     LandmarkCorrectionResult,
     LandmarkObservation,
@@ -32,6 +35,7 @@ from ..landmark.lib.assignment import (
 )
 from ..landmark.lib.coordinates import build_landmark_meter_map
 from ..landmark.lib.timing import evaluate_landmark_timing
+from .lib.history_correction import build_history_candidate
 from .lib.recorder import (
     ParticleFilterStepDiagnostics,
     ParticlePathComparison,
@@ -115,12 +119,15 @@ def run_particle(
     detections: tuple[LandmarkObservation, ...] | None = None,
     ranging_observations: tuple[LandmarkRange, ...] | None = None,
     landmark_settings: BleLandmarkSettings | None = None,
+    history_candidate: bool = False,
+    hard_positions: tuple[HardPositionObservation, ...] = (),
 ) -> TrajectoryResult:
     """準備済みの歩列へ地図拘束を適用する。"""
     diagnostics: list[ParticleFilterStepDiagnostics] = []
     stages: list[ParticleStepStages] = []
     path_comparisons: list[ParticlePathComparison] = []
     landmark_events: list[LandmarkCorrection] = []
+    hard_events: list[HardAnchorCorrection] = []
     runtime_detections = () if detections is None else detections
     runtime_ranging_observations = (
         tuple(item for item in runtime_detections if isinstance(item, LandmarkRange))
@@ -137,6 +144,8 @@ def run_particle(
             prepared.gx_mean,
             prepared.gz_mean,
         )
+    candidate_count = settings.candidate_count
+    assert candidate_count is not None  # 設定構築時に方式別の整数へ解決済み。
     trajectory, lengths, times, all_particles, headings = run_particle_steps(
         prepared.gx_mean,
         prepared.gz_mean,
@@ -171,6 +180,11 @@ def run_particle(
         landmark_anchor_warn_jump_m=settings.landmark_anchor_warn_jump_m,
         landmark_retrofit=settings.landmark_retrofit,
         landmark_events_collector=landmark_events,
+        proposal_method=settings.proposal_method,
+        candidate_count=candidate_count,
+        hard_positions=hard_positions,
+        floormap_floor_id=floormap.floor_id,
+        hard_anchor_events_collector=hard_events,
     )
     if detections is not None and landmark_settings is not None:
         diagnostics, landmark_events = _attach_landmark_timing(
@@ -181,12 +195,30 @@ def run_particle(
             diagnostics,
             landmark_events,
         )
+    uncorrected_trajectory = [list(point) for point in trajectory]
+    for event in hard_events:
+        uncorrected_trajectory[event.step_index] = [event.before_x, event.before_y]
     particle = ParticleFilterResult(
+        hard_anchor_corrections=tuple(hard_events),
+        uncorrected_trajectory=uncorrected_trajectory if hard_events else None,
+        correction_steps=tuple(event.step_index for event in hard_events),
         trajectory=trajectory,
         all_particles=[item for item in all_particles],
         diagnostics=tuple(diagnostics),
         stages=tuple(stages),
         path_comparisons=tuple(path_comparisons),
+        history_candidate=(
+            build_history_candidate(
+                trajectory,
+                stages,
+                floormap,
+                prepared.gx_mean,
+                prepared.gz_mean,
+                landmark_constraints=any(event.applied for event in landmark_events),
+            )
+            if history_candidate and not hard_events
+            else None
+        ),
     )
     landmark = None
     if detections is not None and landmark_settings is not None:

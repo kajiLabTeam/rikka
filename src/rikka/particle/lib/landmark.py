@@ -17,7 +17,7 @@ from collections.abc import Callable
 
 import numpy as np
 
-from ...ble.lib.pathloss import expected_rssi_dbm
+from ...ble.lib.pathloss import expected_rssi_dbm as expected_rssi_dbm
 from ...common.lib.floormap import compute_pixel_coords
 from ...common.lib.models import PathLossModel
 

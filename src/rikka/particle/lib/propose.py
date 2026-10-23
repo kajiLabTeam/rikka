@@ -8,7 +8,8 @@
     particle/lib/runner が元の実行順序どおりに呼び出す。
 処理フロー:
     歩の観測と乱数を使い提案状態を生成し、遷移の歩行可否、運動状態尤度、
-    歩幅尤度を統合してrecovery判定まで行う。
+    歩幅尤度を統合してrecovery判定まで行う。明示指定時のみ、通常モデルの
+    複数候補を因子Gで選択し、平均因子S/Kで親重みを補正する。
 """
 
 import numpy as np
@@ -31,10 +32,13 @@ from ...particle.lib.proposal import (
     _normalize_angle,
     _sample_motion_states,
 )
+from ...particle.lib.relocate import relocate_invalid_particles
 from ...particle.lib.resampling import (
     _effective_sample_size,
 )
-from ...particle.lib.weighting import weight
+from ...particle.lib.weighting import weight, weight_candidate_bank
+from .candidate_bank import ParticleCandidateBank, select_candidate_bank
+from .soft_landmark import record_soft_landmark_diagnostics, soft_landmark_likelihood
 from .state import ParticleRuntime
 
 
@@ -124,25 +128,9 @@ def _resolve_landmark_observation(ctx: ParticleRuntime) -> None:
     ctx.landmark_applied = True
 
 
-def propose(ctx: ParticleRuntime) -> None:
+def _generate_motion_candidate(ctx: ParticleRuntime) -> None:
+    """既存の通常運動モデルから、全親の完全な状態候補を1個ずつ生成する。"""
     assert ctx.particle_heading is not None
-    ctx.motion_posterior = (
-        ctx.prepared_motion_posteriors[ctx.step_number - 1]
-        if ctx.prepared_motion_posteriors is not None
-        else None
-    )
-    ctx.step_heading = ctx.step_heading._replace(
-        selected_heading=ctx.particle_heading, source="particle_evidence_motion"
-    )
-    ctx.particles_before = ctx.particles.copy()
-    ctx.heading_correction_before = ctx.heading_correction.copy()
-    ctx.heading_drift_before = ctx.heading_drift.copy()
-    ctx.stride_scale_before = ctx.stride_scale.copy()
-    ctx.motion_state_before = ctx.motion_state.copy()
-    ctx.diagnostic_motion_state_before = ctx.motion_state_before
-    ctx.weights_before = ctx.weights.copy()
-    ctx.path_log_scores_before = ctx.path_log_score_history[-1].copy()
-    ctx.ess_before_observation = _effective_sample_size(ctx.weights_before)
     ctx.proposed_correction = ctx.heading_correction_before
     ctx.heading_process_sigma = (
         max(ctx.sigma_heading, 0.15 * ctx.motion_posterior.heading_std)
@@ -214,7 +202,6 @@ def propose(ctx: ParticleRuntime) -> None:
     ctx.proposed_particles = ctx.particles_before.copy()
     ctx.proposed_particles[:, 0] += ctx.sl * np.cos(ctx.theta)
     ctx.proposed_particles[:, 1] += ctx.sl * np.sin(ctx.theta)
-    ctx.effective_step_lengths_for_diagnostics = ctx.sl.copy()
     ctx.valid_transition = _evaluate_particle_transitions(
         ctx.particles_before,
         ctx.proposed_particles,
@@ -224,9 +211,10 @@ def propose(ctx: ParticleRuntime) -> None:
         ctx.origin_px,
         ctx.scale,
     )
-    ctx.valid_count = int(np.count_nonzero(ctx.valid_transition))
-    ctx.valid_weight_mask = ctx.valid_transition & (ctx.weights_before > 0.0)
-    ctx.valid_weight_count = int(np.count_nonzero(ctx.valid_weight_mask))
+
+
+def _set_stride_likelihood(ctx: ParticleRuntime) -> None:
+    """現在候補の倍率prior因子を従来の式で計算する。"""
     if ctx.motion_posterior is None:
         ctx.stride_observation_likelihood = np.ones(ctx.n_particles, dtype=float)
     else:
@@ -240,15 +228,149 @@ def propose(ctx: ParticleRuntime) -> None:
                 / ctx.stride_prior_sigma
             )
         )
-    _resolve_landmark_observation(ctx)
-    ctx.posterior_weights = weight(
-        ctx.weights_before,
-        ctx.valid_transition,
-        ctx.stride_observation_likelihood,
-        ctx.state_predictive_likelihoods,
-        ctx.motion_predictive_weight_power,
-        ctx.landmark_likelihood,
+
+
+def _propose_candidate_bank(ctx: ParticleRuntime) -> None:
+    """各親のK候補をGで選択し、親重みに掛ける平均因子を保存する。"""
+    names = (
+        "proposed_particles",
+        "theta",
+        "sl",
+        "proposed_drift",
+        "proposed_stride_scale",
+        "proposed_motion_state",
+        "state_predictive_likelihoods",
+        "particle_base_headings",
+        "particle_step_lengths",
+        "valid_transition",
+        "stride_observation_likelihood",
     )
+    candidates: dict[str, list[np.ndarray]] = {name: [] for name in names}
+    factors = []
+    landmark_factors = []
+    for _ in range(ctx.candidate_count):
+        _generate_motion_candidate(ctx)
+        _set_stride_likelihood(ctx)
+        for name in names:
+            candidates[name].append(getattr(ctx, name).copy())
+        factors.append(
+            weight(
+                np.ones(ctx.n_particles),
+                ctx.valid_transition,
+                ctx.stride_observation_likelihood,
+                ctx.state_predictive_likelihoods,
+                ctx.motion_predictive_weight_power,
+            )
+        )
+        likelihood = soft_landmark_likelihood(ctx, ctx.proposed_particles)
+        landmark_factors.append(
+            np.ones(ctx.n_particles) if likelihood is None else likelihood
+        )
+    bank = {name: np.stack(values, axis=1) for name, values in candidates.items()}
+    base_factors = np.stack(factors, axis=1)
+    all_landmark_factors = np.stack(landmark_factors, axis=1)
+    all_factors = base_factors * all_landmark_factors
+    selected, mean_factors = select_candidate_bank(all_factors, ctx.rng)
+    ctx.candidate_bank = ParticleCandidateBank(
+        positions=bank["proposed_particles"],
+        headings=bank["theta"],
+        step_lengths=bank["sl"],
+        heading_drift=bank["proposed_drift"],
+        stride_scale=bank["proposed_stride_scale"],
+        motion_state=bank["proposed_motion_state"],
+        factors=all_factors,
+        valid_transition=bank["valid_transition"],
+        selected_indices=selected,
+        mean_factors=mean_factors,
+        base_factors=base_factors,
+        landmark_factors=all_landmark_factors,
+    )
+    # 未採用親の枠には診断・既存復旧用に候補0を残し、必ず無効にする。
+    slots = np.arange(ctx.n_particles)
+    safe_selected = np.maximum(selected, 0)
+    for name, values in bank.items():
+        setattr(ctx, name, values[slots, safe_selected].copy())
+    if ctx.candidate_count > 1:
+        ctx.valid_transition &= selected >= 0
+    ctx.relocated_invalid_count = 0
+
+
+def propose(ctx: ParticleRuntime) -> None:
+    assert ctx.particle_heading is not None
+    ctx.motion_posterior = (
+        ctx.prepared_motion_posteriors[ctx.step_number - 1]
+        if ctx.prepared_motion_posteriors is not None
+        else None
+    )
+    ctx.step_heading = ctx.step_heading._replace(
+        selected_heading=ctx.particle_heading, source="particle_evidence_motion"
+    )
+    ctx.particles_before = ctx.particles.copy()
+    ctx.heading_correction_before = ctx.heading_correction.copy()
+    ctx.heading_drift_before = ctx.heading_drift.copy()
+    ctx.stride_scale_before = ctx.stride_scale.copy()
+    ctx.motion_state_before = ctx.motion_state.copy()
+    ctx.diagnostic_motion_state_before = ctx.motion_state_before
+    ctx.weights_before = ctx.weights.copy()
+    ctx.path_log_scores_before = ctx.path_log_score_history[-1].copy()
+    ctx.ess_before_observation = _effective_sample_size(ctx.weights_before)
+    ctx.proposal_history_version = ctx.history_version
+    ctx.candidate_bank = None
+    ctx.landmark_update_count = 0
+    ctx.landmark_observation_count = 0
+    ctx.landmark_floor_fraction = None
+    ctx.landmark_rssi_residual_mean_db = None
+    ctx.landmark_replay_blocked = False
+    if ctx.proposal_method == "candidate-bank":
+        _propose_candidate_bank(ctx)
+    else:
+        _generate_motion_candidate(ctx)
+        # 壁や地図外へ出た粒子は、重み0で捨てる前に前歩位置中心の円内へ戻す。
+        (
+            ctx.proposed_particles,
+            ctx.valid_transition,
+            ctx.relocated_invalid_count,
+        ) = relocate_invalid_particles(
+            ctx.particles_before,
+            ctx.proposed_particles,
+            ctx.valid_transition,
+            ctx.invalid_relocation_radius_m if ctx.proposal_method == "legacy" else 0.0,
+            ctx.invalid_relocation_attempts,
+            ctx.rng,
+            ctx.map_gray,
+            ctx.gx_mean,
+            ctx.gz_mean,
+            ctx.origin_px,
+            ctx.scale,
+        )
+        _set_stride_likelihood(ctx)
+    # 再配置した粒子の実移動量は提案歩幅と一致しないため、診断には提案値では
+    # なく実座標の変位を使う。再配置が無効なら提案歩幅と一致する。
+    ctx.realized_step_lengths = np.linalg.norm(
+        ctx.proposed_particles - ctx.particles_before, axis=1
+    )
+    ctx.effective_step_lengths_for_diagnostics = ctx.realized_step_lengths.copy()
+    ctx.valid_count = int(np.count_nonzero(ctx.valid_transition))
+    ctx.valid_weight_mask = ctx.valid_transition & (ctx.weights_before > 0.0)
+    ctx.valid_weight_count = int(np.count_nonzero(ctx.valid_weight_mask))
+    _resolve_landmark_observation(ctx)
+    if ctx.proposal_method == "candidate-bank":
+        # 選択済み候補の尤度は経路スコアと診断用。親重みへは再乗算しない。
+        ctx.landmark_likelihood = soft_landmark_likelihood(ctx, ctx.proposed_particles)
+    if ctx.candidate_bank is not None and ctx.candidate_count > 1:
+        # 採用候補のGを再乗算せず、全候補の平均S/Kだけを掛ける。
+        ctx.posterior_weights = weight_candidate_bank(
+            ctx.weights_before, ctx.candidate_bank.mean_factors
+        )
+    else:
+        ctx.posterior_weights = weight(
+            ctx.weights_before,
+            ctx.valid_transition,
+            ctx.stride_observation_likelihood,
+            ctx.state_predictive_likelihoods,
+            ctx.motion_predictive_weight_power,
+            ctx.landmark_likelihood,
+        )
     ctx.posterior_weights_for_stages = (
         ctx.posterior_weights.copy() if ctx.recorder.stages_enabled else None
     )
@@ -267,6 +389,10 @@ def propose(ctx: ParticleRuntime) -> None:
         -np.inf,
     )
     ctx.valid_weight_mass = float(ctx.posterior_weights.sum())
+    if ctx.proposal_method == "candidate-bank" and ctx.valid_weight_mass > 0:
+        record_soft_landmark_diagnostics(
+            ctx, ctx.proposed_particles, ctx.posterior_weights
+        )
     ctx.ess_after_observation = (
         _effective_sample_size(ctx.posterior_weights / ctx.valid_weight_mass)
         if ctx.valid_weight_mass > 0.0

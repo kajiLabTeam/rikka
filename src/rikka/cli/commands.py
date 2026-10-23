@@ -50,6 +50,7 @@ from ..common.config import (
     PF_MOTION_PREDICTIVE_WEIGHT_POWER,
     PF_NUM_PARTICLES,
     PF_PATH_SELECTION,
+    PF_PROPOSAL_METHOD,
     PF_STEP_FRAMES_ARROWS,
     PF_STEP_FRAMES_DPI,
     SIDESTEP_LATERAL_RATIO,
@@ -66,7 +67,13 @@ from ..common.lib.floormap import (
     normalize_floormap_gray,
     validate_floormap_origin,
 )
-from ..common.lib.models import FloorMap, GyroBiasResult, Landmark, PreparedPdrSteps
+from ..common.lib.models import (
+    FloorMap,
+    GyroBiasResult,
+    HardPositionObservation,
+    Landmark,
+    PreparedPdrSteps,
+)
 from ..common.settings import (
     BleLandmarkSettings,
     HeadingSettings,
@@ -135,6 +142,7 @@ def run(
     step_frames_arrows: int = PF_STEP_FRAMES_ARROWS,
     step_frames_dpi: int = PF_STEP_FRAMES_DPI,
     save_path_comparison: bool = False,
+    history_candidate: bool = False,
     floormap_path: str | Path = FLOORMAP_PATH,
     origin_px: tuple[int, int] = FLOORMAP_ORIGIN_PX,
     scale: float = FLOORMAP_SCALE,
@@ -161,7 +169,10 @@ def run(
     pf_landmark_mode: str = PF_LANDMARK_MODE,
     pf_landmark_range_weight_power: float = PF_LANDMARK_RANGE_WEIGHT_POWER,
     pf_landmark_retrofit: bool = PF_LANDMARK_RETROFIT,
+    hard_positions: tuple[HardPositionObservation, ...] = (),
+    floormap_floor_id: str | None = None,
     ble_landmark: bool = BLE_LANDMARK_ENABLED,
+    ble_detection_profile: str = "auto",
     ble_data_path: str | Path = BLE_DATA_PATH,
     ble_rssi_threshold: float = BLE_RSSI_THRESHOLD_DBM,
     ble_correction: str = BLE_PDR_CORRECTION_MODE,
@@ -179,14 +190,19 @@ def run(
     ble_retrofit_map_check: str = BLE_RETROFIT_MAP_CHECK,
     ble_retrofit_damp_factors: tuple[float, ...] = BLE_RETROFIT_DAMP_FACTORS,
     ble_landmarks: tuple[Landmark, ...] | None = None,
+    pf_proposal: str = PF_PROPOSAL_METHOD,
+    pf_candidates: int | None = None,
 ) -> pd.DataFrame:
     """後方互換引数を設定へ変換し、解析と成果物保存を実行する。"""
-    if (save_step_frames or save_path_comparison) and not use_particle_filter:
+    if (
+        save_step_frames or save_path_comparison or history_candidate
+    ) and not use_particle_filter:
         raise ValueError("粒子可視化の保存には use_particle_filter=True が必要です。")
-    floormap = FloorMap(str(floormap_path), origin_px, scale)
+    floormap = FloorMap(str(floormap_path), origin_px, scale, floormap_floor_id)
     landmark_settings = (
         BleLandmarkSettings(
             enabled=ble_landmark,
+            detection_profile=ble_detection_profile,
             data_path=ble_data_path,
             rssi_threshold_dbm=ble_rssi_threshold,
             release_margin_db=ble_release_margin,
@@ -207,6 +223,7 @@ def run(
         if ble_landmarks is None
         else BleLandmarkSettings(
             enabled=ble_landmark,
+            detection_profile=ble_detection_profile,
             data_path=ble_data_path,
             rssi_threshold_dbm=ble_rssi_threshold,
             release_margin_db=ble_release_margin,
@@ -274,6 +291,8 @@ def run(
         landmark_mode=pf_landmark_mode,
         landmark_range_weight_power=pf_landmark_range_weight_power,
         landmark_retrofit=pf_landmark_retrofit,
+        proposal_method=pf_proposal,
+        candidate_count=pf_candidates,
     )
     output_settings = OutputSettings(
         plot=plot,
@@ -303,11 +322,13 @@ def run(
             result.prepared,
             floormap,
             particle_settings,
+            hard_positions=hard_positions,
             detections=None if particle_ble is None else particle_ble.detections,
             ranging_observations=(
                 None if particle_ble is None else particle_ble.observations
             ),
-            landmark_settings=landmark_settings,
+            landmark_settings=landmark_settings if ble_landmark else None,
+            history_candidate=history_candidate,
         )
     _print_prepared_summary(result.prepared, pdr_settings)
     output_dir = plot_pipeline.create_output_dir()

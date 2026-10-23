@@ -2,14 +2,12 @@
 
 from dataclasses import replace
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 
 from rikka.common.config import (
     BLE_ANCHOR_WARN_JUMP_M,
-    FLOORMAP_ORIGIN_PX,
-    FLOORMAP_PATH,
-    FLOORMAP_SCALE,
     PF_LANDMARK_LIKELIHOOD_FLOOR,
     PF_LANDMARK_MAX_JUMP_M,
     PF_LANDMARK_MODE,
@@ -19,8 +17,10 @@ from rikka.common.config import (
     PF_LANDMARK_RESET_SPREAD_RATIO,
     PF_LANDMARK_SIGMA_M,
 )
+from rikka.common.lib.floormap import compute_pixel_coords
 from rikka.common.lib.models import (
     FloorMap,
+    Landmark,
     LandmarkDetection,
     LandmarkRange,
     TrajectoryResult,
@@ -38,13 +38,36 @@ from rikka.pdr.pipeline import run_pdr
 
 
 @pytest.fixture(scope="module")
-def particle_landmark_results() -> dict[str, TrajectoryResult]:
+def particle_landmark_results(
+    tmp_path_factory: pytest.TempPathFactory,
+    legacy_particle_profile,
+) -> dict[str, TrajectoryResult]:
     """固定入力・seedでランドマークなし、none、observationを実行する。"""
     data_dir = "input/sensor_data/natsuki/1turn_rightsidestep_3turn_leftsidestep"
     df_acc, df_gyro = load_sensor_data(data_dir)
     prepared = run_pdr(PdrSettings(), df_acc, df_gyro).prepared
-    floormap = FloorMap(FLOORMAP_PATH, FLOORMAP_ORIGIN_PX, FLOORMAP_SCALE)
-    landmark_settings = BleLandmarkSettings()
+    # 観測/reset/anchorの契約を、変更される実地図・既定BLE配置から分離する。
+    map_path = tmp_path_factory.mktemp("legacy_landmark") / "map.png"
+    plt.imsave(
+        map_path, np.ones((600, 600), dtype=np.uint8), cmap="gray", vmin=0, vmax=1
+    )
+    floormap = FloorMap(str(map_path), (300, 300), 0.5)
+    near = np.asarray(prepared.trajectory[18]) + [3.0, 0.0]
+    meters = np.asarray([near, [20.0, 0.0], [0.0, 60.0]])
+    xs, ys = compute_pixel_coords(
+        meters[:, 0],
+        meters[:, 1],
+        prepared.gx_mean,
+        prepared.gz_mean,
+        floormap.origin_px,
+        floormap.scale,
+    )
+    landmark_settings = BleLandmarkSettings(
+        landmarks=tuple(
+            Landmark(f"beacon_{i + 1}", float(x), float(y))
+            for i, (x, y) in enumerate(zip(xs, ys, strict=True))
+        )
+    )
     anchor_settings = replace(
         landmark_settings,
         landmarks=tuple(
@@ -86,7 +109,13 @@ def particle_landmark_results() -> dict[str, TrajectoryResult]:
         "beacon_2",
         -45.0,
     )
-    base_settings = {"count": 120, "seed": 0}
+    # 実BLE観測に対応する従来方式の挙動を、標準方式の変更から独立に検証する。
+    base_settings = {
+        "count": 120,
+        "seed": 0,
+        "proposal_method": "legacy",
+        "candidate_count": 1,
+    }
     return {
         "baseline": run_particle(
             prepared,
@@ -141,8 +170,7 @@ def particle_landmark_results() -> dict[str, TrajectoryResult]:
             ParticleSettings(
                 landmark_mode="hybrid",
                 landmark_reset_min_distance_m=1000.0,
-                count=120,
-                seed=0,
+                **base_settings,
             ),
             detections=(hybrid_detection,),
             landmark_settings=landmark_settings,
@@ -153,8 +181,7 @@ def particle_landmark_results() -> dict[str, TrajectoryResult]:
             ParticleSettings(
                 landmark_mode="reset",
                 landmark_reset_min_distance_m=1000.0,
-                count=120,
-                seed=0,
+                **base_settings,
             ),
             detections=(detection,),
             landmark_settings=landmark_settings,
@@ -164,8 +191,7 @@ def particle_landmark_results() -> dict[str, TrajectoryResult]:
             floormap,
             ParticleSettings(
                 landmark_mode="observation",
-                count=120,
-                seed=0,
+                **base_settings,
             ),
             detections=(far_detection,),
             landmark_settings=anchor_settings,
@@ -175,8 +201,7 @@ def particle_landmark_results() -> dict[str, TrajectoryResult]:
             floormap,
             ParticleSettings(
                 landmark_mode="observation",
-                count=120,
-                seed=0,
+                **base_settings,
             ),
             detections=(far_detection,),
             landmark_settings=anchor_heading_settings,

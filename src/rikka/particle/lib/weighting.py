@@ -8,6 +8,7 @@
     particle runner の観測更新段階から呼び出す。
 処理フロー:
     事前重みへ既存3因子を同じ順で乗算し、指定時だけランドマーク尤度を掛ける。
+    有限候補方式では既に集約した平均因子S/Kだけを事前重みへ掛ける。
 """
 
 import numpy as np
@@ -31,3 +32,8 @@ def weight(
     if landmark_likelihood is not None:
         posterior = posterior * landmark_likelihood
     return np.asarray(posterior, dtype=float)
+
+
+def weight_candidate_bank(prior: np.ndarray, mean_factors: np.ndarray) -> np.ndarray:
+    """有限候補の平均因子だけを掛け、選択されたGの二重適用を避ける。"""
+    return np.asarray(prior * mean_factors, dtype=float)

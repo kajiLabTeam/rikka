@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from ...common.lib.models import (
+    HardAnchorCorrection,
+    HardPositionObservation,
     Landmark,
     LandmarkCorrection,
     LandmarkObservation,
@@ -36,6 +38,7 @@ from .recorder import (
 )
 
 if TYPE_CHECKING:
+    from .candidate_bank import ParticleCandidateBank
     from .recovery.checkpoint import _CheckpointReplayResult
     from .recovery.local import _RecoveryResult
 
@@ -86,6 +89,8 @@ class ParticleRuntime:
     recovery_valid_ratio: float
     recovery_heading_sigma: float
     recovery_max_attempts: int
+    invalid_relocation_radius_m: float
+    invalid_relocation_attempts: int
     diagnostics_collector: list[ParticleFilterStepDiagnostics] | None
     stage_collector: list[ParticleStepStages] | None
     path_comparison_collector: list[ParticlePathComparison] | None
@@ -107,7 +112,31 @@ class ParticleRuntime:
     landmark_anchor_warn_jump_m: float
     landmark_retrofit: bool
     landmark_events_collector: list[LandmarkCorrection] | None
+    proposal_method: str = "legacy"
+    candidate_count: int = 1
+    hard_positions: tuple[HardPositionObservation, ...] = ()
+    floormap_floor_id: str | None = None
+    hard_anchor_events_collector: list[HardAnchorCorrection] | None = None
+    last_hard_anchor_step: int = field(init=False, default=0)
+    hard_anchor_by_step: dict[int, HardPositionObservation] = field(
+        init=False, default_factory=dict
+    )
+    hard_anchor_events: list[HardAnchorCorrection] = field(
+        init=False, default_factory=list
+    )
+    landmark_replay_blocked: bool = field(init=False, default=False)
+    landmark_update_count: int = field(init=False, default=0)
+    landmark_floor_fraction: float | None = field(init=False, default=None)
+    landmark_observation_count: int = field(init=False, default=0)
+    landmark_rssi_residual_mean_db: float | None = field(init=False, default=None)
+    hard_current_reversals: int = field(init=False, default=0)
+    hard_sequence_reversals: int = field(init=False, default=0)
+    hard_current_prefix: list[list[float]] = field(init=False, default_factory=list)
+    hard_sequence_prefix: list[list[float]] = field(init=False, default_factory=list)
 
+    candidate_bank: ParticleCandidateBank | None = field(init=False)
+    history_version: int = field(init=False, default=0)
+    proposal_history_version: int = field(init=False, default=0)
     adaptive_recovery_scale: bool = field(init=False)
     adaptive_stride_state: bool = field(init=False)
     all_particles: np.ndarray = field(init=False)
@@ -124,6 +153,8 @@ class ParticleRuntime:
     diagnostic_motion_state_before: np.ndarray = field(init=False)
     diagnostics_start_index: int = field(init=False)
     effective_heading_rejuvenation_sigma: float = field(init=False)
+    relocated_invalid_count: int = field(init=False)
+    realized_step_lengths: np.ndarray = field(init=False)
     effective_rejuvenation_sigma: float = field(init=False)
     effective_step_lengths_for_diagnostics: np.ndarray = field(init=False)
     effective_stride_init_sigma: float = field(init=False)

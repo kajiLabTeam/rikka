@@ -58,6 +58,7 @@ from .config import (
     HEADING_METHOD,
     INITIAL_DIRECTION,
     MOTION_ESTIMATION,
+    PF_CANDIDATE_COUNT,
     PF_LANDMARK_LIKELIHOOD_FLOOR,
     PF_LANDMARK_MAX_JUMP_M,
     PF_LANDMARK_MODE,
@@ -71,6 +72,7 @@ from .config import (
     PF_MOTION_PREDICTIVE_WEIGHT_POWER,
     PF_NUM_PARTICLES,
     PF_PATH_SELECTION,
+    PF_PROPOSAL_METHOD,
     PF_STEP_FRAMES_ARROWS,
     PF_STEP_FRAMES_DPI,
     SIDESTEP_LATERAL_RATIO,
@@ -236,8 +238,33 @@ class ParticleSettings:
     landmark_reset_heading_sigma: float = PF_LANDMARK_RESET_HEADING_SIGMA
     landmark_anchor_warn_jump_m: float = BLE_ANCHOR_WARN_JUMP_M
     landmark_retrofit: bool = PF_LANDMARK_RETROFIT
+    proposal_method: str = PF_PROPOSAL_METHOD
+    candidate_count: int | None = None
 
     def __post_init__(self) -> None:
+        validate_choice(
+            "proposal_method",
+            self.proposal_method,
+            ("legacy", "no-relocation", "candidate-bank"),
+        )
+        # 候補数を省略した場合だけ方式に合わせて補完し、明示された不正値は拒否する。
+        if self.candidate_count is None:
+            object.__setattr__(
+                self,
+                "candidate_count",
+                PF_CANDIDATE_COUNT if self.proposal_method == "candidate-bank" else 1,
+            )
+        if (
+            isinstance(self.candidate_count, bool)
+            or not isinstance(self.candidate_count, int)
+            or self.candidate_count < 1
+        ):
+            raise ValueError("candidate_count は正の整数を指定してください。")
+        if self.proposal_method != "candidate-bank" and self.candidate_count != 1:
+            raise ValueError(
+                "candidate_count != 1 は proposal_method='candidate-bank' "
+                "の場合だけ指定できます。"
+            )
         validate_scale(self.scale)
         if self.count <= 0:
             raise ValueError("particle_count は正の整数を指定してください。")
@@ -365,6 +392,7 @@ class BleLandmarkSettings:
     detect_min_samples: int = BLE_DETECT_MIN_SAMPLES
     detect_cooldown_s: float = BLE_DETECT_COOLDOWN_S
     detect_min_prominence_db: float = BLE_DETECT_MIN_PROMINENCE_DB
+    detection_profile: str = "auto"
     correction_mode: str = BLE_PDR_CORRECTION_MODE
     preflight_mode: str = BLE_PREFLIGHT_MODE
     max_correction_m: float = BLE_MAX_CORRECTION_M
@@ -384,6 +412,11 @@ class BleLandmarkSettings:
     )
 
     def __post_init__(self) -> None:
+        validate_choice(
+            "ble_detection_profile",
+            self.detection_profile,
+            ("auto", "measured", "synthetic"),
+        )
         if not np.isfinite(self.rssi_threshold_dbm):
             raise ValueError("rssi_threshold_dbm は有限な値を指定してください。")
         validate_non_negative_parameter("release_margin_db", self.release_margin_db)

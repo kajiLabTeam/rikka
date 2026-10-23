@@ -7,14 +7,15 @@
     ``ble.lib`` の loader / detection、``common.settings.BleLandmarkSettings``、
     ``common.lib.models.LandmarkDetection`` を使用する。
 利用先:
-    ``pdr.pipeline.run_pdr`` が通常PDR補正の入力に使用する。将来は
-    particle filter が同じ検出列を観測尤度の入力として利用できる。
+    PDRとparticleのpipelineが検出列・測距列を補正や観測尤度に利用する。
 処理フロー:
     設定が無効なら ``None`` を返し、有効なら CSV 読み込みと閾値判定を
-    行って検出列を返す。
+    行って検出列を返す。検出profileにより実測と合成の条件を分離する。
 """
 
+import json
 from dataclasses import replace
+from pathlib import Path
 
 from ..common.config import (
     BLE_PATH_LOSS_N,
@@ -30,7 +31,10 @@ from ..common.lib.models import (
 )
 from ..common.settings import BleLandmarkSettings
 from .lib.detection import detect_landmarks, smoothed_rssi_at_detection
-from .lib.loader import is_logger_ble_data, load_ble_observations
+from .lib.loader import (
+    is_logger_ble_data,
+    load_ble_observations,
+)
 from .lib.pathloss import rssi_sigma_to_distance_sigma_m, rssi_to_distance_m
 
 
@@ -79,6 +83,34 @@ def _to_range(
     )
 
 
+def _uses_measured_detection(settings: BleLandmarkSettings) -> bool:
+    """形式とは別に実測profileを解決し、旧合成CSVの互換性を保つ。
+
+    autoではThingsup形式または同じ計測フォルダのBLE metadataを実測の根拠に
+    する。配置を持たない標準CSVは由来を断定せず従来条件を保ち、利用者が
+    measuredを明示すれば形式によらず指定した検出条件を使用する。
+    """
+    if settings.detection_profile != "auto":
+        return settings.detection_profile == "measured"
+    if is_logger_ble_data(settings.data_path):
+        return True
+    metadata_path = Path(settings.data_path).parent / "metadata.json"
+    if not metadata_path.is_file():
+        return False
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(
+            f"BLE検出profile用metadataを読み込めません: {metadata_path}"
+        ) from exc
+    # 配置の選択・検証は入力境界で済んでいる。ここでは実測の由来だけを判定する。
+    ble = metadata.get("ble") if isinstance(metadata, dict) else None
+    configuration = ble.get("configuration") if isinstance(ble, dict) else None
+    return isinstance(configuration, dict) and isinstance(
+        configuration.get("beacons"), list
+    )
+
+
 def run_ble_ranging_input(settings: BleLandmarkSettings) -> BleRangingInput | None:
     """検出イベントと座標確定ビーコンの全測距観測を分離して返す。"""
     if not settings.enabled:
@@ -87,7 +119,7 @@ def run_ble_ranging_input(settings: BleLandmarkSettings) -> BleRangingInput | No
     known = settings.landmark_map()
     detection_settings = (
         settings
-        if is_logger_ble_data(settings.data_path)
+        if _uses_measured_detection(settings)
         else replace(
             settings,
             detect_min_samples=1,

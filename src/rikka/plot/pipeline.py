@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 
 from ..common.config import SAMPLING_RATE
-from ..common.lib.models import TrajectoryResult
+from ..common.lib.models import FloorMap, StepCandidateDiagnostic, TrajectoryResult
 from ..common.settings import OutputSettings, ParticleSettings, PdrSettings
 from ..particle.lib.recorder import ParticleFilterStepDiagnostics
 from .lib.animation import plot_particle_filter_trajectory, save_particle_animation
@@ -27,6 +27,7 @@ from .lib.frames import (
     save_particle_path_comparison,
     save_particle_step_frames,
 )
+from .lib.history import save_history_comparison, save_history_csv
 from .lib.outputs import (
     _build_direction_posteriors_dataframe,
     _build_gyro_bias_dataframe,
@@ -55,6 +56,14 @@ def write_outputs(result: TrajectoryResult, output_dir: Path) -> pd.DataFrame:
     prepared = result.prepared
 
     dataframe = _build_trajectory_dataframe(result.trajectory, result.t_at_steps)
+    if result.particle is not None and result.particle.hard_anchor_corrections:
+        hard_steps = set(result.particle.correction_steps)
+        dataframe["step"] = np.arange(1, len(dataframe) + 1)
+        dataframe["segment_id"] = np.cumsum(
+            [step in hard_steps for step in range(1, len(dataframe) + 1)]
+        )
+        dataframe["is_position_correction"] = dataframe["step"].isin(hard_steps)
+        dataframe["absolute_timestamp_s"] = result.t_at_steps
     _write_csv(dataframe, output_dir / "trajectory.csv", "Trajectory")
     _write_csv(
         pd.DataFrame(
@@ -86,6 +95,15 @@ def write_outputs(result: TrajectoryResult, output_dir: Path) -> pd.DataFrame:
         output_dir / "step_length_observations.csv",
         "Step length observations",
     )
+    if prepared.step_detection.method == "adaptive_peak":
+        _write_csv(
+            pd.DataFrame(
+                [item._asdict() for item in prepared.step_detection.diagnostics],
+                columns=list(StepCandidateDiagnostic._fields),
+            ),
+            output_dir / "step_detection_diagnostics.csv",
+            "Step detection diagnostics",
+        )
     if prepared.motion_posteriors:
         _write_csv(
             _build_motion_posteriors_dataframe(prepared.motion_posteriors),
@@ -114,6 +132,8 @@ def write_outputs(result: TrajectoryResult, output_dir: Path) -> pd.DataFrame:
             "Landmark corrections",
         )
     if result.particle is not None:
+        if result.particle.hard_anchor_corrections:
+            _write_hard_anchor_outputs(result, output_dir)
         columns = [field.name for field in fields(ParticleFilterStepDiagnostics)]
         _write_csv(
             pd.DataFrame(
@@ -123,7 +143,58 @@ def write_outputs(result: TrajectoryResult, output_dir: Path) -> pd.DataFrame:
             output_dir / "particle_diagnostics.csv",
             "Particle diagnostics",
         )
+        if result.particle.history_candidate is not None:
+            save_history_csv(result.particle.history_candidate, output_dir)
+            print(f"Particle history candidate saved to {output_dir}")
     return dataframe
+
+
+def _write_hard_anchor_outputs(result: TrajectoryResult, output_dir: Path) -> None:
+    """歩行辺と位置訂正を分離し、補正直前ノードの診断列も保存する。"""
+    assert result.particle is not None
+    particle = result.particle
+    _write_csv(
+        pd.DataFrame([asdict(event) for event in particle.hard_anchor_corrections]),
+        output_dir / "hard_anchor_corrections.csv",
+        "Hard anchor corrections",
+    )
+    raw = particle.uncorrected_trajectory
+    assert raw is not None
+    _write_csv(
+        _build_trajectory_dataframe(raw, result.t_at_steps),
+        output_dir / "trajectory_before_anchor_nodes.csv",
+        "Before-anchor nodes",
+    )
+    starts = np.asarray(result.trajectory[:-1])
+    walking_ends = np.asarray(raw[1:])
+    targets = np.asarray(result.trajectory[1:])
+    corrections = np.linalg.norm(targets - walking_ends, axis=1)
+    walks = np.linalg.norm(walking_ends - starts, axis=1)
+    _write_csv(
+        pd.DataFrame(
+            {
+                "step": np.arange(1, len(walks) + 1),
+                "timestamp_s": result.t_at_steps,
+                "start_x": starts[:, 0],
+                "start_y": starts[:, 1],
+                "walk_end_x": walking_ends[:, 0],
+                "walk_end_y": walking_ends[:, 1],
+                "corrected_end_x": targets[:, 0],
+                "corrected_end_y": targets[:, 1],
+                "walking_distance_m": walks,
+                "position_correction_m": corrections,
+                "is_position_correction": np.isin(
+                    np.arange(1, len(walks) + 1), particle.correction_steps
+                ),
+            }
+        ),
+        output_dir / "trajectory_segments.csv",
+        "Trajectory segments",
+    )
+    print(
+        f"Walking distance: {walks.sum():.3f} m; "
+        f"position corrections: {corrections.sum():.3f} m"
+    )
 
 
 def _write_csv(dataframe: pd.DataFrame, path: Path, label: str) -> None:
@@ -198,6 +269,7 @@ def _render_trajectory(
             output_dir=output_dir,
             step_headings=result.step_headings,
             landmark=result.landmark,
+            hard_corrections=result.particle.hard_anchor_corrections,
         )
         return
     plot_trajectory(
@@ -223,6 +295,16 @@ def _render_particle_artifacts(
     assert result.particle is not None
     prepared = result.prepared
     visualization_paths: list[Path] = []
+    if result.particle.history_candidate is not None:
+        path = output_dir / "particle_history_comparison.png"
+        save_history_comparison(
+            result.particle.history_candidate,
+            FloorMap(str(settings.floormap_path), settings.origin_px, settings.scale),
+            prepared.gx_mean,
+            prepared.gz_mean,
+            path,
+        )
+        visualization_paths.append(path)
     if output.save_step_frames:
         visualization_paths.extend(
             save_particle_step_frames(
@@ -270,8 +352,9 @@ def _render_particle_artifacts(
             floormap_path=settings.floormap_path,
             origin_px=settings.origin_px,
             scale=settings.scale,
-            output_path=output_dir / "particle_filter.webm",
+            output_path=output_dir / "particle_filter.mp4",
             landmark=result.landmark,
+            hard_corrections=result.particle.hard_anchor_corrections,
         )
 
 

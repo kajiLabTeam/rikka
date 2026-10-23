@@ -18,14 +18,14 @@ from math import isfinite
 # Data directory path
 # Change this path to use different input data
 
-DATA_DIR = "input/sensor_data/hiroto/hiroto_1turn_rightsidestep_3turn_leftsidestep"
+DATA_DIR = "input/1021日計測データ/1021_計測3回目"
 
 # フロアマップ設定
 # 背景として表示するフロアマップ画像のパス
 FLOORMAP_PATH = "input/Floormap_building14_5floor.png"
 # 軌跡の起点（原点）がフロアマップ上で対応するピクセル座標 (x_px, y_px)
 # 実際の歩行開始位置に合わせて調整すること
-FLOORMAP_ORIGIN_PX: tuple[int, int] = (2050, 400)
+FLOORMAP_ORIGIN_PX: tuple[int, int] = (2972, 245)
 # 1ピクセルあたりのメートル数（1px = 1cm = 0.01m）
 
 FLOORMAP_SCALE = 0.01
@@ -85,7 +85,8 @@ PEAK_HEIGHT = 1.0
 # ステップ検出手法
 # "peak": 既存の線形加速度ノルムピーク検出
 # "paper_vertical_threshold": 論文方式に寄せた上下加速度閾値による1歩区間抽出
-STEP_DETECTION_METHOD = "peak"
+# "adaptive_peak": 局所周期に応じて実時刻で近接ピークを除外（実験的・オフライン）
+STEP_DETECTION_METHOD = "adaptive_peak"
 
 # 論文寄せステップ検出のパラメータ
 # 上下加速度の接地インパルス候補を軽く平滑化して閾値判定する
@@ -166,22 +167,36 @@ K_FORWARD = 9.0
 
 # パーティクルフィルタ設定
 PF_NUM_PARTICLES = 500
-PF_SIGMA_INIT_HEADING = 0.03  # 初期方向ばらつき [rad]
-PF_SIGMA_HEADING = 0.01  # ステップごとの方位角ドリフト [rad/step]
+
+# 標準のPF候補生成。legacyは明示指定で引き続き利用できる。
+PF_PROPOSAL_METHOD = "candidate-bank"
+PF_CANDIDATE_COUNT = 8
+# 方位ばらつきは「おおむね -30〜+30 度」を 2シグマ相当の範囲として設計する。
+# 初期値と1歩ごとの σ は AR(1) の定常標準偏差が約 15 度になるよう選んだ。
+PF_SIGMA_INIT_HEADING = 0.26  # 初期方向ばらつき [rad]（約 14.9 度）
+PF_SIGMA_HEADING = 0.14  # ステップごとの方位角ドリフト [rad/step]（約 8.0 度）
 PF_SIGMA_STEP_LENGTH_RATIO = 0.01  # 永続倍率で説明できない歩ごとの歩幅ノイズ
-PF_STRIDE_SCALE_PRIOR_MEAN = 1.03  # 正解軌跡長と決定論的歩幅合計から得た事前中心
-PF_STRIDE_SCALE_INIT_SIGMA = 0.05  # 粒子ごとの初期歩幅倍率ばらつき
+PF_STRIDE_SCALE_PRIOR_MEAN = 1.25  # 1021・WithBLEの8計測比較で採用したPF事前中心
+# 倍率の初期分布は事前中心の周囲へ広げ、下記MIN/MAXでクリップする。
+# 中心1.25は上限1.30に近いため、実際の初期分布は非対称になる。
+# 初期 σ と1歩ごとの σ は、保持率 0.995 の AR(1) 定常標準偏差が約 0.10 に
+# なるよう選び、粒子群が時間とともに事前中心へ潰れないようにする。
+PF_STRIDE_SCALE_INIT_SIGMA = 0.10  # 粒子ごとの初期歩幅倍率ばらつき
 PF_STRIDE_SCALE_RETENTION = 0.995  # 学習した歩幅倍率偏差の1歩ごとの保持率
-PF_STRIDE_SCALE_PROCESS_SIGMA = 0.002  # 歩幅倍率の1歩ごとの変動
-PF_STRIDE_SCALE_REJUVENATION_SIGMA = 0.003  # 再標本化後の歩幅倍率多様化
-PF_STRIDE_SCALE_MIN = 0.90  # 歩幅倍率の下限
-PF_STRIDE_SCALE_MAX = 1.15  # 歩幅倍率の上限
+PF_STRIDE_SCALE_PROCESS_SIGMA = 0.010  # 歩幅倍率の1歩ごとの変動
+PF_STRIDE_SCALE_REJUVENATION_SIGMA = 0.015  # 再標本化後の歩幅倍率多様化
+PF_STRIDE_SCALE_MIN = 0.80  # 歩幅倍率の下限
+PF_STRIDE_SCALE_MAX = 1.30  # 歩幅倍率の上限
 PF_HEADING_DRIFT_RETENTION = 0.85  # 通常方位ドリフトの1歩ごとの保持率
-PF_RESAMPLE_ESS_RATIO = 0.5  # ESSが粒子数に占める割合を下回ると再標本化
-PF_REJUVENATION_SIGMA_HEADING = 0.009  # 再標本化後の方位多様化の上限 [rad]
+PF_RESAMPLE_ESS_RATIO = 0.5  # ESSが粒子数のこの割合未満なら全粒子を再標本化
+PF_REJUVENATION_SIGMA_HEADING = 0.12  # 再標本化後の方位多様化の上限 [rad]
 PF_STEP_FRAMES_ARROWS = 40  # 段階別画像に描く重み上位の方位矢印数
 PF_STEP_FRAMES_DPI = 100  # 段階別画像と代表軌跡比較図の既定解像度
 PF_RECOVERY_VALID_RATIO = 0.05  # 有効な重み付き粒子率が下回ると復旧
+# 歩行不可能領域へ落ちた粒子を、前歩位置を中心とする正円の歩行可能範囲へ
+# 一様分布で再配置する半径 [m]。0 を指定すると再配置せず従来どおり重み0で捨てる。
+PF_INVALID_RELOCATION_RADIUS_M = 5.0
+PF_INVALID_RELOCATION_ATTEMPTS = 20  # 円内の歩行可能点を引くまでの最大試行回数
 PF_RECOVERY_HEADING_SIGMA = 0.08  # local recoveryの方位分散 [rad]
 PF_RECOVERY_MAX_ATTEMPTS = 5  # 試行する候補生成段階の上限（実装は最大2段）
 PF_MOTION_DISPLACEMENT_FULL_CONFIDENCE_M = 0.08
@@ -251,11 +266,12 @@ BLE_PDR_CORRECTION_MODE = "snap"
 
 # ランドマークとして扱う BLE ビーコンのフロアマップ上の既知座標
 # (beacon_id, pixel_x, pixel_y) の並び。--origin-px と同じ画像左上原点の
-# ピクセル座標で設定する。既定値は各廊下の中心付近に置いた歩行可能画素。
+# ピクセル座標で設定する。既定値は現在地図上の合成サンプル用の歩行可能点。
+# 実測BLEの配置を表すものではなく、実測時はmetadata/位置CSVを指定する。
 BLE_LANDMARKS_PX: tuple[tuple[str, float, float], ...] = (
     ("beacon_1", 2056, 2400),
-    ("beacon_2", 750, 1479),
-    ("beacon_3", 2056, 700),
+    ("beacon_2", 1450, 1479),
+    ("beacon_3", 2974, 700),
 )
 
 # 通過地点の構造から位置・方位を確定できるランドマークの追加情報。

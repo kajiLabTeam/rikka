@@ -40,7 +40,7 @@ BLE_PREFLIGHT_MODES = ("warn", "error", "off")
 BLE_SAMPLE_MODES = ("distance", "time")
 BLE_SAMPLE_SOURCES = ("pdr", "truth")
 STEP_LENGTH_METHODS = ("weinberg", "forward")
-STEP_DETECTION_METHODS = ("peak", "paper_vertical_threshold")
+STEP_DETECTION_METHODS = ("peak", "paper_vertical_threshold", "adaptive_peak")
 GYRO_BIAS_METHODS = (
     "prewalk_guarded",
     "zero",

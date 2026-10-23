@@ -9,7 +9,8 @@
 処理フロー:
     確定ランドマークでは距離上限によらず既知位置へ粒子を再配置し、通常のreset方式
     では既存ガードの範囲内だけ再配置する。それ以外の地図違反時は局所復旧、checkpoint
-    再生、fallback、位置保持を順に試し、通常経路ではESSに基づいて再標本化する。
+    再生、fallback、位置保持を順に試す。通常経路はESSが閾値未満なら全粒子を
+    再標本化し、それ以外では生存粒子を保持して重み0の枠だけを補充する。
 """
 
 import sys
@@ -30,8 +31,29 @@ from .recovery.apply import (
     _try_checkpoint_replay,
     _try_local_recovery,
 )
-from .resampling import _systematic_resample
+from .resampling import _effective_sample_size, _systematic_resample
+from .soft_landmark import record_soft_landmark_diagnostics, soft_landmark_likelihood
 from .state import ParticleRuntime
+
+
+def _apply_recovery_landmark_observation(ctx: ParticleRuntime) -> None:
+    """復旧で置き換えた経験的集合に、現在歩の観測を一度だけ反映する。"""
+    if ctx.proposal_method != "candidate-bank":
+        return
+    likelihood = soft_landmark_likelihood(ctx, ctx.particles)
+    if likelihood is None:
+        return
+    posterior = ctx.weights * likelihood
+    mass = float(posterior.sum())
+    if mass <= 0 or not np.isfinite(mass):
+        raise RuntimeError("BLE観測を支持する復旧粒子がありません")
+    ctx.weights = posterior / mass
+    ctx.posterior_weights = ctx.weights.copy()
+    ctx.valid_weight_mass = mass
+    ctx.ess_after_observation = _effective_sample_size(ctx.weights)
+    with np.errstate(divide="ignore"):
+        ctx.next_path_log_scores = ctx.next_path_log_scores + np.log(likelihood)
+    record_soft_landmark_diagnostics(ctx, ctx.particles, ctx.weights)
 
 
 def _reset_recovery_diagnostics(ctx: ParticleRuntime) -> None:
@@ -50,57 +72,65 @@ def _reset_recovery_diagnostics(ctx: ParticleRuntime) -> None:
 
 
 def _resample_or_keep(ctx: ParticleRuntime) -> None:
-    """正規化済み事後重みを再標本化するか、そのまま採用する。"""
+    """低ESSでは全粒子、それ以外では死亡枠だけを再標本化する。"""
     if ctx.valid_weight_mass <= 0.0:
         raise RuntimeError("内部エラー: recoveryせず粒子重みが全滅しました")
     ctx.posterior_weights /= ctx.valid_weight_mass
-    if ctx.ess_after_observation < ctx.resample_ess_ratio * ctx.n_particles:
+    dead = ctx.posterior_weights == 0.0
+    dead_count = int(np.count_nonzero(dead))
+    full_resample = ctx.ess_after_observation < ctx.resample_ess_ratio * ctx.n_particles
+    replaced = np.ones(ctx.n_particles, dtype=bool) if full_resample else dead
+    replaced_count = int(np.count_nonzero(replaced))
+    ctx.indices = np.arange(ctx.n_particles, dtype=int)
+    if full_resample:
         ctx.indices = _systematic_resample(ctx.posterior_weights, ctx.rng)
-        ctx.particles = ctx.proposed_particles[ctx.indices]
-        ctx.heading_correction = ctx.proposed_correction[ctx.indices]
-        ctx.heading_drift = ctx.proposed_drift[ctx.indices]
-        ctx.stride_scale = ctx.proposed_stride_scale[ctx.indices]
-        ctx.motion_state = ctx.proposed_motion_state[ctx.indices]
-        if ctx.effective_heading_rejuvenation_sigma > 0.0:
-            ctx.heading_drift = _normalize_angle(
-                ctx.heading_drift
-                + ctx.rng.normal(
-                    0,
-                    ctx.effective_heading_rejuvenation_sigma,
-                    ctx.n_particles,
-                )
-            )
-        ctx.effective_rejuvenation_sigma = (
-            max(ctx.stride_scale_rejuvenation_sigma, 0.02)
-            if ctx.adaptive_stride_state
-            else ctx.stride_scale_rejuvenation_sigma
+    elif dead_count:
+        ctx.indices[dead] = _systematic_resample(
+            ctx.posterior_weights, ctx.rng, sample_count=dead_count
         )
-        if ctx.effective_rejuvenation_sigma > 0.0:
-            ctx.stride_scale = np.clip(
-                ctx.stride_scale
-                + ctx.stride_rng.normal(
-                    0.0,
-                    ctx.effective_rejuvenation_sigma,
-                    ctx.n_particles,
-                ),
-                ctx.effective_stride_scale_min,
-                ctx.effective_stride_scale_max,
-            )
+
+    # 全体再標本化以外では、生存枠は自分自身を親とし、死亡枠だけ置き換える。
+    ctx.particles = ctx.proposed_particles[ctx.indices].copy()
+    ctx.heading_correction = ctx.proposed_correction[ctx.indices].copy()
+    ctx.heading_drift = ctx.proposed_drift[ctx.indices].copy()
+    ctx.stride_scale = ctx.proposed_stride_scale[ctx.indices].copy()
+    ctx.motion_state = ctx.proposed_motion_state[ctx.indices].copy()
+    ctx.parent_indices = ctx.indices
+    ctx.effective_step_lengths_for_diagnostics = ctx.realized_step_lengths[
+        ctx.indices
+    ].copy()
+    ctx.next_path_log_scores = ctx.candidate_path_log_scores[ctx.indices].copy()
+    if full_resample:
         ctx.weights = np.full(ctx.n_particles, 1.0 / ctx.n_particles)
-        ctx.parent_indices = ctx.indices
-        ctx.effective_step_lengths_for_diagnostics = ctx.sl[ctx.indices]
-        ctx.next_path_log_scores = ctx.candidate_path_log_scores[ctx.indices]
-        ctx.resampled = True
+    else:
+        # 部分補充では親の重みを元の枠と複製先で分け、合計を維持する。
+        offspring_counts = np.bincount(ctx.indices, minlength=ctx.n_particles)
+        ctx.weights = ctx.posterior_weights[ctx.indices] / offspring_counts[ctx.indices]
+    if not replaced_count:
         return
 
-    ctx.particles = ctx.proposed_particles
-    ctx.heading_correction = ctx.proposed_correction
-    ctx.heading_drift = ctx.proposed_drift
-    ctx.stride_scale = ctx.proposed_stride_scale
-    ctx.motion_state = ctx.proposed_motion_state
-    ctx.weights = ctx.posterior_weights
-    ctx.parent_indices = np.arange(ctx.n_particles, dtype=int)
-    ctx.next_path_log_scores = ctx.candidate_path_log_scores
+    if ctx.effective_heading_rejuvenation_sigma > 0.0:
+        ctx.heading_drift[replaced] = _normalize_angle(
+            ctx.heading_drift[replaced]
+            + ctx.rng.normal(
+                0, ctx.effective_heading_rejuvenation_sigma, replaced_count
+            )
+        )
+    ctx.effective_rejuvenation_sigma = (
+        max(ctx.stride_scale_rejuvenation_sigma, 0.02)
+        if ctx.adaptive_stride_state
+        else ctx.stride_scale_rejuvenation_sigma
+    )
+    if ctx.effective_rejuvenation_sigma > 0.0:
+        ctx.stride_scale[replaced] = np.clip(
+            ctx.stride_scale[replaced]
+            + ctx.stride_rng.normal(
+                0.0, ctx.effective_rejuvenation_sigma, replaced_count
+            ),
+            ctx.effective_stride_scale_min,
+            ctx.effective_stride_scale_max,
+        )
+    ctx.resampled = True
 
 
 def _reset_to_landmark(ctx: ParticleRuntime) -> None:
@@ -277,7 +307,7 @@ def _resample_for_anchor_heading(ctx: ParticleRuntime) -> None:
     ctx.valid_weight_count = ctx.valid_count
     ctx.valid_weight_mass = 1.0
     ctx.ess_after_observation = float(ctx.n_particles)
-    ctx.effective_step_lengths_for_diagnostics = ctx.sl[indices]
+    ctx.effective_step_lengths_for_diagnostics = ctx.realized_step_lengths[indices]
     ctx.resampled = True
     ctx.recovery_attempted = False
     ctx.recovery_valid_count = ctx.valid_count
@@ -385,10 +415,14 @@ def resolve_map_constraints(ctx: ParticleRuntime) -> None:
 
     if _try_local_recovery(ctx):
         _apply_local_recovery(ctx)
+        _apply_recovery_landmark_observation(ctx)
         return
     if _try_checkpoint_replay(ctx):
         _apply_checkpoint_replay(ctx)
+        _apply_recovery_landmark_observation(ctx)
         return
     if _apply_fallback_recovery(ctx):
+        _apply_recovery_landmark_observation(ctx)
         return
     _hold_on_recovery_failure(ctx)
+    _apply_recovery_landmark_observation(ctx)

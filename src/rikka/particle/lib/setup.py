@@ -27,6 +27,31 @@ from .state import ParticleRuntime
 
 
 def setup(ctx: ParticleRuntime) -> None:
+    validate_choice(
+        "proposal_method",
+        ctx.proposal_method,
+        ("legacy", "no-relocation", "candidate-bank"),
+    )
+    if (
+        isinstance(ctx.candidate_count, bool)
+        or not isinstance(ctx.candidate_count, int)
+        or ctx.candidate_count < 1
+    ):
+        raise ValueError("candidate_count は正の整数を指定してください")
+    if ctx.proposal_method != "candidate-bank" and ctx.candidate_count != 1:
+        raise ValueError("candidate_count は candidate-bank 方式でのみ指定できます")
+    if (
+        ctx.proposal_method == "candidate-bank"
+        and ctx.landmark_mode not in {"none", "ranging", "observation"}
+        and (ctx.landmark_detections or ctx.landmark_ranging_observations)
+    ):
+        raise ValueError("candidate-bankのBLEはranging/observationのみ対応しています")
+    if (
+        ctx.proposal_method == "candidate-bank"
+        and ctx.landmark_mode == "observation"
+        and any(item.position_sigma_m is not None for item in ctx.landmarks)
+    ):
+        raise ValueError("candidate-bankの確定位置にはhard_positionsを指定してください")
     ctx.sidestep_lateral_ratio = validate_positive_parameter(
         "sidestep_lateral_ratio", ctx.sidestep_lateral_ratio
     )
@@ -131,6 +156,11 @@ def setup(ctx: ParticleRuntime) -> None:
         )
     if ctx.recovery_max_attempts <= 0:
         raise ValueError("recovery_max_attempts は正の整数を指定してください")
+    ctx.invalid_relocation_radius_m = validate_non_negative_parameter(
+        "invalid_relocation_radius_m", ctx.invalid_relocation_radius_m
+    )
+    if ctx.invalid_relocation_attempts < 0:
+        raise ValueError("invalid_relocation_attempts は0以上を指定してください")
     ctx.adaptive_stride_state = bool(
         ctx.prepared_motion_posteriors is not None
         and any(
