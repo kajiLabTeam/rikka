@@ -251,9 +251,15 @@ def _resolve_ble_inputs(
 
     measurement_dir = Path(data_dir)
     resolved_data_path = Path(ble_data_path)
-    local_data_path = measurement_dir / "BLE.csv"
-    if ble_data_path == _BLE_DATA_DEFAULT and local_data_path.is_file():
-        resolved_data_path = local_data_path
+    if ble_data_path == _BLE_DATA_DEFAULT and measurement_dir.is_dir():
+        local_names = {
+            path.name for path in measurement_dir.iterdir() if path.is_file()
+        }
+        for name in ("BLE.csv", "ble.csv"):
+            local_data_path = measurement_dir / name
+            if name in local_names:
+                resolved_data_path = local_data_path
+                break
 
     local_position_path = resolved_data_path.with_name("BLE_pos.csv")
     if not local_position_path.is_file():
@@ -264,6 +270,22 @@ def _resolve_ble_inputs(
                 "Thingsup形式のBLEログには同じディレクトリの BLE_pos.csv が必要です: "
                 f"{resolved_data_path}"
             )
+        local_metadata_path = resolved_data_path.with_name("metadata.json")
+        if local_metadata_path.is_file():
+            from ..ble.lib.loader import load_ble_metadata_landmarks  # noqa: PLC0415
+
+            metadata_landmarks = load_ble_metadata_landmarks(local_metadata_path)
+            if metadata_landmarks is not None:
+                if not metadata_landmarks:
+                    raise ValueError(
+                        "metadata.jsonに有効なBLE配置がありません: "
+                        f"{local_metadata_path}"
+                    )
+                return str(resolved_data_path), merge_landmark_anchors(
+                    metadata_landmarks,
+                    BLE_LANDMARK_ANCHORS,
+                    coordinate_source="metadata.json",
+                )
         return str(resolved_data_path), None
 
     from ..ble.lib.loader import load_ble_landmarks  # noqa: PLC0415
@@ -467,6 +489,13 @@ def _common_options(f: click.decorators.FC) -> click.decorators.FC:
         help="ランドマーク検出とみなす RSSI の下限 [dBm]",
     )(f)
     f = click.option(
+        "--ble-detection-profile",
+        type=click.Choice(["auto", "measured", "synthetic"]),
+        default="auto",
+        show_default=True,
+        help="BLE検出条件（autoはログ形式・metadataから判定）",
+    )(f)
+    f = click.option(
         "--ble-data",
         "ble_data_path",
         default=_BLE_DATA_DEFAULT,
@@ -650,6 +679,7 @@ def _run_pdr(
     smoothing_mode: str,
     no_plot: bool,
     ble_landmark: bool,
+    ble_detection_profile: str,
     ble_data_path: str,
     ble_rssi_threshold: float,
     ble_correction: str,
@@ -710,6 +740,7 @@ def _run_pdr(
         motion_estimation=motion_estimation,
         smoothing_mode=smoothing_mode,
         ble_landmark=ble_landmark,
+        ble_detection_profile=ble_detection_profile,
         ble_data_path=ble_data_path,
         ble_rssi_threshold=ble_rssi_threshold,
         ble_correction=ble_correction,
@@ -757,6 +788,7 @@ def run(
     smoothing_mode: str,
     no_plot: bool,
     ble_landmark: bool,
+    ble_detection_profile: str,
     ble_data_path: str,
     ble_rssi_threshold: float,
     ble_correction: str,
@@ -799,6 +831,7 @@ def run(
         smoothing_mode,
         no_plot,
         ble_landmark,
+        ble_detection_profile,
         ble_data_path,
         ble_rssi_threshold,
         ble_correction,
@@ -924,6 +957,17 @@ cli.add_command(run, name="pdr")
     default=False,
     help="--no-plot 指定時もパーティクルフィルタのアニメーションを保存",
 )
+@click.option(
+    "--floormap-floor-id",
+    default=None,
+    help="使用する地図の階ID（階ID付き確定位置との照合用）",
+)
+@click.option(
+    "--pf-hard-anchors",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="根拠付き確定位置イベントのJSON（歩境界時刻のみ）",
+)
 @_common_options
 @click.pass_context
 def particle(
@@ -950,6 +994,7 @@ def particle(
     smoothing_mode: str,
     no_plot: bool,
     ble_landmark: bool,
+    ble_detection_profile: str,
     ble_data_path: str,
     ble_rssi_threshold: float,
     ble_correction: str,
@@ -981,11 +1026,17 @@ def particle(
     pf_landmark_retrofit: bool,
     pf_proposal: str,
     pf_candidates: int | None,
+    pf_hard_anchors: Path | None,
+    floormap_floor_id: str | None,
 ) -> None:
     """パーティクルフィルタ + マップマッチングで歩行軌跡を推定する。"""
     from ..common.lib.sensors import load_sensor_data  # noqa: PLC0415
+    from ..landmark.lib.hard_anchor import load_hard_positions  # noqa: PLC0415
     from .commands import run as _run  # noqa: PLC0415
 
+    hard_positions = (
+        () if pf_hard_anchors is None else load_hard_positions(pf_hard_anchors)
+    )
     _validate_gyro_bias_options(gyro_bias_method, gyro_bias)
     if pf_candidates is None:
         pf_candidates = PF_CANDIDATE_COUNT if pf_proposal == "candidate-bank" else 1
@@ -1045,9 +1096,12 @@ def particle(
         pf_path_selection=pf_path_selection,
         pf_landmark_mode=pf_landmark_mode,
         pf_landmark_retrofit=pf_landmark_retrofit,
+        hard_positions=hard_positions,
+        floormap_floor_id=floormap_floor_id,
         pf_proposal=pf_proposal,
         pf_candidates=pf_candidates,
         ble_landmark=ble_landmark,
+        ble_detection_profile=ble_detection_profile,
         ble_data_path=ble_data_path,
         ble_rssi_threshold=ble_rssi_threshold,
         ble_correction=ble_correction,

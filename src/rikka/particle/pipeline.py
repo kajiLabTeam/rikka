@@ -17,6 +17,8 @@ from dataclasses import replace
 from ..ble.lib.ranging_check import run_ranging_preflight
 from ..common.lib.models import (
     FloorMap,
+    HardAnchorCorrection,
+    HardPositionObservation,
     LandmarkCorrection,
     LandmarkCorrectionResult,
     LandmarkObservation,
@@ -118,12 +120,14 @@ def run_particle(
     ranging_observations: tuple[LandmarkRange, ...] | None = None,
     landmark_settings: BleLandmarkSettings | None = None,
     history_candidate: bool = False,
+    hard_positions: tuple[HardPositionObservation, ...] = (),
 ) -> TrajectoryResult:
     """準備済みの歩列へ地図拘束を適用する。"""
     diagnostics: list[ParticleFilterStepDiagnostics] = []
     stages: list[ParticleStepStages] = []
     path_comparisons: list[ParticlePathComparison] = []
     landmark_events: list[LandmarkCorrection] = []
+    hard_events: list[HardAnchorCorrection] = []
     runtime_detections = () if detections is None else detections
     runtime_ranging_observations = (
         tuple(item for item in runtime_detections if isinstance(item, LandmarkRange))
@@ -178,6 +182,9 @@ def run_particle(
         landmark_events_collector=landmark_events,
         proposal_method=settings.proposal_method,
         candidate_count=candidate_count,
+        hard_positions=hard_positions,
+        floormap_floor_id=floormap.floor_id,
+        hard_anchor_events_collector=hard_events,
     )
     if detections is not None and landmark_settings is not None:
         diagnostics, landmark_events = _attach_landmark_timing(
@@ -188,7 +195,13 @@ def run_particle(
             diagnostics,
             landmark_events,
         )
+    uncorrected_trajectory = [list(point) for point in trajectory]
+    for event in hard_events:
+        uncorrected_trajectory[event.step_index] = [event.before_x, event.before_y]
     particle = ParticleFilterResult(
+        hard_anchor_corrections=tuple(hard_events),
+        uncorrected_trajectory=uncorrected_trajectory if hard_events else None,
+        correction_steps=tuple(event.step_index for event in hard_events),
         trajectory=trajectory,
         all_particles=[item for item in all_particles],
         diagnostics=tuple(diagnostics),
@@ -203,7 +216,7 @@ def run_particle(
                 prepared.gz_mean,
                 landmark_constraints=any(event.applied for event in landmark_events),
             )
-            if history_candidate
+            if history_candidate and not hard_events
             else None
         ),
     )

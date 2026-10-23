@@ -30,6 +30,8 @@ class ParticleCandidateBank:
     valid_transition: np.ndarray
     selected_indices: np.ndarray
     mean_factors: np.ndarray
+    base_factors: np.ndarray | None = None
+    landmark_factors: np.ndarray | None = None
 
 
 def select_candidate_bank(

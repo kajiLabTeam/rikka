@@ -662,6 +662,11 @@ def test_particle_filter_diagnostics_field_order_is_stable() -> None:
         "trajectory_source_index",
         "recovery_candidate_branch_count",
         "recovery_selected_branch_count",
+        "landmark_update_count",
+        "landmark_observation_count",
+        "landmark_floor_fraction",
+        "landmark_rssi_residual_mean_db",
+        "landmark_replay_blocked",
     )
 
 
@@ -690,6 +695,8 @@ def test_particle_filter_fixed_seed_characterization_snapshot(tmp_path) -> None:
         prepared_step_lengths=[1.0],
         prepared_step_times=[0.0],
         seed=123,
+        # 旧倍率で固定した回帰条件を、既定値変更から独立させる。
+        stride_scale_prior_mean=1.03,
         diagnostics_collector=diagnostics,
     )
 
@@ -1711,6 +1718,8 @@ def test_particle_filter_recovers_with_map_aware_direction_candidates(tmp_path) 
         recovery_heading_sigma=0.03,
         # recovery候補グリッドだけを検証するため、円内再配置は無効化する。
         invalid_relocation_radius_m=0.0,
+        # 旧倍率で固定した回帰条件を、既定値変更から独立させる。
+        stride_scale_prior_mean=1.03,
         diagnostics_collector=diagnostics,
     )
 

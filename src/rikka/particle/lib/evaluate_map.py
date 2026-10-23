@@ -31,8 +31,29 @@ from .recovery.apply import (
     _try_checkpoint_replay,
     _try_local_recovery,
 )
-from .resampling import _systematic_resample
+from .resampling import _effective_sample_size, _systematic_resample
+from .soft_landmark import record_soft_landmark_diagnostics, soft_landmark_likelihood
 from .state import ParticleRuntime
+
+
+def _apply_recovery_landmark_observation(ctx: ParticleRuntime) -> None:
+    """復旧で置き換えた経験的集合に、現在歩の観測を一度だけ反映する。"""
+    if ctx.proposal_method != "candidate-bank":
+        return
+    likelihood = soft_landmark_likelihood(ctx, ctx.particles)
+    if likelihood is None:
+        return
+    posterior = ctx.weights * likelihood
+    mass = float(posterior.sum())
+    if mass <= 0 or not np.isfinite(mass):
+        raise RuntimeError("BLE観測を支持する復旧粒子がありません")
+    ctx.weights = posterior / mass
+    ctx.posterior_weights = ctx.weights.copy()
+    ctx.valid_weight_mass = mass
+    ctx.ess_after_observation = _effective_sample_size(ctx.weights)
+    with np.errstate(divide="ignore"):
+        ctx.next_path_log_scores = ctx.next_path_log_scores + np.log(likelihood)
+    record_soft_landmark_diagnostics(ctx, ctx.particles, ctx.weights)
 
 
 def _reset_recovery_diagnostics(ctx: ParticleRuntime) -> None:
@@ -394,10 +415,14 @@ def resolve_map_constraints(ctx: ParticleRuntime) -> None:
 
     if _try_local_recovery(ctx):
         _apply_local_recovery(ctx)
+        _apply_recovery_landmark_observation(ctx)
         return
     if _try_checkpoint_replay(ctx):
         _apply_checkpoint_replay(ctx)
+        _apply_recovery_landmark_observation(ctx)
         return
     if _apply_fallback_recovery(ctx):
+        _apply_recovery_landmark_observation(ctx)
         return
     _hold_on_recovery_failure(ctx)
+    _apply_recovery_landmark_observation(ctx)

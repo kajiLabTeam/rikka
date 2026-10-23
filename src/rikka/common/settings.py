@@ -392,6 +392,7 @@ class BleLandmarkSettings:
     detect_min_samples: int = BLE_DETECT_MIN_SAMPLES
     detect_cooldown_s: float = BLE_DETECT_COOLDOWN_S
     detect_min_prominence_db: float = BLE_DETECT_MIN_PROMINENCE_DB
+    detection_profile: str = "auto"
     correction_mode: str = BLE_PDR_CORRECTION_MODE
     preflight_mode: str = BLE_PREFLIGHT_MODE
     max_correction_m: float = BLE_MAX_CORRECTION_M
@@ -411,6 +412,11 @@ class BleLandmarkSettings:
     )
 
     def __post_init__(self) -> None:
+        validate_choice(
+            "ble_detection_profile",
+            self.detection_profile,
+            ("auto", "measured", "synthetic"),
+        )
         if not np.isfinite(self.rssi_threshold_dbm):
             raise ValueError("rssi_threshold_dbm は有限な値を指定してください。")
         validate_non_negative_parameter("release_margin_db", self.release_margin_db)

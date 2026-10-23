@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from ...common.lib.models import (
+    HardAnchorCorrection,
+    HardPositionObservation,
     Landmark,
     LandmarkCorrection,
     LandmarkObservation,
@@ -112,6 +114,25 @@ class ParticleRuntime:
     landmark_events_collector: list[LandmarkCorrection] | None
     proposal_method: str = "legacy"
     candidate_count: int = 1
+    hard_positions: tuple[HardPositionObservation, ...] = ()
+    floormap_floor_id: str | None = None
+    hard_anchor_events_collector: list[HardAnchorCorrection] | None = None
+    last_hard_anchor_step: int = field(init=False, default=0)
+    hard_anchor_by_step: dict[int, HardPositionObservation] = field(
+        init=False, default_factory=dict
+    )
+    hard_anchor_events: list[HardAnchorCorrection] = field(
+        init=False, default_factory=list
+    )
+    landmark_replay_blocked: bool = field(init=False, default=False)
+    landmark_update_count: int = field(init=False, default=0)
+    landmark_floor_fraction: float | None = field(init=False, default=None)
+    landmark_observation_count: int = field(init=False, default=0)
+    landmark_rssi_residual_mean_db: float | None = field(init=False, default=None)
+    hard_current_reversals: int = field(init=False, default=0)
+    hard_sequence_reversals: int = field(init=False, default=0)
+    hard_current_prefix: list[list[float]] = field(init=False, default_factory=list)
+    hard_sequence_prefix: list[list[float]] = field(init=False, default_factory=list)
 
     candidate_bank: ParticleCandidateBank | None = field(init=False)
     history_version: int = field(init=False, default=0)

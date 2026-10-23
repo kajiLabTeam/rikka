@@ -176,8 +176,9 @@ PF_CANDIDATE_COUNT = 8
 PF_SIGMA_INIT_HEADING = 0.26  # 初期方向ばらつき [rad]（約 14.9 度）
 PF_SIGMA_HEADING = 0.14  # ステップごとの方位角ドリフト [rad/step]（約 8.0 度）
 PF_SIGMA_STEP_LENGTH_RATIO = 0.01  # 永続倍率で説明できない歩ごとの歩幅ノイズ
-PF_STRIDE_SCALE_PRIOR_MEAN = 1.03  # 正解軌跡長と決定論的歩幅合計から得た事前中心
-# 歩幅倍率は「おおむね 0.8〜1.2 倍」を 2シグマ相当の範囲として設計する。
+PF_STRIDE_SCALE_PRIOR_MEAN = 1.25  # 1021・WithBLEの8計測比較で採用したPF事前中心
+# 倍率の初期分布は事前中心の周囲へ広げ、下記MIN/MAXでクリップする。
+# 中心1.25は上限1.30に近いため、実際の初期分布は非対称になる。
 # 初期 σ と1歩ごとの σ は、保持率 0.995 の AR(1) 定常標準偏差が約 0.10 に
 # なるよう選び、粒子群が時間とともに事前中心へ潰れないようにする。
 PF_STRIDE_SCALE_INIT_SIGMA = 0.10  # 粒子ごとの初期歩幅倍率ばらつき

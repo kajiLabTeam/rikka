@@ -67,7 +67,13 @@ from ..common.lib.floormap import (
     normalize_floormap_gray,
     validate_floormap_origin,
 )
-from ..common.lib.models import FloorMap, GyroBiasResult, Landmark, PreparedPdrSteps
+from ..common.lib.models import (
+    FloorMap,
+    GyroBiasResult,
+    HardPositionObservation,
+    Landmark,
+    PreparedPdrSteps,
+)
 from ..common.settings import (
     BleLandmarkSettings,
     HeadingSettings,
@@ -163,7 +169,10 @@ def run(
     pf_landmark_mode: str = PF_LANDMARK_MODE,
     pf_landmark_range_weight_power: float = PF_LANDMARK_RANGE_WEIGHT_POWER,
     pf_landmark_retrofit: bool = PF_LANDMARK_RETROFIT,
+    hard_positions: tuple[HardPositionObservation, ...] = (),
+    floormap_floor_id: str | None = None,
     ble_landmark: bool = BLE_LANDMARK_ENABLED,
+    ble_detection_profile: str = "auto",
     ble_data_path: str | Path = BLE_DATA_PATH,
     ble_rssi_threshold: float = BLE_RSSI_THRESHOLD_DBM,
     ble_correction: str = BLE_PDR_CORRECTION_MODE,
@@ -189,10 +198,11 @@ def run(
         save_step_frames or save_path_comparison or history_candidate
     ) and not use_particle_filter:
         raise ValueError("粒子可視化の保存には use_particle_filter=True が必要です。")
-    floormap = FloorMap(str(floormap_path), origin_px, scale)
+    floormap = FloorMap(str(floormap_path), origin_px, scale, floormap_floor_id)
     landmark_settings = (
         BleLandmarkSettings(
             enabled=ble_landmark,
+            detection_profile=ble_detection_profile,
             data_path=ble_data_path,
             rssi_threshold_dbm=ble_rssi_threshold,
             release_margin_db=ble_release_margin,
@@ -213,6 +223,7 @@ def run(
         if ble_landmarks is None
         else BleLandmarkSettings(
             enabled=ble_landmark,
+            detection_profile=ble_detection_profile,
             data_path=ble_data_path,
             rssi_threshold_dbm=ble_rssi_threshold,
             release_margin_db=ble_release_margin,
@@ -311,6 +322,7 @@ def run(
             result.prepared,
             floormap,
             particle_settings,
+            hard_positions=hard_positions,
             detections=None if particle_ble is None else particle_ble.detections,
             ranging_observations=(
                 None if particle_ble is None else particle_ble.observations

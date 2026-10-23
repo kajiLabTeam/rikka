@@ -42,10 +42,16 @@ def setup(ctx: ParticleRuntime) -> None:
         raise ValueError("candidate_count は candidate-bank 方式でのみ指定できます")
     if (
         ctx.proposal_method == "candidate-bank"
-        and ctx.landmark_mode != "none"
+        and ctx.landmark_mode not in {"none", "ranging", "observation"}
         and (ctx.landmark_detections or ctx.landmark_ranging_observations)
     ):
-        raise ValueError("candidate-bank は現段階ではBLE観測との併用に対応していません")
+        raise ValueError("candidate-bankのBLEはranging/observationのみ対応しています")
+    if (
+        ctx.proposal_method == "candidate-bank"
+        and ctx.landmark_mode == "observation"
+        and any(item.position_sigma_m is not None for item in ctx.landmarks)
+    ):
+        raise ValueError("candidate-bankの確定位置にはhard_positionsを指定してください")
     ctx.sidestep_lateral_ratio = validate_positive_parameter(
         "sidestep_lateral_ratio", ctx.sidestep_lateral_ratio
     )

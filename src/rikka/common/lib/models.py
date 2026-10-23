@@ -328,6 +328,46 @@ class ParticleHistoryCandidate:
 
 
 @dataclass(frozen=True)
+class HardPositionObservation:
+    """歩行者が指定時刻に指定位置にいた根拠を伴う確定観測。"""
+
+    event_id: str
+    timestamp_s: float
+    pixel_x: float
+    pixel_y: float
+    source: str
+    evidence: str
+    heading_deg: float | None = None
+    floor_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if not all(
+            isinstance(value, str) and value.strip()
+            for value in (self.event_id, self.source, self.evidence)
+        ):
+            raise ValueError("確定位置には event_id, source, evidence が必要です")
+        if not np.isfinite([self.timestamp_s, self.pixel_x, self.pixel_y]).all():
+            raise ValueError("確定位置の時刻・座標には有限値が必要です")
+        if self.heading_deg is not None and not np.isfinite(self.heading_deg):
+            raise ValueError("確定方位には有限値が必要です")
+
+
+@dataclass(frozen=True)
+class HardAnchorCorrection:
+    """歩行移動とは別に適用した位置訂正。step_indexは軌跡ノードの添字。"""
+
+    step_index: int
+    event_id: str
+    timestamp_s: float
+    before_x: float
+    before_y: float
+    target_x: float
+    target_y: float
+    source: str
+    evidence: str
+
+
+@dataclass(frozen=True)
 class ParticleFilterResult:
     """particle filter の代表軌跡と描画・診断用状態。"""
 
@@ -337,6 +377,9 @@ class ParticleFilterResult:
     stages: tuple[Any, ...] = ()
     path_comparisons: tuple[Any, ...] = ()
     history_candidate: ParticleHistoryCandidate | None = None
+    hard_anchor_corrections: tuple[HardAnchorCorrection, ...] = ()
+    uncorrected_trajectory: list[list[float]] | None = None
+    correction_steps: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -346,6 +389,7 @@ class FloorMap:
     path: str
     origin_px: tuple[int, int]
     scale: float
+    floor_id: str | None = None
 
 
 @dataclass(frozen=True)

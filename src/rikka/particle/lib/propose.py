@@ -38,6 +38,7 @@ from ...particle.lib.resampling import (
 )
 from ...particle.lib.weighting import weight, weight_candidate_bank
 from .candidate_bank import ParticleCandidateBank, select_candidate_bank
+from .soft_landmark import record_soft_landmark_diagnostics, soft_landmark_likelihood
 from .state import ParticleRuntime
 
 
@@ -246,6 +247,7 @@ def _propose_candidate_bank(ctx: ParticleRuntime) -> None:
     )
     candidates: dict[str, list[np.ndarray]] = {name: [] for name in names}
     factors = []
+    landmark_factors = []
     for _ in range(ctx.candidate_count):
         _generate_motion_candidate(ctx)
         _set_stride_likelihood(ctx)
@@ -260,8 +262,14 @@ def _propose_candidate_bank(ctx: ParticleRuntime) -> None:
                 ctx.motion_predictive_weight_power,
             )
         )
+        likelihood = soft_landmark_likelihood(ctx, ctx.proposed_particles)
+        landmark_factors.append(
+            np.ones(ctx.n_particles) if likelihood is None else likelihood
+        )
     bank = {name: np.stack(values, axis=1) for name, values in candidates.items()}
-    all_factors = np.stack(factors, axis=1)
+    base_factors = np.stack(factors, axis=1)
+    all_landmark_factors = np.stack(landmark_factors, axis=1)
+    all_factors = base_factors * all_landmark_factors
     selected, mean_factors = select_candidate_bank(all_factors, ctx.rng)
     ctx.candidate_bank = ParticleCandidateBank(
         positions=bank["proposed_particles"],
@@ -274,6 +282,8 @@ def _propose_candidate_bank(ctx: ParticleRuntime) -> None:
         valid_transition=bank["valid_transition"],
         selected_indices=selected,
         mean_factors=mean_factors,
+        base_factors=base_factors,
+        landmark_factors=all_landmark_factors,
     )
     # 未採用親の枠には診断・既存復旧用に候補0を残し、必ず無効にする。
     slots = np.arange(ctx.n_particles)
@@ -306,6 +316,11 @@ def propose(ctx: ParticleRuntime) -> None:
     ctx.ess_before_observation = _effective_sample_size(ctx.weights_before)
     ctx.proposal_history_version = ctx.history_version
     ctx.candidate_bank = None
+    ctx.landmark_update_count = 0
+    ctx.landmark_observation_count = 0
+    ctx.landmark_floor_fraction = None
+    ctx.landmark_rssi_residual_mean_db = None
+    ctx.landmark_replay_blocked = False
     if ctx.proposal_method == "candidate-bank":
         _propose_candidate_bank(ctx)
     else:
@@ -339,6 +354,9 @@ def propose(ctx: ParticleRuntime) -> None:
     ctx.valid_weight_mask = ctx.valid_transition & (ctx.weights_before > 0.0)
     ctx.valid_weight_count = int(np.count_nonzero(ctx.valid_weight_mask))
     _resolve_landmark_observation(ctx)
+    if ctx.proposal_method == "candidate-bank":
+        # 選択済み候補の尤度は経路スコアと診断用。親重みへは再乗算しない。
+        ctx.landmark_likelihood = soft_landmark_likelihood(ctx, ctx.proposed_particles)
     if ctx.candidate_bank is not None and ctx.candidate_count > 1:
         # 採用候補のGを再乗算せず、全候補の平均S/Kだけを掛ける。
         ctx.posterior_weights = weight_candidate_bank(
@@ -371,6 +389,10 @@ def propose(ctx: ParticleRuntime) -> None:
         -np.inf,
     )
     ctx.valid_weight_mass = float(ctx.posterior_weights.sum())
+    if ctx.proposal_method == "candidate-bank" and ctx.valid_weight_mass > 0:
+        record_soft_landmark_diagnostics(
+            ctx, ctx.proposed_particles, ctx.posterior_weights
+        )
     ctx.ess_after_observation = (
         _effective_sample_size(ctx.posterior_weights / ctx.valid_weight_mass)
         if ctx.valid_weight_mass > 0.0

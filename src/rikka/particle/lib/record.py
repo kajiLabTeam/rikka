@@ -130,6 +130,11 @@ def record(ctx: ParticleRuntime) -> None:
                 landmark_before_position=ctx.landmark_before_position,
                 landmark_xy=ctx.landmark_xy,
                 landmark_likelihood_mean=ctx.landmark_likelihood_mean,
+                landmark_update_count=ctx.landmark_update_count,
+                landmark_observation_count=ctx.landmark_observation_count,
+                landmark_floor_fraction=ctx.landmark_floor_fraction,
+                landmark_rssi_residual_mean_db=ctx.landmark_rssi_residual_mean_db,
+                landmark_replay_blocked=ctx.landmark_replay_blocked,
             )
         )
     if ctx.recorder.stages_enabled:
@@ -180,6 +185,17 @@ def record(ctx: ParticleRuntime) -> None:
                 proposal_method=ctx.proposal_method,
                 proposal_history_version=ctx.proposal_history_version,
                 history_version=ctx.history_version,
-                proposal_matches_final_history=ctx.recovery_mode == "none",
+                proposal_matches_final_history=(
+                    ctx.recovery_mode == "none"
+                    and ctx.step_number not in ctx.hard_anchor_by_step
+                ),
+                hard_anchor_event_id=(
+                    ctx.hard_anchor_by_step[ctx.step_number].event_id
+                    if ctx.step_number in ctx.hard_anchor_by_step
+                    else None
+                ),
+                segment_id=sum(
+                    step <= ctx.step_number for step in ctx.hard_anchor_by_step
+                ),
             )
         )

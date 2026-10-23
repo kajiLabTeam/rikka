@@ -57,6 +57,8 @@ from ...common.config import (
     SIDESTEP_SUSPECT_MODE,
 )
 from ...common.lib.models import (
+    HardAnchorCorrection,
+    HardPositionObservation,
     Landmark,
     LandmarkCorrection,
     LandmarkObservation,
@@ -67,6 +69,7 @@ from ...common.lib.models import (
 )
 from .evaluate_map import resolve_map_constraints
 from .finalize import finalize
+from .hard_anchor import apply_hard_position
 from .initialize import initialize
 from .propose import propose
 from .record import record
@@ -156,6 +159,9 @@ def run_particle_steps(
     landmark_events_collector: list[LandmarkCorrection] | None = None,
     proposal_method: str = "legacy",
     candidate_count: int = 1,
+    hard_positions: tuple[HardPositionObservation, ...] = (),
+    floormap_floor_id: str | None = None,
+    hard_anchor_events_collector: list[HardAnchorCorrection] | None = None,
 ) -> ParticleStepsResult:
     """準備済み歩列を受け、元と同じ順序でPF段階を実行する。"""
     ctx = ParticleRuntime(
@@ -220,6 +226,9 @@ def run_particle_steps(
         landmark_events_collector=landmark_events_collector,
         proposal_method=proposal_method,
         candidate_count=candidate_count,
+        hard_positions=hard_positions,
+        floormap_floor_id=floormap_floor_id,
+        hard_anchor_events_collector=hard_anchor_events_collector,
     )
     setup(ctx)
     initialize(ctx)
@@ -250,6 +259,7 @@ def run_particle_steps(
             continue
         propose(ctx)
         resolve_map_constraints(ctx)
+        apply_hard_position(ctx)
         ctx.ess_after_resampling = _effective_sample_size(ctx.weights)
         ctx.position_history.append(ctx.particles.copy())
         record(ctx)

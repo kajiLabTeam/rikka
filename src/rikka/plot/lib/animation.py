@@ -27,7 +27,11 @@ from matplotlib.colors import Normalize
 
 from ...common.config import FLOORMAP_ORIGIN_PX, FLOORMAP_PATH, FLOORMAP_SCALE
 from ...common.lib.floormap import compute_pixel_coords
-from ...common.lib.models import LandmarkCorrectionResult, StepHeading
+from ...common.lib.models import (
+    HardAnchorCorrection,
+    LandmarkCorrectionResult,
+    StepHeading,
+)
 from ...matplotlib_config import configure_japanese_font
 from .trajectory import (
     _plot_anchor_heading_arrows as plot_anchor_heading_arrows,
@@ -53,6 +57,7 @@ def plot_particle_filter_trajectory(
     output_dir: Path | None = None,
     step_headings: list[StepHeading] | None = None,
     landmark: LandmarkCorrectionResult | None = None,
+    hard_corrections: tuple[HardAnchorCorrection, ...] = (),
 ) -> None:
     """PF の平均優先・壁際祖先フォールバック軌跡を描画する。
 
@@ -80,6 +85,23 @@ def plot_particle_filter_trajectory(
     cmap = cm.get_cmap("plasma")
     pts = np.column_stack([px, py]).reshape(-1, 1, 2)
     segments = np.concatenate([pts[:-1], pts[1:]], axis=1)
+    for event in hard_corrections:
+        before_x, before_y = compute_pixel_coords(
+            np.asarray([event.before_x]),
+            np.asarray([event.before_y]),
+            gx_mean,
+            gz_mean,
+            origin_px,
+            scale,
+        )
+        segments[event.step_index - 1, 1] = (before_x[0], before_y[0])
+        ax.plot(
+            [before_x[0], px[event.step_index]],
+            [before_y[0], py[event.step_index]],
+            "r--",
+            linewidth=1,
+            label="位置訂正（歩行ではない）" if event == hard_corrections[0] else None,
+        )
     lc = LineCollection(segments.tolist(), cmap=cmap, norm=norm, zorder=2)
     if landmark is not None:
         lc.set_label("ランドマーク反映後軌跡")
@@ -185,6 +207,7 @@ def save_particle_animation(
     output_path: Path | str = Path("output/particle_filter.mp4"),
     fps: int = 10,
     landmark: LandmarkCorrectionResult | None = None,
+    hard_corrections: tuple[HardAnchorCorrection, ...] = (),
 ) -> Path:
     """PF の各ステップのパーティクル分布を動画として保存する。
 
@@ -239,7 +262,29 @@ def save_particle_animation(
                 origin_px,
                 scale,
             )
-            ax.plot(px_m, py_m, "b-", linewidth=1.5, zorder=3)
+            points = np.column_stack([px_m, py_m])
+            segments = np.stack([points[:-1], points[1:]], axis=1)
+            for event in hard_corrections:
+                if event.step_index > frame:
+                    continue
+                before_x, before_y = compute_pixel_coords(
+                    np.asarray([event.before_x]),
+                    np.asarray([event.before_y]),
+                    gx_mean,
+                    gz_mean,
+                    origin_px,
+                    scale,
+                )
+                segments[event.step_index - 1, 1] = (before_x[0], before_y[0])
+                ax.plot(
+                    [before_x[0], px_m[event.step_index]],
+                    [before_y[0], py_m[event.step_index]],
+                    "r--",
+                    linewidth=1,
+                )
+            ax.add_collection(
+                LineCollection(segments.tolist(), colors="blue", linewidths=1.5)
+            )
 
         # 現ステップの選択位置を赤点で描画
         px_c, py_c = compute_pixel_coords(
