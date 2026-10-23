@@ -2,19 +2,21 @@
 
 役割:
     標準形式またはThingsup形式の BLE RSSI CSV と端末座標CSVを読み、時刻昇順の
-    観測列と既知ランドマークへ正規化する。
+    観測列と既知ランドマークへ正規化する。Android metadataの配置座標も読む。
 依存元:
     ``common.lib.models`` から ``BleObservation`` と ``Landmark`` を取得し、
     Pandas、NumPy、phyphox の ``meta/time.csv`` / ``Time Reference.csv`` で
     列検証と時刻変換を行う。
 利用先:
     ``ble.pipeline`` がランドマーク補正の入力を用意するときに使用する。
-    CLI は計測ディレクトリの ``BLE_pos.csv`` から既知座標を構築するためにも使う。
+    CLI は ``BLE_pos.csv`` または ``metadata.json`` の配置座標の取得にも使う。
 処理フロー:
     CSV形式を判定し、Thingsup形式では端末照合と実験開始基準への時刻変換を行い、
     必須列と値域を検証して時刻昇順に整列した観測列を返す。
+    metadataでは有効なビーコンの識別子、階、座標を検証して既知座標を返す。
 """
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -236,6 +238,70 @@ def load_ble_landmarks(data_path: str | Path) -> tuple[Landmark, ...]:
         for record in _load_position_records(data_path)
         if record.pixel_x is not None and record.pixel_y is not None
     )
+
+
+def load_ble_metadata_landmarks(
+    data_path: str | Path,
+) -> tuple[Landmark, ...] | None:
+    """metadataの配置を読み、BLE設定がない旧形式はNoneとして区別する。
+
+    設置座標は歩行者の到達証明ではないため、確定アンカー属性は設定しない。
+    無効なビーコンは除外し、有効な定義の不備は既定座標へフォールバックしない。
+    """
+    path = Path(data_path)
+    try:
+        metadata = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(metadata, dict):
+            raise ValueError("ルートはオブジェクトにしてください")
+        ble = metadata.get("ble")
+        if ble is None:
+            return None
+        if not isinstance(ble, dict):
+            raise ValueError("bleはオブジェクトにしてください")
+        beacons = ble["configuration"]["beacons"]
+        if not isinstance(beacons, list):
+            raise ValueError("beaconsは配列にしてください")
+        context = metadata.get("recording_context") or {}
+        if not isinstance(context, dict):
+            raise ValueError("recording_contextはオブジェクトにしてください")
+        floor_id = context.get("floor_id")
+        landmarks: list[Landmark] = []
+        seen: set[str] = set()
+        for beacon in beacons:
+            if not isinstance(beacon, dict):
+                raise ValueError("ビーコンはオブジェクトにしてください")
+            enabled = beacon.get("enabled", True)
+            if not isinstance(enabled, bool):
+                raise ValueError("enabledは真偽値にしてください")
+            if not enabled:
+                continue
+            beacon_id = beacon["beacon_id"]
+            if not isinstance(beacon_id, str) or not beacon_id.strip():
+                raise ValueError("beacon_idは空でない文字列にしてください")
+            if beacon_id in seen:
+                raise ValueError(f"beacon_idが重複しています: {beacon_id}")
+            if floor_id is not None and beacon.get("floor_id") != floor_id:
+                raise ValueError(
+                    f"計測階とビーコンのfloor_idが一致しません: {beacon_id}"
+                )
+            coordinates = []
+            for name in ("pixel_x", "pixel_y"):
+                value = beacon[name]
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    raise ValueError(f"{beacon_id}の{name}は数値にしてください")
+                coordinate = float(value)
+                if not np.isfinite(coordinate) or coordinate < 0:
+                    raise ValueError(
+                        f"{beacon_id}の{name}は有限な0以上の値にしてください"
+                    )
+                coordinates.append(coordinate)
+            landmarks.append(Landmark(beacon_id, coordinates[0], coordinates[1]))
+            seen.add(beacon_id)
+        return tuple(landmarks)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise ValueError(
+            f"metadata.jsonのBLE配置を読み込めません: {path}: {exc}"
+        ) from exc
 
 
 def _load_unix_offset(path: Path) -> float:

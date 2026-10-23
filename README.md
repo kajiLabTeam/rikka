@@ -9,6 +9,40 @@ PDR（Pedestrian Dead Reckoning）ライブラリです。
 `motion_heading` を使い、端末だけを曲げた量が進行方向へ直接入らないようにしています。
 確定しなかった単発候補は前進扱いにします。
 
+## 目次
+
+- [セットアップ](#セットアップ)
+- [入力データ](#入力データ)
+- [基本コマンド](#基本コマンド)
+- [推定軌跡の精度評価](#推定軌跡の精度評価)
+  - [正解軌跡との複数 seed 比較](#正解軌跡との複数-seed-比較)
+  - [代表軌跡の選択と終端方向の検査](#代表軌跡の選択と終端方向の検査)
+  - [通常 PDR の方式比較](#通常-pdr-の方式比較)
+- [BLE ランドマーク補正](#ble-ランドマーク補正)
+  - [確定位置アンカー（`--pf-hard-anchors`）](#確定位置アンカー--pf-hard-anchors)
+  - [起点・方位の解決と RSSI 距離整合の診断](#起点方位の解決と-rssi-距離整合の診断)
+  - [回帰テスト用の合成 BLE サンプル](#回帰テスト用の合成-ble-サンプル)
+  - [BLE CSV とランドマーク座標](#ble-csv-とランドマーク座標)
+  - [通過で位置が確定する地点（`BLE_LANDMARK_ANCHORS`）](#通過で位置が確定する地点ble_landmark_anchors)
+  - [BLE 関連の CLI オプション](#ble-関連の-cli-オプション)
+  - [実測 BLE の検出条件と入力形式](#実測-ble-の検出条件と入力形式)
+  - [BLE 有効時の出力](#ble-有効時の出力)
+  - [PF のランドマーク反映モード（`--pf-landmark-mode`）](#pf-のランドマーク反映モード--pf-landmark-mode)
+  - [モジュールの責務分担](#モジュールの責務分担)
+- [データフロー](#データフロー)
+- [ケイデンスに応じた歩検出（実験的）](#ケイデンスに応じた歩検出実験的)
+- [標準設定](#標準設定)
+  - [運動状態・方位・歩幅の逐次推定](#運動状態方位歩幅の逐次推定)
+  - [robust と sequence の位置づけ](#robust-と-sequence-の位置づけ)
+- [横歩き判定の見方](#横歩き判定の見方)
+  - [判定の調整](#判定の調整)
+- [ジャイロバイアス比較](#ジャイロバイアス比較)
+- [主な出力](#主な出力)
+- [コード構成](#コード構成)
+- [Python から使う](#python-から使う)
+- [開発コマンド](#開発コマンド)
+- [接続確認](#接続確認)
+
 ## セットアップ
 
 ```sh
@@ -22,8 +56,8 @@ AI エージェントや sandbox 環境で `uv` の既定キャッシュに対�
 UV_CACHE_DIR=.uv-cache uv run pytest
 ```
 
-パーティクルフィルタのアニメーション出力は WebM を優先し、生成できない場合は MP4、
-MP4も生成できない場合は GIF にフォールバックします。WebM/MP4の出力には `ffmpeg` が必要です。
+パーティクルフィルタのアニメーション出力は MP4 を優先し、生成できない場合は WebM、
+WebMも生成できない場合は GIF にフォールバックします。MP4/WebMの出力には `ffmpeg` が必要です。
 
 ```sh
 brew install ffmpeg
@@ -55,10 +89,15 @@ input/
 | `Accelerometer.csv` | `Time (s)`, `Acceleration x/y/z (m/s^2)` または `X/Y/Z (m/s^2)` |
 | `Gyroscope.csv` | `Time (s)`, `Gyroscope x/y/z (rad/s)` または `X/Y/Z (rad/s)` |
 
+Androidロガーの `acce.csv` / `gyro.csv`（`timestamp_ns, wall_time_ms, x, y, z`）
+にも対応します。`metadata.json` の記録開始時刻を使い、単調時計差から経過秒へ
+変換します。CLIは同metadataのstart制約から起点・初期方位を読み取ります。
+明示的なCLI引数と `walk_config.csv` がある場合は、そちらを優先します。
+
 現在の既定入力は次です。
 
 ```python
-DATA_DIR = "input/sensor_data/hiroto/hiroto_1turn_rightsidestep_3turn_leftsidestep"
+DATA_DIR = "input/1021日計測データ/1021_計測1回目"
 ```
 
 別データを使う場合は、CLI の `-d` で指定できます。
@@ -115,11 +154,52 @@ MAE・P95・最大誤差・許容誤差内率・評価対象率を `evaluation.j
 uv run rikka particle
 ```
 
+現在の既定は `candidate-bank`、親粒子ごとの候補数は8です。
+従来の円内再配置は `--pf-proposal legacy` で選べます。
+`no-relocation` は円内再配置だけを無効にし、
+既存の生存粒子補充・ESS再標本化・集団復旧を使います。
+
+```sh
+uv run rikka particle --pf-proposal legacy --pf-seed 0 --no-plot
+uv run rikka particle --pf-proposal no-relocation --pf-seed 0 --no-plot
+uv run rikka particle --pf-proposal candidate-bank --pf-candidates 8 \
+  --pf-seed 0 --no-plot
+```
+
+`candidate-bank` は各親の通常運動モデルからK個の方位・歩幅・状態・位置を
+一緒に生成し、地図と既存因子Gで候補を選びます。親重みには平均因子 `ΣG/K`
+を掛け、採用候補のGを重ねて掛けません。`--pf-candidates` はこの方式だけで
+使え、省略時は8です。他の方式では省略時に1へ解決されます。
+K=1は円内再配置なしの単一提案に対応します。
+`candidate-bank` はBLEの `ranging` / `observation` に対応します。
+BLE因子を候補選択と平均因子に一度だけ含め、復旧後は実際の復旧位置を再評価します。
+BLE適用済みの過去歩をまたぐcheckpoint再生は、その観測の再生に対応するまで制限します。
+新PFの最終軌跡選択はBLEモード名から独立し、通常の反転判定を使用します。
+既定の歩幅・方位分布は維持します。広角探索の追加や精度向上を意味しません。
+`reset` / `hybrid` と既存Gaussianアンカーはlegacyで使用してください。
+新PFの厳密な確定位置は、後述の `--pf-hard-anchors` で別に指定します。
+
+2計測・6seedでの比較、祖先多様性の低下、残存ジャンプ、検証結果は
+`agent/EXPERIMENT_LOG.md` の実験一覧から該当エントリを参照してください。
+
 グラフ表示なしでパーティクルフィルタのアニメーションだけ保存する場合:
 
 ```sh
 uv run rikka particle --no-plot --save-animation
 ```
+
+現行の再配置と前向きPFを維持したまま、過去軌跡の修正候補を別に比較する試作です。
+
+```sh
+uv run rikka particle --history-candidate --pf-seed 0 --no-plot
+```
+
+元の`trajectory.csv`とMP4はそのまま保存し、候補のCSV・比較PNGを追加します。
+センサーに沿った再提案は行いません。候補は保存された生存粒子位置と元軌跡から
+地図上の接続を選び直すもので、始点・終点は元の仮境界を保持します。
+全履歴を使う事後処理で、オンラインの直近区間更新や歩幅・方位状態の再推定は
+まだ行いません。滑らかさを優先するため経路を短縮する可能性があります。
+BLE補正が適用された場合は`skipped_landmark`として候補修正を省略します。
 
 問題歩の粒子状態と代表軌跡候補を静止画で確認する場合:
 
@@ -139,6 +219,45 @@ uv run rikka particle --no-plot --pf-seed 10 \
 uv run rikka sensor
 ```
 
+### 正解軌跡との複数 seed 比較
+
+正解軌跡との複数seed比較を実行する場合:
+
+```sh
+MPLBACKEND=Agg uv run python \
+  agent/agent_evaluate_pf_ground_truth.py \
+  --plot-path output/diagnostics/pf_ground_truth_comparison.png
+```
+
+### 代表軌跡の選択と終端方向の検査
+
+単一計測では、方位ドリフト後に地図上の対称な分岐へ到達すると、壁交差がなくても
+逆側の廊下へ収束し、単一PFだけでは一意に直せない場合がある。
+複数計測の代表軌跡を作るときは、終端15%の方向を
+計測・PDR/PF方式ごとに等重みで比較し、多数方向から90度を超えて外れる候補を除外
+してからmedoidを選ぶ。正解軌跡はこの選択には使用せず、選択後の評価だけに使う。
+
+評価CSV/JSONでは次も確認する。
+
+- `terminal_direction_error_deg`: 正解終端区間との方位差
+- `terminal_progress_cosine`: 正解終端方向への投影。負なら逆向き
+- `terminal_opposed_fraction`: 終端15%で対応接線が90度以上逆向きの割合
+- `terminal_direction_failure`: projectionが負、または逆向き割合が0.5以上
+
+### 通常 PDR の方式比較
+
+通常PDRの方式比較は、同じ正解ルートに対応するデータをまとめて指定できる。
+
+```sh
+MPLBACKEND=Agg uv run python agent/agent_evaluate_adaptive_pdr.py \
+  --data-dir \
+  input/sensor_data/natsuki/1turn_rightsidestep_3turn_leftsidestep \
+  input/sensor_data/natsuki/1turn_rightsidestep_3turn_leftsidestep5 \
+  input/sensor_data/natsuki/1turn_rightsidestep_3turn_leftsidestep6 \
+  input/sensor_data/natsuki/1turn_rightsidestep_3turn_leftsidestep7 \
+  input/sensor_data/natsuki/1turn_rightsidestep_3turn_leftsidestep8
+```
+
 ## BLE ランドマーク補正
 
 既知座標に置いた BLE ビーコンの RSSI が閾値以上になったとき、通常 PDR または
@@ -146,6 +265,81 @@ particle filter にランドマーク位置を反映できます。BLE 測位自
 
 実測では計測ディレクトリに `BLE.csv`、`BLE_pos.csv`、`walk_config.csv` を置きます。
 起点・方位を計測ごとに解決してから、PF のRSSI測距尤度を使います。
+
+Androidロガーの計測では、小文字の `ble.csv` と、同じディレクトリの
+`metadata.json` 内の `ble.configuration.beacons` にも対応します。
+`beacon_id` と小数精度を維持した `pixel_x` / `pixel_y` を読み込み、
+`enabled: false` の配置は除外します。計測の `recording_context.floor_id` が
+ある場合、有効ビーコンの `floor_id` と一致しなければ入力エラーになります。
+同居する `BLE_pos.csv` があれば従来どおりそちらを優先します。
+`--ble-data` を明示した場合は、そのCSVと同じディレクトリの配置を使います。
+自動検出は `BLE.csv`、`ble.csv` の順です。座標の不備や有効IDの重複を含む
+BLE設定は、共通既定座標へフォールバックせず入力エラーにします。
+metadataの設置座標を読み込んでも、歩行者の到達を保証する確定アンカーには
+設定しません。地図画像とmetadataの座標系・縮尺の対応は利用者が確認してください。
+新PFでBLEを使う場合は `--pf-landmark-mode ranging` または `observation` を明示します。
+BLEは既定無効、PFランドマークモードの既定は従来の `hybrid` のままです。
+
+```sh
+uv run rikka particle -d 'input/1021日計測データ/1021_計測1回目' \
+  --ble-landmark --pf-landmark-mode ranging --pf-seed 0 --no-plot
+```
+
+`ranging` は各歩・ビーコンのRSSI中央値を測距尤度として使用し、`observation` は
+接近検出時だけ周辺位置の尤度を使用します。同じRSSIを両方の独立観測として掛けません。
+現在の既定パスロスモデルは1021で校正済みではなく、preflight警告が出る場合があります。
+軌跡が自然になったことやRSSI残差の減少だけでは位置精度が上がったと判断できません。
+比較結果は `agent/EXPERIMENT_LOG.md` の実験一覧から該当エントリを参照してください。
+
+`--ble-detection-profile auto|measured|synthetic` で接近検出条件の由来を分離できます。
+`auto` はThingsup形式またはBLE配置metadata付き計測を実測として扱います。
+それ以外の標準CSVは従来互換の条件を使い、実測CSVには `measured` を明示できます。
+これはRSSI測距モデルの校正とは別の設定です。
+
+### 確定位置アンカー（`--pf-hard-anchors`）
+
+
+`--pf-hard-anchors anchors.json` は、歩行者が実際にその位置にいた根拠があるときの
+前向き再初期化です。metadataのビーコン設置座標や強いRSSIだけでは自動生成しません。
+JSONは次の配列形式です。数値は形式説明用で、実測の到達証明を表しません。
+
+```json
+[
+  {
+    "event_id": "confirmed-arrival-1",
+    "timestamp_s": 1.0,
+    "pixel_x": 100.5,
+    "pixel_y": 200.5,
+    "source": "manual",
+    "evidence": "計測時に記録した到達確認"
+  }
+]
+```
+
+時刻はセンサー開始基準の秒で、`step_headings.csv` の `timestamp_s` にある
+使用歩の境界時刻へ厳密に一致させてください。`trajectory.csv` の従来の時刻は
+最初の使用歩基準なので、その値をそのまま転用しないでください。
+歩間時刻の補間・過去区間の再推定は未対応です。位置・根拠・時刻の矛盾は入力エラーにします。
+
+```sh
+uv run rikka particle --pf-hard-anchors anchors.json \
+  --pf-landmark-mode none --pf-seed 0 --no-plot
+```
+
+任意の `heading_deg` を指定したときだけ方位も合わせます。位置のみでは方位・歩幅倍率の
+仮説を維持します。任意の `floor_id` を指定する場合は、対応する使用地図のIDを
+`--floormap-floor-id` でも明示してください。計測metadataの階IDだけで任意画像の一致を推測しません。
+
+確定点では全粒子をその位置へ合わせ、完了した過去区間を固定して追跡を再開します。
+`hard_anchor_corrections.csv` に根拠・訂正前後を、`trajectory_segments.csv` に歩行距離と
+位置訂正距離を分けて保存します。`trajectory.csv` には区間ID・位置訂正フラグが追加されます。
+`trajectory_before_anchor_nodes.csv` はアンカーノードだけを補正直前へ戻した診断列であり、
+BLEなし・確定位置なしで再実行した軌跡ではありません。
+軌跡図・アニメーションでは位置訂正を赤い破線で描き、歩行経路と区別します。
+従来の `step_vectors.csv` の点間差には位置訂正も含まれるため、hard使用時の歩行距離は
+`trajectory_segments.csv` の `walking_distance_m` を参照してください。
+
+詳しい設計は `agent/new-pf-ble-integration-plan-2026-10-23.md` を参照してください。
 
 ```sh
 uv run python agent/agent_diagnose_ble_ranging.py \
@@ -155,17 +349,21 @@ uv run rikka particle \
   --ble-landmark --pf-landmark-mode ranging --no-plot
 ```
 
+### 起点・方位の解決と RSSI 距離整合の診断
+
 `walk_config.csv` がある場合の解決順は、CLI明示値、計測設定、共通既定値です。
 診断は `corr(RSSI, log10(distance)) <= -0.5` かつパスロス係数
 `1.5 <= n <= 4.0` を合格条件とします。RSSIから逆算した探索起点は検算用であり、
 実測起点の代わりにはしません。
+
+### 回帰テスト用の合成 BLE サンプル
 
 実測データがない場合は、回帰テスト用サンプルを先に生成できます。
 
 ```sh
 uv run rikka ble-sample
 uv run rikka run --ble-landmark --no-plot
-uv run rikka particle --ble-landmark --no-plot
+uv run rikka particle --ble-landmark --pf-landmark-mode ranging --no-plot
 ```
 
 `ble-sample` は既定で、対象データのPDR軌跡とビーコンの距離からRSSIを生成します。
@@ -178,6 +376,8 @@ uv run rikka ble-sample \
   --source truth \
   --truth-csv "input/correct_path/1turn_rightsidestep_3turn_leftsidestep/walk_trace (3).csv"
 ```
+
+### BLE CSV とランドマーク座標
 
 BLE CSV は次の3列を持ちます。
 
@@ -193,6 +393,8 @@ BLE CSV は次の3列を持ちます。
 `(0, 0)` とするピクセル座標です。補正時に `--origin-px` と `--scale` を
 使って PDR のメートル座標へ変換します。既定の検出下限は -70 dBm です。
 ピーク時刻は5サンプルの移動中央値で安定化します。
+
+### 通過で位置が確定する地点（`BLE_LANDMARK_ANCHORS`）
 
 改札・自動ドア・踊り場のように、通過した事実から位置を確定できる地点は
 `BLE_LANDMARK_ANCHORS` へ追加します。既定値は空で、通常ランドマークの挙動には
@@ -210,6 +412,8 @@ BLE_LANDMARK_ANCHORS = (
 粒子を再配置し、方位指定時は絶対方位差を減衰しない補正項へ反映します。大きな
 ジャンプは停止せず警告します。強制補正なので、実測データで検出時刻と通過時刻が
 一致することを確認してから設定してください。
+
+### BLE 関連の CLI オプション
 
 - `--ble-landmark`: BLE 補正を有効化
 - `--ble-data PATH`: BLE CSV を指定
@@ -232,6 +436,8 @@ BLE_LANDMARK_ANCHORS = (
   違反する補正の棄却、のいずれかで扱います。減衰列は
   `--ble-retrofit-damp-factor` を複数指定して変更できます。
 
+### 実測 BLE の検出条件と入力形式
+
 実測ログの検出は、閾値以上が3観測続くこと、同一ビーコンの10秒cooldown、
 6dB以上のピークprominenceを要求します。合成BLEは既存goldenとの互換性のため、
 従来の1接近1検出規則を維持します。
@@ -242,6 +448,8 @@ BLE_LANDMARK_ANCHORS = (
 Thingsup形式を `--ble-data` で明示した場合、同じディレクトリに `BLE_pos.csv` が
 無ければ入力エラーになります。既定ランドマークへの無警告フォールバックは行いません。
 
+### BLE 有効時の出力
+
 BLE 有効時は `output/<timestamp>/landmark_corrections.csv` に検出時刻、RSSI、
 補正前座標、ランドマーク座標、補正後座標、検出距離、最接近時間差、アンカーの
 位置・方位設定を保存します。`similarity` では回転角、歩幅倍率、減衰係数、
@@ -250,6 +458,8 @@ BLE 有効時は `output/<timestamp>/landmark_corrections.csv` に検出時刻�
 `trajectory.png`（PFでは `pf_trajectory.png`）には、`BLE_pos.csv` で座標が
 確定した全ビーコンを星印で表示し、補正前後の軌跡と補正地点を重ねて描画します。
 最終歩より後で補正できなかった検出は `step=-1`、`applied=False` としてCSVに残ります。
+
+### PF のランドマーク反映モード（`--pf-landmark-mode`）
 
 particle filter では `--pf-landmark-mode` で反映方式を選びます。
 
@@ -277,6 +487,8 @@ particle filter では `--pf-landmark-mode` で反映方式を選びます。
 6 seed評価で選んだ値なので、実測BLE取得後には再校正が必要です。PF の
 `landmark_corrections.csv` にある
 `before/after` は反映前後の粒子重み付き平均、`raw_trajectory` の描画は同じ歩列から
+### モジュールの責務分担
+
 作った通常 PDR 軌跡を表します。
 
 ランドマーク測位は推定方式ごとに責務を分離しています。
@@ -356,18 +568,52 @@ flowchart LR
     sensor_plot --> input
 ```
 
+## ケイデンスに応じた歩検出（実験的）
+
+`--step-detection adaptive_peak` で、局所的な歩行周期に応じて近接ピークを
+除外する方式を選べます。現在の既定は `adaptive_peak` です。
+従来方式は `--step-detection peak` で選択できます。
+
+```sh
+# 通常PDR
+uv run rikka run --step-detection adaptive_peak
+
+# 従来PFの歩検出だけを切り替える
+uv run rikka particle --step-detection adaptive_peak --pf-proposal legacy --pf-seed 0
+
+# フェーズ2の候補生成方式と組み合わせる
+uv run rikka particle --step-detection adaptive_peak --pf-proposal candidate-bank --pf-candidates 8 --pf-seed 0
+```
+
+前後3秒の加速度から自己相関と候補間隔を調べ、実時刻でピークを選びます。
+周期の探索範囲は0.33〜1.2秒で、周期が不明な区間は暫定の最小間隔0.4秒を
+使用します。停止・微小振動と弱い副峰を除外し、周期から架空の歩は追加しません。
+前後の信号を使う**オフライン方式**で、`--smoothing causal` でも歩検出自体は
+因果処理になりません。
+
+通常のCSVに加え、`step_detection_diagnostics.csv` に全候補の時刻、推定周期、
+支持指標、最小間隔、突出度、採否と理由を出力します。`confidence` は自己相関または
+候補間隔の支持率であり、正解の確率ではありません。候補なしでもヘッダーを保存します。
+
+1歩と2歩の周期の曖昧さ、端末の振り方、低い信号強度には限界があります。
+1021データでの検出数増加は測位精度の改善を保証せず、1019データでは既存方式より
+検出数が減る例もあります。比較結果は
+`agent/EXPERIMENT_LOG.md` の実験一覧から該当エントリを参照してください。
+
 ## 標準設定
 
 `uv run rikka run` の現在の主要な既定値です。
 
 | 項目 | 既定値 | 説明 |
 |---|---:|---|
-| `DATA_DIR` | `input/sensor_data/hiroto/hiroto_1turn_rightsidestep_3turn_leftsidestep` | 入力データ |
+| `DATA_DIR` | `input/1021日計測データ/1021_計測1回目` | 入力データ |
 | `FLOORMAP_PATH` | `input/Floormap_building14_5floor.png` | 背景マップ |
-| `FLOORMAP_ORIGIN_PX` | `(2050, 400)` | 軌跡の開始ピクセル |
+| `FLOORMAP_ORIGIN_PX` | `(2972, 245)` | 軌跡の開始ピクセル |
 | `FLOORMAP_SCALE` | `0.01` | 1px あたりのメートル数 |
 | `INITIAL_DIRECTION` | `90.0` | 歩行開始方向 [deg] |
-| `STEP_DETECTION_METHOD` | `peak` | ステップ検出 |
+| `STEP_DETECTION_METHOD` | `adaptive_peak` | 周期に応じた歩検出（オフライン） |
+| `PF_PROPOSAL_METHOD` | `candidate-bank` | PFの候補生成方式 |
+| `PF_CANDIDATE_COUNT` | `8` | candidate-bankの親粒子ごとの候補数 |
 | `HEADING_METHOD` | `gyro_accel_motion` | 方位・移動方向推定 |
 | `FORWARD_HEADING_SOURCE` | `body` | 通常歩行はジャイロ由来の体・端末方向を使用 |
 | `GYRO_BIAS_METHOD` | `prewalk_guarded` | 小さい歩行前biasだけを採用し、端末回転の誤認を抑制 |
@@ -383,14 +629,20 @@ flowchart LR
 | `PF_SIGMA_INIT_HEADING` | `0.03` | PFの初期方位ばらつき [rad] |
 | `PF_SIGMA_HEADING` | `0.01` | PFの1歩ごとの方位ノイズ [rad] |
 | `PF_SIGMA_STEP_LENGTH_RATIO` | `0.01` | 永続倍率で説明できない1歩ごとの歩幅ノイズ |
-| `PF_STRIDE_SCALE_PRIOR_MEAN` | `1.03` | 正解軌跡長から校正したPF歩幅倍率の事前中心 |
+| `PF_STRIDE_SCALE_PRIOR_MEAN` | `1.25` | 1021・WithBLEの8計測比較で採用したPF歩幅倍率の事前中心 |
 | `PF_STRIDE_SCALE_RETENTION` | `0.995` | 学習した歩幅倍率偏差を次歩へ保持する割合 |
-| `PF_STRIDE_SCALE_MIN / MAX` | `0.90 / 1.15` | PFが保持する歩幅倍率の範囲 |
-| `PF_RESAMPLE_ESS_RATIO` | `0.5` | PFで再標本化を開始するESS比率 |
+| `PF_STRIDE_SCALE_MIN / MAX` | `0.80 / 1.30` | PFが保持する歩幅倍率の範囲 |
+| `PF_RESAMPLE_ESS_RATIO` | `0.5` | ESSが粒子数の50%未満なら全粒子を再標本化。それ以外では死亡枠だけ補充 |
+| `PF_INVALID_RELOCATION_RADIUS_M` | `3.0` | 壁衝突した粒子を前歩位置中心の円内へ再配置する半径 [m] |
 | `PF_REJUVENATION_SIGMA_HEADING` | `0.009` | 再標本化後に加える適応方位ノイズの上限 [rad] |
 | `PF_RECOVERY_VALID_RATIO` | `0.05` | PFでmap-aware recoveryを開始する有効粒子率 |
 | `PF_MOTION_PREDICTIVE_WEIGHT_POWER` | `0.1` | 運動状態予測尤度を弱くPF重みへ反映する指数 |
 | `PF_PATH_SELECTION` | `sequence` | 持続反転が減る場合だけ単一祖先経路を採用 |
+
+PF歩幅倍率の事前中心は1.25です。通常PDRの歩幅推定には影響しません。
+全粒子の歩幅を1.25倍へ固定する設定ではなく、地図制約による選択と倍率状態の変動は維持します。
+1021・WithBLE計測の周回と帰還を重視して採用しましたが、一部条件では最終軌跡のジャンプが増えます。
+この値は同じ周回経路の8計測に基づくもので、別経路・別人・端末での最適性は未確認です。
 
 `gyro_accel_motion` では次を分けて扱います。
 
@@ -399,6 +651,40 @@ flowchart LR
 - `movement_type`: センサー上の判定結果
 - `trajectory_movement_type`: 軌跡計算に使った移動タイプ
 - `forward_heading_source`: `forward` 判定ステップの軌跡方位ソース
+
+### 運動状態・方位・歩幅の逐次推定
+
+運動状態・方位・歩幅を確率状態として逐次推定する標準モードは次のように実行する。
+`causal` は各歩までの観測だけを使い、`offline` は記録全体を使って運動状態列を
+後向き平滑化する。標準設定は `adaptive + causal` である。
+
+```sh
+uv run rikka run
+uv run rikka particle --pf-seed 42
+uv run rikka particle --motion-estimation adaptive --smoothing offline --pf-seed 42
+uv run rikka run --motion-estimation robust --smoothing causal
+```
+
+運動状態の予測尤度は、5記録・6 seed評価で最も安定した指数 `0.1` を標準値として
+弱くPF重みへ反映する。
+中央値を優先する場合は `offline`、最悪seedのRMSEを優先する場合は `causal` が
+今回の評価では良かった。
+
+```sh
+uv run rikka particle --motion-estimation adaptive \
+  --motion-predictive-weight-power 0.1 \
+  --pf-path-selection sequence --pf-particles 500 --pf-seed 42
+```
+
+粒子数の既定値は `rikka.common.config` の `PF_NUM_PARTICLES` で設定します。実行単位で
+変更する場合はCLIの `--pf-particles`、Python APIの `particle_count` を使います。
+
+### robust と sequence の位置づけ
+
+`robust` は移動軸の180度方向曖昧性を区間で解決する実験方式である。5反復計測では
+一部データを改善した一方で中央値を悪化させたため、既定や推奨へは昇格していない。
+`sequence` は反転が実際に減る場合だけ単一粒子の完全な祖先経路を使い、それ以外は
+到達可能な平均経路へ戻る標準設定である。
 
 ## 横歩き判定の見方
 
@@ -436,68 +722,7 @@ flowchart LR
 uv run rikka run --forward-heading-source motion
 ```
 
-正解軌跡との複数seed比較を実行する場合:
-
-```sh
-MPLBACKEND=Agg uv run python \
-  agent/agent_evaluate_pf_ground_truth.py \
-  --plot-path output/diagnostics/pf_ground_truth_comparison.png
-```
-
-運動状態・方位・歩幅を確率状態として逐次推定する標準モードは次のように実行する。
-`causal` は各歩までの観測だけを使い、`offline` は記録全体を使って運動状態列を
-後向き平滑化する。標準設定は `adaptive + causal` である。
-
-```sh
-uv run rikka run
-uv run rikka particle --pf-seed 42
-uv run rikka particle --motion-estimation adaptive --smoothing offline --pf-seed 42
-uv run rikka run --motion-estimation robust --smoothing causal
-```
-
-運動状態の予測尤度は、5記録・6 seed評価で最も安定した指数 `0.1` を標準値として
-弱くPF重みへ反映する。
-中央値を優先する場合は `offline`、最悪seedのRMSEを優先する場合は `causal` が
-今回の評価では良かった。
-
-```sh
-uv run rikka particle --motion-estimation adaptive \
-  --motion-predictive-weight-power 0.1 \
-  --pf-path-selection sequence --pf-particles 500 --pf-seed 42
-```
-
-粒子数の既定値は `rikka.common.config` の `PF_NUM_PARTICLES` で設定します。実行単位で
-変更する場合はCLIの `--pf-particles`、Python APIの `particle_count` を使います。
-
-`robust` は移動軸の180度方向曖昧性を区間で解決する実験方式である。5反復計測では
-一部データを改善した一方で中央値を悪化させたため、既定や推奨へは昇格していない。
-`sequence` は反転が実際に減る場合だけ単一粒子の完全な祖先経路を使い、それ以外は
-到達可能な平均経路へ戻る標準設定である。
-
-単一計測では、方位ドリフト後に地図上の対称な分岐へ到達すると、壁交差がなくても
-逆側の廊下へ収束し、単一PFだけでは一意に直せない場合がある。
-複数計測の代表軌跡を作るときは、終端15%の方向を
-計測・PDR/PF方式ごとに等重みで比較し、多数方向から90度を超えて外れる候補を除外
-してからmedoidを選ぶ。正解軌跡はこの選択には使用せず、選択後の評価だけに使う。
-
-評価CSV/JSONでは次も確認する。
-
-- `terminal_direction_error_deg`: 正解終端区間との方位差
-- `terminal_progress_cosine`: 正解終端方向への投影。負なら逆向き
-- `terminal_opposed_fraction`: 終端15%で対応接線が90度以上逆向きの割合
-- `terminal_direction_failure`: projectionが負、または逆向き割合が0.5以上
-
-通常PDRの方式比較は、同じ正解ルートに対応するデータをまとめて指定できる。
-
-```sh
-MPLBACKEND=Agg uv run python agent/agent_evaluate_adaptive_pdr.py \
-  --data-dir \
-  input/sensor_data/natsuki/1turn_rightsidestep_3turn_leftsidestep \
-  input/sensor_data/natsuki/1turn_rightsidestep_3turn_leftsidestep5 \
-  input/sensor_data/natsuki/1turn_rightsidestep_3turn_leftsidestep6 \
-  input/sensor_data/natsuki/1turn_rightsidestep_3turn_leftsidestep7 \
-  input/sensor_data/natsuki/1turn_rightsidestep_3turn_leftsidestep8
-```
+### 判定の調整
 
 横歩き判定を軌跡へそのまま反映して比較したい場合:
 
@@ -561,14 +786,19 @@ uv run rikka run \
 |---|---|
 | `pf_trajectory.png` | PF の平均優先、または反転抑制された単一祖先軌跡 |
 | `particle_diagnostics.csv` | 各歩のESS、有効粒子数、位置・方位分散、歩幅倍率、recovery、軌跡選択モード |
-| `particle_filter.webm` / `.mp4` / `.gif` | パーティクル分布アニメーション |
+| `particle_filter.mp4` / `.webm` / `.gif` | パーティクル分布アニメーション |
 | `particle_frames/step_*.png` | 明示保存時の開始・提案・壁判定・重み・選択/復旧・確定と方位ローズ |
 | `particle_paths_comparison.png` | 明示保存時の加重平均・単一祖先・個別粒子経路と方位変化の比較 |
+| `particle_history_candidate.csv` | `--history-candidate`指定時。原点を含む元/候補座標、センサー時刻、修正量、参照粒子・状態、接続の出所 |
+| `particle_history_summary.csv` | 候補の状態、目的関数、修正数・量、経路長、最大/最小歩間変位、微小移動数 |
+| `particle_relocations.csv` | 通常提案を再配置で置き換えたイベント。checkpoint等の復旧で置換された歩は含めない |
+| `particle_history_comparison.png` | 元/候補の地図上の経路と歩間変位の比較。`--no-plot`でも保存 |
 
 ## コード構成
 
 公開エントリポイントと CLI をアダプターとして、実装は
-`common / pdr / particle / plot` の4領域に分割されています。
+`common / ble / landmark / pdr / particle / plot / stay_analysis` の7領域に
+分割されています。
 
 | ファイル | 役割 |
 |---|---|
@@ -577,19 +807,22 @@ uv run rikka run \
 | `cli/commands.py` | 入力読込、設定構築、PDR・PF・出力pipelineの接続 |
 | `common/config/`, `common/settings.py` | 定数と検証済み設定 |
 | `common/lib/models.py` | `PreparedPdrSteps`、`TrajectoryResult` などの共有型 |
+| `ble/` | BLE CSV 読込、RSSI 判定、サンプル生成 |
+| `landmark/lib/` | 検出元に依存しない座標変換、歩割り当て、相似変換 |
 | `pdr/pipeline.py` | センサー入力から通常PDR結果までの手順 |
 | `pdr/lib/` | 歩検出、歩幅、方位、運動状態、積分、fusion |
 | `particle/pipeline.py` | 準備済み歩列へ地図拘束を適用する手順 |
 | `particle/lib/` | 提案、地図拘束、重み、再標本化、復旧、経路、記録 |
 | `plot/pipeline.py` | CSV・図・animationの出力手順 |
 | `plot/lib/` | フロアマップ座標変換と個別成果物 |
+| `stay_analysis/` | 推定軌跡からの滞在分析。外部呼び出し側が pipeline 経由で使用 |
 
 `particle.pipeline.run_particle()` は `prepare_pdr_steps_with_settings()` が作った
 `PreparedPdrSteps` を境界として受け取り、フロアマップ制約で軌跡を補正します。
 低水準のPF段階実行は `particle.lib.runner.run_particle_steps()` が担当します。
 
-関数単位の読み順、設定、入出力、通常PDRとPFの分岐は、
-[コードリード資料](docs/code-reading/README.md) にまとめています。
+関数単位の読み順、設定、入出力、通常PDRとPFの分岐は、本 README と
+`src/rikka/` 各モジュールの docstring を参照してください。
 
 ## Python から使う
 

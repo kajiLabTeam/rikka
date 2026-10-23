@@ -1,7 +1,11 @@
+from types import SimpleNamespace
+from unittest.mock import Mock
+
 import pytest
 from click.testing import CliRunner
 
 from rikka import cli
+from rikka.cli import commands, options
 from rikka.common.config import (
     FORWARD_HEADING_SOURCE,
     GYRO_BIAS_METHOD,
@@ -15,10 +19,44 @@ from rikka.common.config import (
     SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
     SIDESTEP_SMOOTHING_METHOD,
     SMOOTHING_MODE,
+    STEP_DETECTION_METHOD,
     WEINBERG_REFERENCE_K,
     compute_weinberg_k,
 )
+from rikka.common.settings import ParticleSettings, StepSettings
 from rikka.ping import ping
+
+
+@pytest.mark.parametrize("ble_enabled", [False, True])
+def test_particle_only_receives_landmarks_when_ble_enabled(
+    monkeypatch, ble_enabled
+) -> None:
+    """BLE無効時は未使用座標を渡さず、有効時だけ設定をPFへ渡す。"""
+    prepared = object()
+    monkeypatch.setattr(commands, "_validate_particle_floormap", Mock())
+    monkeypatch.setattr(commands, "_load_floormap_gray", Mock(return_value=None))
+    monkeypatch.setattr(commands, "_validate_landmark_pixels", Mock())
+    monkeypatch.setattr(
+        commands, "run_pdr", Mock(return_value=SimpleNamespace(prepared=prepared))
+    )
+    monkeypatch.setattr(
+        commands,
+        "run_ble_ranging_input",
+        Mock(return_value=SimpleNamespace(detections=(), observations=())),
+    )
+    stop = RuntimeError("PF呼び出し境界までを検証")
+    particle = Mock(side_effect=stop)
+    monkeypatch.setattr(commands, "run_particle", particle)
+
+    with pytest.raises(RuntimeError, match="PF呼び出し境界"):
+        commands.run(use_particle_filter=True, ble_landmark=ble_enabled, plot=False)
+
+    particle.assert_called_once()
+    settings = particle.call_args.kwargs["landmark_settings"]
+    if ble_enabled:
+        assert settings is not None and settings.enabled
+    else:
+        assert settings is None
 
 
 def test_ping_returns_expected_message() -> None:
@@ -53,7 +91,7 @@ def test_default_sidestep_detection_settings_match_selected_standard() -> None:
     assert PF_NUM_PARTICLES == 500
     assert PF_PATH_SELECTION == "sequence"
     assert GYRO_BIAS_METHOD == "prewalk_guarded"
-    assert PF_REJUVENATION_SIGMA_HEADING == pytest.approx(0.009)
+    assert PF_REJUVENATION_SIGMA_HEADING == pytest.approx(0.12)
 
 
 def test_run_help_includes_forward_heading_source_option() -> None:
@@ -62,6 +100,19 @@ def test_run_help_includes_forward_heading_source_option() -> None:
     assert result.exit_code == 0
     assert "--forward-heading-source" in result.output
     assert "default: prewalk_guarded" in result.output
+
+
+@pytest.mark.parametrize("command", ["run", "particle", "sensor"])
+def test_step_detection_defaults_to_adaptive_peak(command) -> None:
+    assert STEP_DETECTION_METHOD == "adaptive_peak"
+    assert StepSettings().detection_method == "adaptive_peak"
+    result = CliRunner().invoke(cli, [command, "--help"])
+    assert result.exit_code == 0
+    assert "default: adaptive_peak" in " ".join(result.output.split())
+    option = next(
+        item for item in cli.commands[command].params if item.name == "step_detection"
+    )
+    assert option.default == "adaptive_peak"
 
 
 def test_run_help_includes_adaptive_motion_options() -> None:
@@ -83,6 +134,9 @@ def test_particle_help_includes_pf_seed_option() -> None:
     assert "--pf-particles" in result.output
     assert "--motion-predictive-weight-power" in result.output
     assert "--pf-path-selection" in result.output
+    assert "--pf-proposal" in result.output
+    assert "--pf-candidates" in result.output
+    assert "candidate-bank" in result.output
     assert "--save-step-frames" in result.output
     assert "--step-frames-range" in result.output
     assert "--step-frames-arrows" in result.output
@@ -125,3 +179,101 @@ def test_cli_manual_gyro_bias_requires_bias_value(command: str) -> None:
 
     assert result.exit_code != 0
     assert "--gyro-bias" in result.output
+
+
+@pytest.mark.parametrize(
+    ("method", "count", "cli_args"),
+    [
+        ("legacy", 1, ["--pf-proposal", "legacy", "--pf-candidates", "1"]),
+        (
+            "no-relocation",
+            1,
+            ["--pf-proposal", "no-relocation", "--pf-candidates", "1"],
+        ),
+        (
+            "candidate-bank",
+            1,
+            ["--pf-proposal", "candidate-bank", "--pf-candidates", "1"],
+        ),
+        (
+            "candidate-bank",
+            4,
+            ["--pf-proposal", "candidate-bank", "--pf-candidates", "4"],
+        ),
+        ("candidate-bank", 8, []),
+        ("legacy", 1, ["--pf-proposal", "legacy"]),
+        ("no-relocation", 1, ["--pf-proposal", "no-relocation"]),
+    ],
+)
+def test_particle_cli_forwards_proposal_options(
+    monkeypatch, method, count, cli_args
+) -> None:
+    """比較方式と候補数をCLIから解析入口へ渡す。"""
+    from rikka.common.lib import sensors
+
+    monkeypatch.setattr(
+        options, "_resolve_measurement_settings", Mock(return_value=((0, 0), 0.0, 1.7))
+    )
+    monkeypatch.setattr(
+        options, "_resolve_ble_inputs", Mock(return_value=("unused.csv", ()))
+    )
+    monkeypatch.setattr(
+        sensors, "load_sensor_data", Mock(return_value=(object(), object()))
+    )
+    run = Mock()
+    monkeypatch.setattr(commands, "run", run)
+
+    result = CliRunner().invoke(
+        cli,
+        ["particle", *cli_args, "--no-plot"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert run.call_args.kwargs["pf_proposal"] == method
+    assert run.call_args.kwargs["pf_candidates"] == count
+
+
+@pytest.mark.parametrize("method", ["legacy", "no-relocation"])
+def test_particle_cli_rejects_unused_candidate_count(method) -> None:
+    """無視される候補数を入力読み込みより前に拒否する。"""
+    result = CliRunner().invoke(
+        cli, ["particle", "--pf-proposal", method, "--pf-candidates", "2"]
+    )
+
+    assert result.exit_code == 2
+    assert "--pf-proposal candidate-bank" in result.output
+
+
+@pytest.mark.parametrize("count", ["0", "-1", "1.5"])
+def test_particle_cli_rejects_invalid_candidate_count(count) -> None:
+    result = CliRunner().invoke(cli, ["particle", "--pf-candidates", count])
+    assert result.exit_code == 2
+    assert "--pf-candidates" in result.output
+
+
+@pytest.mark.parametrize("count", [0, -1, True, 1.5])
+def test_particle_settings_reject_invalid_candidate_count(count) -> None:
+    with pytest.raises(ValueError, match="candidate_count"):
+        ParticleSettings(proposal_method="candidate-bank", candidate_count=count)
+
+
+@pytest.mark.parametrize("method", ["legacy", "no-relocation"])
+def test_particle_settings_reject_unused_candidate_count(method) -> None:
+    with pytest.raises(ValueError, match="candidate_count"):
+        ParticleSettings(proposal_method=method, candidate_count=2)
+
+
+def test_particle_settings_default_to_bank8_and_preserve_legacy() -> None:
+    settings = ParticleSettings()
+    assert settings.proposal_method == "candidate-bank"
+    assert settings.candidate_count == 8
+    assert ParticleSettings(proposal_method="legacy").candidate_count == 1
+    assert ParticleSettings(proposal_method="no-relocation").candidate_count == 1
+    assert (
+        ParticleSettings(
+            proposal_method="candidate-bank", candidate_count=4
+        ).candidate_count
+        == 4
+    )
+    with pytest.raises(ValueError, match="proposal_method"):
+        ParticleSettings(proposal_method="unknown")

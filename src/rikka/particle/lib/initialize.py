@@ -32,6 +32,7 @@ from ...particle.lib.proposal import (
 from ...particle.lib.recorder import (
     ParticleRecorder,
 )
+from .hard_anchor import initialize_hard_positions
 from .landmark import meter_walkable_mask
 from .state import ParticleRuntime
 
@@ -165,6 +166,7 @@ def initialize(ctx: ParticleRuntime) -> None:
     ctx.landmark_events = (
         [] if ctx.landmark_events_collector is None else ctx.landmark_events_collector
     )
+    initialize_hard_positions(ctx)
     ctx.landmark_anchor_steps = set()
     ctx.landmark_reset_steps = set()
     if ctx.landmark_mode != "none":

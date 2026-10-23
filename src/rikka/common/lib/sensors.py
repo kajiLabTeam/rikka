@@ -1,20 +1,23 @@
 """センサーデータの読み込みと前処理。
 
 役割:
-    phyphox 形式の加速度・ジャイロ CSV を標準列名へ正規化し、重力・線形加速度、
+    phyphox形式またはAndroidロガー形式のCSVを標準列名へ正規化し、重力・線形加速度、
     平滑化信号、ジャイロバイアス補正済み積算角を作る。
 依存元:
     ``config`` から入力先・窓幅・補正方式、``gyro_bias`` から偏差推定、
     ``time_utils`` から積分刻みを取得し、NumPy と Pandas で信号を処理する。
+    Androidロガーの記録開始時刻は同じ入力ディレクトリのmetadata.jsonから取得する。
 利用先:
     ``pipeline`` がファイル入力に、``trajectory.prepare_pdr_steps`` が前処理に、
     ``sensor_plot`` が可視化用データ作成に使用する。
 処理フロー:
-    CSV 読み込みと必須列検証後、前処理する軸の非有限値を拒否する。
+    CSV読み込みと必須列検証後、前処理する軸の非有限値を拒否する。
+    Android形式では開始壁時刻から先頭オフセットを求め、以降を単調時計差で秒へ変換する。
     加速度を重力成分と線形成分へ分離し、ジャイロの
     定常偏差を除いて時間積分し、解析列を追加した2つの DataFrame を返す。
 """
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -57,11 +60,55 @@ GYRO_COLUMNS = {
 }
 
 
+def _load_android_logger(data_path: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """ロガーの単調時計を、記録開始時刻を原点とする秒へ変換する。"""
+    try:
+        metadata = json.loads((data_path / "metadata.json").read_text())
+        start_wall_ms = float(metadata["recording_start_wall_time_ms"])
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise ValueError(
+            "Androidロガー入力にはmetadata.jsonのrecording_start_wall_time_msが必要です"
+        ) from exc
+    if not np.isfinite(start_wall_ms):
+        raise ValueError("metadata.jsonの記録開始時刻は有限値にしてください")
+    frames = []
+    for filename in ("acce.csv", "gyro.csv"):
+        raw = pd.read_csv(data_path / filename)
+        missing = {"timestamp_ns", "wall_time_ms", "x", "y", "z"} - set(raw.columns)
+        if missing or raw.empty:
+            raise ValueError(f"{filename}が空、または必須列がありません: {missing}")
+        nanoseconds = pd.to_numeric(raw["timestamp_ns"], errors="raise").to_numpy()
+        first_wall_ms = float(raw["wall_time_ms"].iloc[0])
+        if (
+            not np.all(np.isfinite(nanoseconds))
+            or not np.isfinite(first_wall_ms)
+            or np.any(np.diff(nanoseconds) <= 0)
+        ):
+            raise ValueError(f"{filename}の時刻は有限かつ単調増加にしてください")
+        frame = raw[["x", "y", "z"]].astype(float).copy()
+        # 壁時計の行ごとの丸めを使わず、センサー間の先頭時刻差は保持する。
+        frame.insert(
+            0,
+            "t",
+            (nanoseconds - nanoseconds[0]) / 1e9
+            + (first_wall_ms - start_wall_ms) / 1000.0,
+        )
+        frames.append(frame)
+    return frames[0], frames[1]
+
+
 def load_sensor_data(
     data_dir: str | Path | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """CSVファイルから加速度計とジャイロスコープのデータを読み込む。"""
     data_path = Path(data_dir) if data_dir is not None else Path(DATA_DIR)
+    if (
+        not (data_path / "Accelerometer.csv").exists()
+        and not (data_path / "Gyroscope.csv").exists()
+        and (data_path / "acce.csv").is_file()
+        and (data_path / "gyro.csv").is_file()
+    ):
+        return _load_android_logger(data_path)
     df_acc = pd.read_csv(data_path / "Accelerometer.csv").rename(columns=ACC_COLUMNS)
     df_gyro = pd.read_csv(data_path / "Gyroscope.csv").rename(columns=GYRO_COLUMNS)
 

@@ -14,6 +14,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .candidate_bank import ParticleCandidateBank
+
 
 @dataclass(frozen=True)
 class ParticleFilterStepDiagnostics:
@@ -65,11 +67,16 @@ class ParticleFilterStepDiagnostics:
     trajectory_source_index: int | None
     recovery_candidate_branch_count: int = 0
     recovery_selected_branch_count: int = 0
+    landmark_update_count: int = 0
+    landmark_observation_count: int = 0
+    landmark_floor_fraction: float | None = None
+    landmark_rssi_residual_mean_db: float | None = None
+    landmark_replay_blocked: bool = False
 
 
 @dataclass(frozen=True)
 class ParticleStepStages:
-    """1歩分の段階別パーティクル状態。可視化専用で、推定には使用しない。"""
+    """1歩分の段階状態。可視化と事後解析用で、前向き推定には使用しない。"""
 
     step: int
     timestamp_s: float
@@ -99,6 +106,14 @@ class ParticleStepStages:
     after_offsets: np.ndarray
     after_weights: np.ndarray
     after_motion_state: np.ndarray
+    after_stride_scale: np.ndarray | None = None
+    candidate_bank: ParticleCandidateBank | None = None
+    proposal_method: str = "legacy"
+    proposal_history_version: int = 0
+    history_version: int = 0
+    proposal_matches_final_history: bool = True
+    hard_anchor_event_id: str | None = None
+    segment_id: int = 0
 
 
 @dataclass(frozen=True)

@@ -23,6 +23,7 @@ from ...landmark.lib.retrofit import (
 from ...particle.lib.recorder import (
     ParticlePathComparison,
 )
+from .hard_anchor import hard_segment_reversals, select_hard_segment
 from .path_history import _reconstruct_particle_paths
 from .path_selection import _select_reachable_cluster_path
 from .sequence_path import (
@@ -87,7 +88,33 @@ def finalize(
     ctx.particle_paths = _reconstruct_particle_paths(
         ctx.position_history, ctx.parent_history
     )
-    if allowed_jump_steps:
+    if ctx.hard_anchor_events:
+        current, sequence = select_hard_segment(ctx)
+        ctx.current_path = np.asarray([*ctx.hard_current_prefix, *current.tolist()[1:]])
+        ctx.sequence_path = np.asarray(
+            [*ctx.hard_sequence_prefix, *sequence.tolist()[1:]]
+        )
+        ctx.current_modes = ["hard_segment_current"] * len(ctx.current_path)
+        ctx.sequence_modes = ["hard_segment_sequence"] * len(ctx.sequence_path)
+        ctx.current_sources = [None] * len(ctx.current_path)
+        ctx.sequence_sources = [None] * len(ctx.sequence_path)
+        ctx.current_reversals = ctx.hard_current_reversals + hard_segment_reversals(
+            ctx, current
+        )
+        ctx.sequence_reversals = ctx.hard_sequence_reversals + hard_segment_reversals(
+            ctx, sequence
+        )
+        if ctx.path_selection == "sequence":
+            ctx.selected_path = ctx.sequence_path
+            ctx.trajectory_modes = ctx.sequence_modes
+            ctx.trajectory_sources = ctx.sequence_sources
+            ctx.selected_mode = "sequence"
+        else:
+            ctx.selected_path = ctx.current_path
+            ctx.trajectory_modes = ctx.current_modes
+            ctx.trajectory_sources = ctx.current_sources
+            ctx.selected_mode = "current"
+    elif allowed_jump_steps:
         ctx.current_path, ctx.current_modes, ctx.current_sources = (
             _select_reachable_cluster_path(
                 ctx.position_history,
@@ -165,7 +192,7 @@ def finalize(
             ctx.current_path, ctx.sensor_headings, ctx.turning_evidence
         )
         if ctx.path_selection == "sequence" and (
-            ctx.landmark_mode == "ranging"
+            (ctx.proposal_method == "legacy" and ctx.landmark_mode == "ranging")
             or ctx.sequence_reversals < ctx.current_reversals
         ):
             ctx.selected_path = ctx.sequence_path
@@ -192,7 +219,8 @@ def finalize(
             )
         )
         ctx.selected_mode = "current"
-    _retrofit_landmark_anchor_jumps(ctx)
+    if not ctx.hard_anchor_events:
+        _retrofit_landmark_anchor_jumps(ctx)
     if allowed_jump_steps:
         for step in allowed_jump_steps - ctx.landmark_anchor_steps:
             jump_distance = float(
