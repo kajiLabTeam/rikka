@@ -18,11 +18,11 @@ from math import isfinite
 # Data directory path
 # Change this path to use different input data
 
-DATA_DIR = "input/1024"
+DATA_DIR = "input/1024計測4号館1"
 
 # フロアマップ設定
 # 背景として表示するフロアマップ画像のパス
-FLOORMAP_PATH = "input/Floormap_building14_5floor.png"
+FLOORMAP_PATH = "input/Floormap_building4_2floor.png"
 # 軌跡の起点（原点）がフロアマップ上で対応するピクセル座標 (x_px, y_px)
 # 実際の歩行開始位置に合わせて調整すること
 FLOORMAP_ORIGIN_PX: tuple[int, int] = (2175, 231)
@@ -106,7 +106,7 @@ USER_HEIGHT_M = 1.68
 # 歩幅 = K × (a_max - a_min)^0.25 の K に相当する
 # WEINBERG_REFERENCE_HEIGHT_M のユーザーで校正した値として扱う
 WEINBERG_REFERENCE_HEIGHT_M = 1.70
-WEINBERG_REFERENCE_K = 0.47
+WEINBERG_REFERENCE_K = 0.39  # 新地図対応の14号館・4号館2記録による暫定共通校正
 
 
 def compute_weinberg_k(height_m: float = USER_HEIGHT_M) -> float:
@@ -241,7 +241,10 @@ BLE_DETECT_MIN_SAMPLES = 3
 BLE_DETECT_COOLDOWN_S = 10.0
 BLE_DETECT_MIN_PROMINENCE_DB = 6.0
 BLE_PREFLIGHT_MODE = "warn"
-BLE_MAX_CORRECTION_M = 5.0
+# 1回のBLE補正で推定位置を動かせる距離の上限 [m]。
+# 補正前位置から補正目標点までの距離がこれを超える検出は棄却する。
+# CLI では --ble-max-correction で上書きできる。
+BLE_MAX_CORRECTION_M = 8.0
 # warp 区間の累積歩行距離は補正量の大きさを表さないため、既定では制限しない。
 # 従来の安全弁が必要な実験では CLI から明示的に上限を指定できる。
 BLE_MAX_WARP_SPAN_M: float | None = None
@@ -261,8 +264,12 @@ BLE_PATH_LOSS_TX_POWER_DBM = -59.0
 BLE_PATH_LOSS_N = 2.0
 BLE_RSSI_SIGMA_DB = 6.0
 
-# 通常 PDR のランドマーク補正方式。既存挙動は snap のまま維持する。
-BLE_PDR_CORRECTION_MODE = "snap"
+# 通常 PDR のランドマーク補正方式。"snap" / "warp" / "similarity" から選ぶ。
+# 既定は warp。snap は補正量をすべて検出歩へ集中させるため、補正点に軌跡の
+# 不連続（1歩で数 m の移動）を作る。warp は前回の拘束点からの累積歩行距離に
+# 比例して補正量を配分するので、同じ補正量でも1歩あたりの移動量が小さくなる。
+# snap は後方互換のため選択肢として残し、--ble-correction snap で利用できる。
+BLE_PDR_CORRECTION_MODE = "warp"
 
 # ランドマークとして扱う BLE ビーコンのフロアマップ上の既知座標
 # (beacon_id, pixel_x, pixel_y) の並び。--origin-px と同じ画像左上原点の

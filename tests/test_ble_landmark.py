@@ -29,7 +29,6 @@ from rikka.cli import options as cli_options
 from rikka.cli.commands import run as run_command
 from rikka.cli.options import _resolve_ble_inputs, cli
 from rikka.common import settings as settings_module
-from rikka.common.config import FLOORMAP_PATH
 from rikka.common.lib.floormap import compute_meter_coords, compute_pixel_coords
 from rikka.common.lib.models import (
     BleObservation,
@@ -61,6 +60,11 @@ from rikka.plot.lib.animation import (
 )
 from rikka.plot.lib.outputs import _build_landmark_corrections_dataframe
 from rikka.plot.lib.trajectory import plot_trajectory
+
+# 合成BLE配置は14号館用。利用者が選んだ別建物の既定地図とは分離する。
+SYNTHETIC_REFERENCE_MAP = (
+    Path(__file__).parents[1] / "input/Floormap_building14_5floor.png"
+)
 
 
 def _write_ble_csv(path: Path, rows: list[dict[str, object]]) -> Path:
@@ -552,8 +556,8 @@ def test_landmark_settings_rejects_invalid_release_streak() -> None:
 
 
 def test_default_landmarks_are_walkable_map_pixels() -> None:
-    """既定ランドマークが実フロアマップの歩行可能画素にある。"""
-    map_gray = cli_commands._load_floormap_gray(FLOORMAP_PATH)
+    """合成ランドマークが対応する14号館地図の歩行可能画素にある。"""
+    map_gray = cli_commands._load_floormap_gray(SYNTHETIC_REFERENCE_MAP)
     landmarks = BleLandmarkSettings().landmarks
 
     assert landmarks == (
@@ -1116,7 +1120,7 @@ def test_run_with_particle_filter_loads_ble_observations(
             df_gyro=df_gyro,
             plot=False,
             use_particle_filter=True,
-            floormap_path=FLOORMAP_PATH,
+            floormap_path=SYNTHETIC_REFERENCE_MAP,
             particle_seed=0,
             ble_landmark=True,
             ble_data_path=tmp_path / "missing.csv",
