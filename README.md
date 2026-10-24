@@ -420,12 +420,13 @@ BLE_LANDMARK_ANCHORS = (
 - `--ble-rssi-threshold DBM`: 検出下限を変更
 - `--ble-release-margin DB` / `--ble-release-streak N`: ラッチ解除条件
 - `--ble-sync-window S`: 同時受信としてまとめる時刻窓
-- `--ble-correction snap|warp|similarity`: 通常PDRの補正方式。`warp` は直前拘束
-  からの累積歩行距離比で残差を過去へ配分します。`similarity` は直前アンカーを
+- `--ble-correction snap|warp|similarity`: 通常PDRの補正方式。既定は `warp` で、
+  直前拘束からの累積歩行距離比で残差を過去へ配分します。`similarity` は直前アンカーを
   固定して過去区間を回転・等方スケールし、同じ量を確定方位と歩幅へ反映します。
-  既定の `snap` は後方互換のため維持しています。
+  `snap` は補正量をすべて検出歩へ集中させるため軌跡に不連続を作りますが、
+  後方互換のため選択肢として維持しています。
 - `--ble-preflight warn|error|off`: RSSI距離整合FAIL時の扱い
-- `--ble-max-correction M`: 実際の補正移動量の上限。既定は5mです。
+- `--ble-max-correction M`: 実際の補正移動量の上限。既定は8mです。
 - `--ble-max-warp-span M`: warp区間の累積歩行距離上限。累積距離は補正量を
   表さないため既定では制限せず、必要な実験でだけ明示します。
 - `--ble-retrofit-forward hold|freeze`: `similarity` の回転・倍率を後続歩にも保持するか、

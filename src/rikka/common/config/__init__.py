@@ -241,7 +241,10 @@ BLE_DETECT_MIN_SAMPLES = 3
 BLE_DETECT_COOLDOWN_S = 10.0
 BLE_DETECT_MIN_PROMINENCE_DB = 6.0
 BLE_PREFLIGHT_MODE = "warn"
-BLE_MAX_CORRECTION_M = 5.0
+# 1回のBLE補正で推定位置を動かせる距離の上限 [m]。
+# 補正前位置から補正目標点までの距離がこれを超える検出は棄却する。
+# CLI では --ble-max-correction で上書きできる。
+BLE_MAX_CORRECTION_M = 8.0
 # warp 区間の累積歩行距離は補正量の大きさを表さないため、既定では制限しない。
 # 従来の安全弁が必要な実験では CLI から明示的に上限を指定できる。
 BLE_MAX_WARP_SPAN_M: float | None = None
@@ -261,8 +264,12 @@ BLE_PATH_LOSS_TX_POWER_DBM = -59.0
 BLE_PATH_LOSS_N = 2.0
 BLE_RSSI_SIGMA_DB = 6.0
 
-# 通常 PDR のランドマーク補正方式。既存挙動は snap のまま維持する。
-BLE_PDR_CORRECTION_MODE = "snap"
+# 通常 PDR のランドマーク補正方式。"snap" / "warp" / "similarity" から選ぶ。
+# 既定は warp。snap は補正量をすべて検出歩へ集中させるため、補正点に軌跡の
+# 不連続（1歩で数 m の移動）を作る。warp は前回の拘束点からの累積歩行距離に
+# 比例して補正量を配分するので、同じ補正量でも1歩あたりの移動量が小さくなる。
+# snap は後方互換のため選択肢として残し、--ble-correction snap で利用できる。
+BLE_PDR_CORRECTION_MODE = "warp"
 
 # ランドマークとして扱う BLE ビーコンのフロアマップ上の既知座標
 # (beacon_id, pixel_x, pixel_y) の並び。--origin-px と同じ画像左上原点の
