@@ -559,7 +559,7 @@ def test_default_landmarks_are_walkable_map_pixels() -> None:
     assert landmarks == (
         Landmark("beacon_1", 2056, 2400),
         Landmark("beacon_2", 1450, 1479),
-        Landmark("beacon_3", 2974, 700),
+        Landmark("beacon_3", 2175, 700),
     )
     cli_commands._validate_landmark_pixels(map_gray, landmarks)
 
