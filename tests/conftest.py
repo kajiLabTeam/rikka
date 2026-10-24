@@ -1,10 +1,11 @@
-"""旧PFの数値回帰に必要な条件を、変更される製品既定値から分離する。"""
+"""旧PDR/PFの数値回帰条件を、変更される製品既定値から分離する。"""
 
 from unittest.mock import patch
 
 import pytest
 
 from rikka.particle import pipeline
+from rikka.pdr.lib import preparation
 
 
 @pytest.fixture(scope="module")
@@ -30,5 +31,11 @@ def legacy_particle_profile():
     def fixed_steps(*args, **kwargs):
         return original(*args, **(kwargs | profile))
 
-    with patch.object(pipeline, "run_particle_steps", fixed_steps):
+    # 旧参照値の係数も固定し、校正済みの製品既定値とは別に互換性を検証する。
+    with (
+        patch.object(pipeline, "run_particle_steps", fixed_steps),
+        patch.object(
+            preparation, "compute_weinberg_k", lambda height: 0.47 * (height / 1.70)
+        ),
+    ):
         yield

@@ -618,6 +618,7 @@ uv run rikka particle --step-detection adaptive_peak --pf-proposal candidate-ban
 | `FORWARD_HEADING_SOURCE` | `body` | 通常歩行はジャイロ由来の体・端末方向を使用 |
 | `GYRO_BIAS_METHOD` | `prewalk_guarded` | 小さい歩行前biasだけを採用し、端末回転の誤認を抑制 |
 | `USER_HEIGHT_M` | `1.68` | Weinberg 歩幅補正用の身長 |
+| `WEINBERG_REFERENCE_K` | `0.39` | 新地図の14号館・4号館2記録で暫定校正した歩幅係数（基準身長1.70m） |
 | `SIDESTEP_LATERAL_RATIO` | `1.2` | 横方向/前方向の比率がこの値以上で横歩き候補 |
 | `SIDESTEP_MIN_LATERAL_DISPLACEMENT_M` | `0.03` | 横歩き判定に必要な横方向変位 [m] |
 | `SIDESTEP_SMOOTHING_METHOD` | `clustered` | 同方向 evidence の連続クラスタを評価し、確定横歩きまたは横歩き疑いとして軌跡へ反映 |
@@ -638,6 +639,32 @@ uv run rikka particle --step-detection adaptive_peak --pf-proposal candidate-ban
 | `PF_RECOVERY_VALID_RATIO` | `0.05` | PFでmap-aware recoveryを開始する有効粒子率 |
 | `PF_MOTION_PREDICTIVE_WEIGHT_POWER` | `0.1` | 運動状態予測尤度を弱くPF重みへ反映する指数 |
 | `PF_PATH_SELECTION` | `sequence` | 持続反転が減る場合だけ単一祖先経路を採用 |
+
+Weinberg歩幅係数の基準値は0.39です。14号館の`input/1024`と4号館の
+`input/1024計測4号館1`を、それぞれ対応する新地図（1px=1cm）で比較して選んだ暫定値です。
+旧地図の座標を持つ1021・WithBLEや、別人・別端末での最適性は確認していません。
+歩数を減らして距離を合わせる変更や、全粒子の歩幅を固定する変更はしていません。
+
+方位補正の全体既定値は`prewalk_guarded`を維持します。
+4号館の今回の記録では、既存CLIの手動バイアスを明示した校正条件も利用できます。
+この値は今回の記録向けで、別の計測へ自動適用しません。
+PFでは手動補正により大きな移動が減る一方、停止位置の深さ誤差は既定補正より増える条件もあります。
+
+```sh
+# 4号館：通常PDRの校正条件
+uv run rikka run -d 'input/1024計測4号館1' \
+  --floormap input/Floormap_building4_2floor.png \
+  --gyro-bias-method manual --gyro-bias -0.003 --no-plot
+
+# 4号館：同じ方位補正を使うPF（BLE併用は --ble-landmark --pf-landmark-mode ranging を追加）
+uv run rikka particle -d 'input/1024計測4号館1' \
+  --floormap input/Floormap_building4_2floor.png \
+  --gyro-bias-method manual --gyro-bias -0.003 --pf-seed 0 --no-plot
+
+# 14号館：地図を明示し、方位補正は全体既定値を使用
+uv run rikka particle -d input/1024 \
+  --floormap input/Floormap_building14_5floor.png --pf-seed 0 --no-plot
+```
 
 PF歩幅倍率の事前中心は1.0です。通常PDRの歩幅推定には影響しません。
 全粒子の歩幅を固定する設定ではなく、地図制約による選択と倍率状態の変動は維持します。

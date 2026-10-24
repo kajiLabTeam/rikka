@@ -18,11 +18,11 @@ from math import isfinite
 # Data directory path
 # Change this path to use different input data
 
-DATA_DIR = "input/1024"
+DATA_DIR = "input/1024計測4号館1"
 
 # フロアマップ設定
 # 背景として表示するフロアマップ画像のパス
-FLOORMAP_PATH = "input/Floormap_building14_5floor.png"
+FLOORMAP_PATH = "input/Floormap_building4_2floor.png"
 # 軌跡の起点（原点）がフロアマップ上で対応するピクセル座標 (x_px, y_px)
 # 実際の歩行開始位置に合わせて調整すること
 FLOORMAP_ORIGIN_PX: tuple[int, int] = (2175, 231)
@@ -106,7 +106,7 @@ USER_HEIGHT_M = 1.68
 # 歩幅 = K × (a_max - a_min)^0.25 の K に相当する
 # WEINBERG_REFERENCE_HEIGHT_M のユーザーで校正した値として扱う
 WEINBERG_REFERENCE_HEIGHT_M = 1.70
-WEINBERG_REFERENCE_K = 0.47
+WEINBERG_REFERENCE_K = 0.39  # 新地図対応の14号館・4号館2記録による暫定共通校正
 
 
 def compute_weinberg_k(height_m: float = USER_HEIGHT_M) -> float:
