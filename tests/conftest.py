@@ -1,11 +1,20 @@
-"""旧PDR/PFの数値回帰条件を、変更される製品既定値から分離する。"""
+"""旧PDR/PFの数値回帰条件を、変更される製品既定値から分離する。
 
-from unittest.mock import patch
+テスト全体のmatplotlibバックエンドを非対話の Agg に固定する役割も持つ。
+描画を伴うテストが実行環境の既定バックエンドで表示ウィンドウを開くと、
+`plt.show()` で停止したり図が残って失敗するため、importより前に設定する。
+"""
 
-import pytest
+import matplotlib
 
-from rikka.particle import pipeline
-from rikka.pdr.lib import preparation
+matplotlib.use("Agg")
+
+from unittest.mock import patch  # noqa: E402
+
+import pytest  # noqa: E402
+
+from rikka.particle import pipeline  # noqa: E402
+from rikka.pdr.lib import preparation  # noqa: E402
 
 
 @pytest.fixture(scope="module")
