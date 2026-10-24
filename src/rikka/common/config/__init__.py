@@ -18,14 +18,14 @@ from math import isfinite
 # Data directory path
 # Change this path to use different input data
 
-DATA_DIR = "input/1021日計測データ/1021_計測3回目"
+DATA_DIR = "input/1024"
 
 # フロアマップ設定
 # 背景として表示するフロアマップ画像のパス
 FLOORMAP_PATH = "input/Floormap_building14_5floor.png"
 # 軌跡の起点（原点）がフロアマップ上で対応するピクセル座標 (x_px, y_px)
 # 実際の歩行開始位置に合わせて調整すること
-FLOORMAP_ORIGIN_PX: tuple[int, int] = (2972, 245)
+FLOORMAP_ORIGIN_PX: tuple[int, int] = (2175, 231)
 # 1ピクセルあたりのメートル数（1px = 1cm = 0.01m）
 
 FLOORMAP_SCALE = 0.01
@@ -176,9 +176,9 @@ PF_CANDIDATE_COUNT = 8
 PF_SIGMA_INIT_HEADING = 0.26  # 初期方向ばらつき [rad]（約 14.9 度）
 PF_SIGMA_HEADING = 0.14  # ステップごとの方位角ドリフト [rad/step]（約 8.0 度）
 PF_SIGMA_STEP_LENGTH_RATIO = 0.01  # 永続倍率で説明できない歩ごとの歩幅ノイズ
-PF_STRIDE_SCALE_PRIOR_MEAN = 1.25  # 1021・WithBLEの8計測比較で採用したPF事前中心
+PF_STRIDE_SCALE_PRIOR_MEAN = 1.0  # Group 21・1024の倍率比較を踏まえたPF事前中心
 # 倍率の初期分布は事前中心の周囲へ広げ、下記MIN/MAXでクリップする。
-# 中心1.25は上限1.30に近いため、実際の初期分布は非対称になる。
+# 上下限でクリップするため、中心の設定によって初期分布は非対称になる。
 # 初期 σ と1歩ごとの σ は、保持率 0.995 の AR(1) 定常標準偏差が約 0.10 に
 # なるよう選び、粒子群が時間とともに事前中心へ潰れないようにする。
 PF_STRIDE_SCALE_INIT_SIGMA = 0.10  # 粒子ごとの初期歩幅倍率ばらつき
@@ -271,7 +271,7 @@ BLE_PDR_CORRECTION_MODE = "snap"
 BLE_LANDMARKS_PX: tuple[tuple[str, float, float], ...] = (
     ("beacon_1", 2056, 2400),
     ("beacon_2", 1450, 1479),
-    ("beacon_3", 2974, 700),
+    ("beacon_3", 2175, 700),
 )
 
 # 通過地点の構造から位置・方位を確定できるランドマークの追加情報。

@@ -606,9 +606,9 @@ uv run rikka particle --step-detection adaptive_peak --pf-proposal candidate-ban
 
 | 項目 | 既定値 | 説明 |
 |---|---:|---|
-| `DATA_DIR` | `input/1021日計測データ/1021_計測1回目` | 入力データ |
+| `DATA_DIR` | `input/1024` | 入力データ |
 | `FLOORMAP_PATH` | `input/Floormap_building14_5floor.png` | 背景マップ |
-| `FLOORMAP_ORIGIN_PX` | `(2972, 245)` | 軌跡の開始ピクセル |
+| `FLOORMAP_ORIGIN_PX` | `(2175, 231)` | 軌跡の開始ピクセル |
 | `FLOORMAP_SCALE` | `0.01` | 1px あたりのメートル数 |
 | `INITIAL_DIRECTION` | `90.0` | 歩行開始方向 [deg] |
 | `STEP_DETECTION_METHOD` | `adaptive_peak` | 周期に応じた歩検出（オフライン） |
@@ -629,7 +629,7 @@ uv run rikka particle --step-detection adaptive_peak --pf-proposal candidate-ban
 | `PF_SIGMA_INIT_HEADING` | `0.03` | PFの初期方位ばらつき [rad] |
 | `PF_SIGMA_HEADING` | `0.01` | PFの1歩ごとの方位ノイズ [rad] |
 | `PF_SIGMA_STEP_LENGTH_RATIO` | `0.01` | 永続倍率で説明できない1歩ごとの歩幅ノイズ |
-| `PF_STRIDE_SCALE_PRIOR_MEAN` | `1.25` | 1021・WithBLEの8計測比較で採用したPF歩幅倍率の事前中心 |
+| `PF_STRIDE_SCALE_PRIOR_MEAN` | `1.0` | Group 21・1024の比較に基づくPF歩幅倍率の事前中心 |
 | `PF_STRIDE_SCALE_RETENTION` | `0.995` | 学習した歩幅倍率偏差を次歩へ保持する割合 |
 | `PF_STRIDE_SCALE_MIN / MAX` | `0.80 / 1.30` | PFが保持する歩幅倍率の範囲 |
 | `PF_RESAMPLE_ESS_RATIO` | `0.5` | ESSが粒子数の50%未満なら全粒子を再標本化。それ以外では死亡枠だけ補充 |
@@ -639,10 +639,12 @@ uv run rikka particle --step-detection adaptive_peak --pf-proposal candidate-ban
 | `PF_MOTION_PREDICTIVE_WEIGHT_POWER` | `0.1` | 運動状態予測尤度を弱くPF重みへ反映する指数 |
 | `PF_PATH_SELECTION` | `sequence` | 持続反転が減る場合だけ単一祖先経路を採用 |
 
-PF歩幅倍率の事前中心は1.25です。通常PDRの歩幅推定には影響しません。
-全粒子の歩幅を1.25倍へ固定する設定ではなく、地図制約による選択と倍率状態の変動は維持します。
-1021・WithBLE計測の周回と帰還を重視して採用しましたが、一部条件では最終軌跡のジャンプが増えます。
-この値は同じ周回経路の8計測に基づくもので、別経路・別人・端末での最適性は未確認です。
+PF歩幅倍率の事前中心は1.0です。通常PDRの歩幅推定には影響しません。
+全粒子の歩幅を固定する設定ではなく、地図制約による選択と倍率状態の変動は維持します。
+標準地図はGroup 21由来の2315×3746px画像（1px=1cm）へ置き換えています。
+1024の6seed・BLE有無の比較では、1.25は右側の縦通路へ偏ったため1.0へ戻しました。
+BLE併用時の終点のばらつきや代表経路のジャンプは残り、別人・端末・経路での最適性は未確認です。
+旧地図に対する1021・WithBLEの座標は、そのまま新地図へ流用しないでください。
 
 `gyro_accel_motion` では次を分けて扱います。
 
