@@ -1,8 +1,9 @@
 """PDR の CSV 出力用データ整形。
 
 役割:
-    軌跡、歩幅ベクトル、ステップ区間、方位診断、ジャイロ補正結果を保存可能な
-    Pandas DataFrame に変換し、タイムスタンプ付き出力ディレクトリを作る。
+    軌跡、歩幅ベクトル、ステップ区間、方位診断、ジャイロ補正結果、ランドマーク
+    のみの経路を保存可能な Pandas DataFrame に変換し、タイムスタンプ付き出力
+    ディレクトリを作る。
 依存元:
     ``models`` の各結果型と ``time_utils`` の時刻参照を利用し、NumPy、Pandas、
     pathlib、datetime で列値と保存先を構成する。
@@ -22,6 +23,7 @@ import pandas as pd
 from ...common.lib.models import (
     GyroBiasResult,
     LandmarkCorrectionResult,
+    LandmarkPath,
     StepDetectionResult,
     StepDirectionPosterior,
     StepHeading,
@@ -539,3 +541,19 @@ def _step_plot_signal(
             step_detection.threshold,
         )
     return df_acc["low_lin_norm"].to_numpy(dtype=float), "low_lin_norm", None
+
+
+def _build_landmark_path_dataframe(path: LandmarkPath) -> pd.DataFrame:
+    """ランドマークのみの経路をCSV保存用DataFrameに変換する。"""
+    return pd.DataFrame(
+        {
+            "order": [point.order + 1 for point in path.points],
+            "beacon_id": [point.beacon_id for point in path.points],
+            "pixel_x": [point.pixel_x for point in path.points],
+            "pixel_y": [point.pixel_y for point in path.points],
+            "meter_x": [point.meter_x for point in path.points],
+            "meter_y": [point.meter_y for point in path.points],
+            "segment_length_m": [point.segment_length_m for point in path.points],
+            "cumulative_length_m": [point.cumulative_length_m for point in path.points],
+        }
+    )

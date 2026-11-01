@@ -561,8 +561,13 @@ class OutputSettings:
     step_frames_arrows: int = PF_STEP_FRAMES_ARROWS
     step_frames_dpi: int = PF_STEP_FRAMES_DPI
     save_path_comparison: bool = False
+    trajectory_plot: str = "floormap"
 
     def __post_init__(self) -> None:
+        if self.trajectory_plot not in ("floormap", "meter"):
+            raise ValueError(
+                "trajectory_plot は floormap か meter を指定してください。"
+            )
         if self.step_frames_range is not None:
             first_step, last_step = self.step_frames_range
             if first_step < 1 or first_step > last_step:

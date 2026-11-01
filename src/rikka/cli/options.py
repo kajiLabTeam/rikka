@@ -349,6 +349,37 @@ def _resolve_measurement_settings(
     return origin_px, direction, height_m
 
 
+def _resolve_free_origin_settings(
+    ctx: click.Context,
+    data_dir: str,
+    direction: float,
+    height_m: float,
+    ble_landmark: bool,
+) -> tuple[tuple[int, int], float, float]:
+    """初期位置・初期方位なし実行の起点・方位を固定し、身長だけ計測値を反映する。"""
+    from click.core import ParameterSource  # noqa: PLC0415
+
+    from ..common.lib.measurement_config import (  # noqa: PLC0415
+        load_measurement_user_height,
+    )
+
+    for name, label in (("origin_px", "--origin-px"), ("direction", "--direction")):
+        if ctx.get_parameter_source(name) is ParameterSource.COMMANDLINE:
+            raise click.UsageError(f"--free-origin と {label} は同時に指定できません。")
+    if ble_landmark:
+        raise click.UsageError(
+            "--free-origin は地図座標を使わないため --ble-landmark と併用できません。"
+        )
+
+    # 起点・初期方位を使わないため、計測設定からは身長だけを読む。
+    # 起点や初期方位を持たない計測でも実行できるようにするための分離。
+    if ctx.get_parameter_source("height_m") is not ParameterSource.COMMANDLINE:
+        measured_height = load_measurement_user_height(data_dir)
+        if measured_height is not None:
+            height_m = measured_height
+    return (0, 0), 0.0, height_m
+
+
 def _common_options(f: click.decorators.FC) -> click.decorators.FC:
     """run / particle コマンド共通オプションをまとめたデコレータ。"""
     f = click.option(
@@ -678,6 +709,7 @@ def _run_pdr(
     motion_estimation: str,
     smoothing_mode: str,
     no_plot: bool,
+    free_origin: bool,
     ble_landmark: bool,
     ble_detection_profile: str,
     ble_data_path: str,
@@ -701,14 +733,23 @@ def _run_pdr(
     from .commands import run as _run  # noqa: PLC0415
 
     _validate_gyro_bias_options(gyro_bias_method, gyro_bias)
-    origin_px, direction, height_m = _resolve_measurement_settings(
-        ctx,
-        data_dir,
-        floormap,
-        origin_px,
-        direction,
-        height_m,
-    )
+    if free_origin:
+        origin_px, direction, height_m = _resolve_free_origin_settings(
+            ctx,
+            data_dir,
+            direction,
+            height_m,
+            ble_landmark,
+        )
+    else:
+        origin_px, direction, height_m = _resolve_measurement_settings(
+            ctx,
+            data_dir,
+            floormap,
+            origin_px,
+            direction,
+            height_m,
+        )
     df_acc, df_gyro = load_sensor_data(data_dir)
     ble_data_path, ble_landmarks = _resolve_ble_inputs(
         data_dir,
@@ -720,6 +761,7 @@ def _run_pdr(
         df_gyro=df_gyro,
         plot=not no_plot,
         use_particle_filter=False,
+        trajectory_plot="meter" if free_origin else "floormap",
         floormap_path=floormap,
         origin_px=origin_px,
         scale=scale,
@@ -763,6 +805,12 @@ def _run_pdr(
 
 @cli.command()
 @_common_options
+@click.option(
+    "--free-origin",
+    is_flag=True,
+    default=False,
+    help="初期位置・初期方位を与えず (0, 0) 起点・方位0度で推定する",
+)
 @click.pass_context
 def run(
     ctx: click.Context,
@@ -787,6 +835,7 @@ def run(
     motion_estimation: str,
     smoothing_mode: str,
     no_plot: bool,
+    free_origin: bool,
     ble_landmark: bool,
     ble_detection_profile: str,
     ble_data_path: str,
@@ -830,6 +879,7 @@ def run(
         motion_estimation,
         smoothing_mode,
         no_plot,
+        free_origin,
         ble_landmark,
         ble_detection_profile,
         ble_data_path,
@@ -1279,6 +1329,157 @@ def ble_sample(
         landmark_positions=landmark_positions,
     )
     print(f"Sample BLE RSSI saved to {path} ({rows} rows)")
+
+
+def _parse_landmark_specs(
+    specs: tuple[str, ...],
+) -> tuple[tuple[str, float, float], ...]:
+    """``beacon_id:X:Y`` 形式の指定を経路順のランドマーク座標へ変換する。"""
+    landmarks: list[tuple[str, float, float]] = []
+    for spec in specs:
+        parts = spec.split(":")
+        if len(parts) != 3 or not parts[0].strip():
+            raise click.UsageError(
+                "--landmark は beacon_id:ピクセルX:ピクセルY の形式で指定してください"
+                f": {spec}"
+            )
+        try:
+            pixel_x = float(parts[1])
+            pixel_y = float(parts[2])
+        except ValueError as exc:
+            raise click.UsageError(
+                f"--landmark のピクセル座標は数値で指定してください: {spec}"
+            ) from exc
+        landmarks.append((parts[0].strip(), pixel_x, pixel_y))
+    return tuple(landmarks)
+
+
+def _resolve_landmark_path_inputs(
+    data_dir: str,
+    landmark_specs: tuple[str, ...],
+) -> tuple[tuple[tuple[str, float, float], ...], str, str | None]:
+    """ランドマーク座標の出所を、明示指定・計測入力・設定既定の順に解決する。"""
+    if landmark_specs:
+        return _parse_landmark_specs(landmark_specs), "--landmark の指定", None
+
+    from ..common.config import BLE_LANDMARKS_PX  # noqa: PLC0415
+
+    ble_data_path, landmarks = _resolve_ble_inputs(data_dir, True, _BLE_DATA_DEFAULT)
+    if landmarks:
+        source = (
+            "BLE_pos.csv"
+            if Path(ble_data_path).with_name("BLE_pos.csv").is_file()
+            else "metadata.json"
+        )
+        return (
+            tuple((item.beacon_id, item.pixel_x, item.pixel_y) for item in landmarks),
+            f"{source}（{data_dir}）",
+            ble_data_path,
+        )
+    return BLE_LANDMARKS_PX, "設定既定の BLE_LANDMARKS_PX（合成サンプル用）", None
+
+
+def _resolve_landmark_path_order(
+    ble_data_path: str | None,
+    landmarks: tuple[tuple[str, float, float], ...],
+) -> dict[str, float] | None:
+    """計測のBLEログがある場合に、平滑RSSIのピーク時刻を経路順として返す。"""
+    if ble_data_path is None or not Path(ble_data_path).is_file():
+        return None
+
+    from ..ble.pipeline import run_ble_peak_times  # noqa: PLC0415
+    from ..common.settings import BleLandmarkSettings  # noqa: PLC0415
+
+    settings = BleLandmarkSettings(
+        enabled=True,
+        data_path=ble_data_path,
+        landmarks=tuple(
+            Landmark(beacon_id=beacon_id, pixel_x=pixel_x, pixel_y=pixel_y)
+            for beacon_id, pixel_x, pixel_y in landmarks
+        ),
+    )
+    return run_ble_peak_times(settings) or None
+
+
+@cli.command(name="landmark-path")
+@click.option(
+    "--data-dir",
+    "-d",
+    default=_DATA_DIR_DEFAULT,
+    type=click.Path(),
+    show_default=True,
+    help="ランドマーク配置とBLEログを読む計測フォルダ",
+)
+@click.option(
+    "--landmark",
+    "landmark_specs",
+    multiple=True,
+    help=(
+        "経路順に結ぶランドマークを beacon_id:ピクセルX:ピクセルY で指定（複数指定可、"
+        "指定すると計測フォルダの配置より優先する）"
+    ),
+)
+@click.option(
+    "--order",
+    type=click.Choice(("rssi-peak", "given")),
+    default="rssi-peak",
+    show_default=True,
+    help="経路順。rssi-peak は計測BLEの平滑RSSIが最大の時刻順、given は指定順",
+)
+@click.option(
+    "--floormap",
+    "-f",
+    default=_FLOORMAP_DEFAULT,
+    type=click.Path(),
+    show_default=True,
+    help="フロアマップ画像のパス",
+)
+@click.option(
+    "--scale",
+    type=float,
+    callback=_validate_cli_scale,
+    default=_SCALE_DEFAULT,
+    show_default=True,
+    help="1ピクセルあたりのメートル数",
+)
+@click.option("--no-plot", is_flag=True, default=False, help="グラフ表示を無効化")
+def landmark_path(
+    data_dir: str,
+    landmark_specs: tuple[str, ...],
+    order: str,
+    floormap: str,
+    scale: float,
+    no_plot: bool,
+) -> None:
+    """ランドマーク座標のみを順に直線で結んだ軌跡を出力する。"""
+    from .commands import run_landmark_path  # noqa: PLC0415
+
+    landmarks, source, ble_data_path = _resolve_landmark_path_inputs(
+        data_dir,
+        landmark_specs,
+    )
+    if len(landmarks) < 2:
+        raise click.UsageError(
+            f"経路には2点以上のランドマークが必要です（出所: {source}）。"
+        )
+    order_times = (
+        None
+        if order == "given"
+        else _resolve_landmark_path_order(ble_data_path, landmarks)
+    )
+    click.echo(f"ランドマーク座標の出所: {source}")
+    click.echo(
+        "経路順: "
+        + ("計測BLEの平滑RSSIピーク時刻" if order_times is not None else "座標の指定順")
+    )
+    output_dir = run_landmark_path(
+        landmarks,
+        floormap_path=floormap,
+        scale=scale,
+        plot=not no_plot,
+        order_times=order_times,
+    )
+    click.echo(f"ランドマーク経路の出力先: {output_dir}")
 
 
 @cli.command(name="evaluate")

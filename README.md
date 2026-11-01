@@ -14,6 +14,8 @@ PDR（Pedestrian Dead Reckoning）ライブラリです。
 - [セットアップ](#セットアップ)
 - [入力データ](#入力データ)
 - [基本コマンド](#基本コマンド)
+  - [初期位置・初期方位を与えない PDR（`--free-origin`）](#初期位置初期方位を与えない-pdr--free-origin)
+  - [ランドマークのみの軌跡（`landmark-path`）](#ランドマークのみの軌跡landmark-path)
 - [推定軌跡の精度評価](#推定軌跡の精度評価)
   - [正解軌跡との複数 seed 比較](#正解軌跡との複数-seed-比較)
   - [代表軌跡の選択と終端方向の検査](#代表軌跡の選択と終端方向の検査)
@@ -125,6 +127,59 @@ uv run rikka run --no-plot
 ```sh
 uv run rikka pdr
 ```
+
+### 初期位置・初期方位を与えない PDR（`--free-origin`）
+
+起点と初期方位を与えずに歩行軌跡だけを見る場合は `--free-origin` を付けます。
+座標 (0, 0) を起点、方位オフセット 0 度として推定し、メートル座標のまま
+`trajectory_meter.png` へ描画します。`--floormap` の画像が存在する場合は、地図の
+画素 (0, 0) を軌跡の起点に合わせて背景へ敷きます。地図へ合わせ込む補正は行わない
+ため、背景は位置関係を見るための目安です。地図が無い環境では軌跡だけを描画します。
+
+```sh
+uv run rikka pdr --free-origin
+```
+
+このモードは地図座標を使わないため、`--origin-px`、`--direction`、
+`--ble-landmark` とは併用できません。`walk_config.csv` や `metadata.json` が
+ある計測フォルダでも、起点と初期方位は読み込まず固定します。身長だけは
+`--height-m` を明示しない限り計測設定の値を使います。
+
+### ランドマークのみの軌跡（`landmark-path`）
+
+PDR を使わず、既知座標のランドマークを順に直線で結んだだけの軌跡を出力します。
+既定では計測フォルダのランドマーク配置を読みます。
+
+```sh
+uv run rikka landmark-path -d input/1024 \
+  --floormap input/Floormap_building14_5floor.png
+```
+
+座標の出所は PDR の BLE ランドマークと同じ優先順位で、`--landmark` の明示指定、
+計測フォルダの `BLE_pos.csv`、同フォルダの `metadata.json` の BLE 配置、
+`src/rikka/common/config/__init__.py` の `BLE_LANDMARKS_PX` の順に解決します。
+`BLE_LANDMARKS_PX` は合成サンプル用の座標なので、実測の配置とは一致しません。
+どれを使ったかは実行時に表示します。
+
+座標を直接指定する場合は `beacon_id:ピクセルX:ピクセルY` を経路順に並べます。
+
+```sh
+uv run rikka landmark-path \
+  --landmark lm_1:2175:420 \
+  --landmark lm_2:2026:583 \
+  --landmark lm_3:1181:458
+```
+
+経路順は `--order` で選びます。既定の `rssi-peak` は、計測フォルダの BLE ログで
+平滑 RSSI が最大になった時刻、つまり最接近時刻の順に結び、受信が無い
+ランドマークは経路へ含めません。`given` は座標の指定順をそのまま使います。
+BLE ログが無い場合は指定順になります。
+
+ピクセル座標は `--floormap` で指定した画像の左上原点で、画像外の座標は実行前に
+エラーにします。出力先は `output/<実行時刻>/` で、内訳は `landmark_path.csv` と
+`landmark_path.png` です。CSV には経路順の `order`、`beacon_id`、ピクセル座標、
+先頭ランドマークを原点とするメートル座標（画像の上方向が +Y）、区間距離、
+累積距離が入ります。
 
 ## 推定軌跡の精度評価
 
@@ -387,8 +442,17 @@ BLE CSV は次の3列を持ちます。
 | `beacon_id` | `BLE_LANDMARKS_PX` に登録するビーコン識別子 |
 | `rssi_dbm` | 受信 RSSI [dBm] |
 
-ランドマーク座標は `src/rikka/common/config/__init__.py` の
-`BLE_LANDMARKS_PX` に `(beacon_id, pixel_x, pixel_y)` で設定します。
+ランドマーク座標は、計測フォルダの `BLE_pos.csv`、同フォルダの
+`metadata.json` の `ble.configuration.beacons`、
+`src/rikka/common/config/__init__.py` の `BLE_LANDMARKS_PX` の順に解決します。
+実測データでは入力側の配置が必ず優先されます。
+
+`BLE_LANDMARKS_PX` の既定値は**合成BLEサンプル専用の架空配置**です。
+14号館5階の地図上で歩行可能な3点を選んだだけの値で、実測ビーコンの設置座標では
+ありません。`rikka ble-sample` の生成前提と、配置情報を持たない標準CSVを
+`--ble-data` で渡したときの最終既定値として使います。実測の軌跡や精度を
+この座標で評価しないでください。
+
 `pixel_x` と `pixel_y` は `--origin-px` と同じ、フロアマップ画像の左上を
 `(0, 0)` とするピクセル座標です。補正時に `--origin-px` と `--scale` を
 使って PDR のメートル座標へ変換します。既定の検出下限は -70 dBm です。
@@ -809,6 +873,14 @@ uv run rikka run \
 | `step_headings.csv` | 方位候補、横歩き判定、軌跡反映タイプ |
 | `gyro_bias.csv` | ジャイロバイアス推定の診断情報 |
 | `step_segments.csv` | `paper_vertical_threshold` 使用時のステップ区間 |
+| `trajectory_meter.png` | `--free-origin` 指定時の (0, 0) 起点メートル座標の軌跡。地図があれば画素 (0, 0) を起点に背景へ重ねる。`trajectory.png` の代わりに保存 |
+
+`landmark-path` は同じ `output/<timestamp>/` に次を保存します。
+
+| ファイル | 内容 |
+|---|---|
+| `landmark_path.csv` | 経路順、beacon_id、ピクセル座標、メートル座標、区間距離、累積距離 |
+| `landmark_path.png` | ランドマークを順に直線で結んだフロアマップ上の経路 |
 
 パーティクルフィルタでは追加で次を保存します。
 
@@ -838,7 +910,8 @@ uv run rikka run \
 | `common/config/`, `common/settings.py` | 定数と検証済み設定 |
 | `common/lib/models.py` | `PreparedPdrSteps`、`TrajectoryResult` などの共有型 |
 | `ble/` | BLE CSV 読込、RSSI 判定、サンプル生成 |
-| `landmark/lib/` | 検出元に依存しない座標変換、歩割り当て、相似変換 |
+| `landmark/pipeline.py` | ランドマーク領域の入口。ランドマークのみの経路生成 |
+| `landmark/lib/` | 検出元に依存しない座標変換、歩割り当て、相似変換、経路生成 |
 | `pdr/pipeline.py` | センサー入力から通常PDR結果までの手順 |
 | `pdr/lib/` | 歩検出、歩幅、方位、運動状態、積分、fusion |
 | `particle/pipeline.py` | 準備済み歩列へ地図拘束を適用する手順 |

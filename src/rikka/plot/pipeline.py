@@ -1,7 +1,8 @@
 """解析結果からCSV・図一式を書き出す pipeline。
 
 役割:
-    PDR/PF の共通結果を受け、成果物の整形・保存・描画を一元化する。
+    PDR/PF の共通結果とランドマークのみの経路を受け、成果物の整形・保存・描画を
+    一元化する。
 依存元:
     ``common`` の共有型と設定、同領域 ``lib`` の出力・描画部品を使用する。
 利用先:
@@ -17,7 +18,12 @@ import numpy as np
 import pandas as pd
 
 from ..common.config import SAMPLING_RATE
-from ..common.lib.models import FloorMap, StepCandidateDiagnostic, TrajectoryResult
+from ..common.lib.models import (
+    FloorMap,
+    LandmarkPath,
+    StepCandidateDiagnostic,
+    TrajectoryResult,
+)
 from ..common.settings import OutputSettings, ParticleSettings, PdrSettings
 from ..particle.lib.recorder import ParticleFilterStepDiagnostics
 from .lib.animation import plot_particle_filter_trajectory, save_particle_animation
@@ -28,10 +34,12 @@ from .lib.frames import (
     save_particle_step_frames,
 )
 from .lib.history import save_history_comparison, save_history_csv
+from .lib.landmark_path import plot_landmark_path
 from .lib.outputs import (
     _build_direction_posteriors_dataframe,
     _build_gyro_bias_dataframe,
     _build_landmark_corrections_dataframe,
+    _build_landmark_path_dataframe,
     _build_motion_posteriors_dataframe,
     _build_step_headings_dataframe,
     _build_step_length_observations_dataframe,
@@ -42,7 +50,7 @@ from .lib.outputs import (
     _step_plot_signal,
 )
 from .lib.sensor import plot_sensor_data, plot_step_lengths, plot_step_vectors
-from .lib.trajectory import plot_trajectory
+from .lib.trajectory import plot_trajectory, plot_trajectory_meters
 
 
 def create_output_dir() -> Path:
@@ -213,7 +221,7 @@ def render(
     """要求された軌跡図、センサー図、PF診断画像を描画する。"""
     prepared = result.prepared
     if output_settings.plot:
-        _render_trajectory(result, particle_settings, output_dir)
+        _render_trajectory(result, particle_settings, output_settings, output_dir)
         t_acc = (
             prepared.df_acc["t"].to_numpy()
             if "t" in prepared.df_acc.columns
@@ -255,9 +263,23 @@ def render(
 def _render_trajectory(
     result: TrajectoryResult,
     settings: ParticleSettings,
+    output: OutputSettings,
     output_dir: Path,
 ) -> None:
     """通常PDRとPFで共通の引数を使って軌跡図を描画する。"""
+    if result.particle is None and output.trajectory_plot == "meter":
+        # 初期位置・初期方位を与えない実行は地図座標へ合わせ込めないため、
+        # (0, 0) 起点のメートル座標で描き、地図があれば画素(0, 0)を原点に重ねる。
+        floormap_path = Path(settings.floormap_path)
+        plot_trajectory_meters(
+            result.trajectory,
+            output_dir=output_dir,
+            floormap_path=floormap_path if floormap_path.is_file() else None,
+            scale=settings.scale,
+            gx_mean=result.prepared.gx_mean,
+            gz_mean=result.prepared.gz_mean,
+        )
+        return
     if result.particle is not None:
         plot_particle_filter_trajectory(
             result.trajectory,
@@ -371,3 +393,18 @@ def render_sensor(
         gyro_bias_method=gyro_bias_method,
         gyro_bias=gyro_bias,
     )
+
+
+def render_landmark_path(
+    path: LandmarkPath,
+    floormap_path: str | Path,
+    output_dir: Path,
+    plot: bool = True,
+) -> Path:
+    """ランドマークのみの経路のCSVを保存し、必要なら経路図を描画する。"""
+    csv_path = output_dir / "landmark_path.csv"
+    _write_csv(_build_landmark_path_dataframe(path), csv_path, "Landmark path")
+    print(f"Landmark path length: {path.total_length_m:.3f} m")
+    if plot:
+        plot_landmark_path(path, floormap_path=floormap_path, output_dir=output_dir)
+    return csv_path

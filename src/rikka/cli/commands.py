@@ -2,6 +2,7 @@
 
 役割:
     Python API と CLI の引数を検証済み設定へ変換し、各pipelineを呼ぶ。
+    ランドマークのみの経路生成も同じ入口から実行する。
 依存元:
     ``common.settings``、PDR/PF/plot の各 pipeline を使用する。
 利用先:
@@ -10,6 +11,7 @@
     設定構築、通常PDR、任意のPF、コンソール要約、成果物保存の順に実行する。
 """
 
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 
@@ -21,6 +23,7 @@ from ..ble.pipeline import run_ble_ranging_input
 from ..common.config import (
     BLE_DATA_PATH,
     BLE_LANDMARK_ENABLED,
+    BLE_LANDMARKS_PX,
     BLE_MAX_CORRECTION_M,
     BLE_MAX_WARP_SPAN_M,
     BLE_PDR_CORRECTION_MODE,
@@ -84,6 +87,7 @@ from ..common.settings import (
     SensorSettings,
     StepSettings,
 )
+from ..landmark.pipeline import prepare_landmark_path
 from ..particle.pipeline import run_particle
 from ..pdr.pipeline import run_pdr
 from ..plot import pipeline as plot_pipeline
@@ -129,6 +133,48 @@ def _validate_landmark_pixels(
                 "ランドマークは歩行可能なマップ内画素を指定してください: "
                 f"{landmark.beacon_id} ({landmark.pixel_x}, {landmark.pixel_y})"
             )
+
+
+def _validate_landmark_bounds(
+    map_gray: np.ndarray,
+    landmarks: tuple[Landmark, ...],
+) -> None:
+    """ランドマークが地図画像の範囲内にあることを検証する。"""
+    map_h, map_w = map_gray.shape
+    for landmark in landmarks:
+        pixel_x = int(np.floor(landmark.pixel_x + 0.5))
+        pixel_y = int(np.floor(landmark.pixel_y + 0.5))
+        if not (0 <= pixel_x < map_w and 0 <= pixel_y < map_h):
+            raise ValueError(
+                "ランドマークはフロアマップ内の画素を指定してください: "
+                f"{landmark.beacon_id} ({landmark.pixel_x}, {landmark.pixel_y})"
+            )
+
+
+def run_landmark_path(
+    landmarks: Sequence[tuple[str, float, float]] = BLE_LANDMARKS_PX,
+    floormap_path: str | Path = FLOORMAP_PATH,
+    scale: float = FLOORMAP_SCALE,
+    plot: bool = True,
+    output_dir: Path | None = None,
+    order_times: Mapping[str, float] | None = None,
+) -> Path:
+    """ランドマーク座標のみを結んだ経路のCSVと図を出力する。
+
+    ``order_times`` を省略すると指定順、渡すとその時刻順を経路順にする。
+    """
+    landmark_items, path = prepare_landmark_path(landmarks, scale, order_times)
+    map_gray = _load_floormap_gray(floormap_path)
+    _validate_landmark_bounds(map_gray, landmark_items)
+    target_dir = plot_pipeline.create_output_dir() if output_dir is None else output_dir
+    target_dir.mkdir(parents=True, exist_ok=True)
+    plot_pipeline.render_landmark_path(
+        path,
+        floormap_path=floormap_path,
+        output_dir=target_dir,
+        plot=plot,
+    )
+    return target_dir
 
 
 def run(
@@ -190,6 +236,7 @@ def run(
     ble_retrofit_map_check: str = BLE_RETROFIT_MAP_CHECK,
     ble_retrofit_damp_factors: tuple[float, ...] = BLE_RETROFIT_DAMP_FACTORS,
     ble_landmarks: tuple[Landmark, ...] | None = None,
+    trajectory_plot: str = "floormap",
     pf_proposal: str = PF_PROPOSAL_METHOD,
     pf_candidates: int | None = None,
 ) -> pd.DataFrame:
@@ -302,6 +349,7 @@ def run(
         step_frames_arrows=step_frames_arrows,
         step_frames_dpi=step_frames_dpi,
         save_path_comparison=save_path_comparison,
+        trajectory_plot=trajectory_plot,
     )
     if use_particle_filter:
         _validate_particle_floormap(floormap_path, origin_px)
