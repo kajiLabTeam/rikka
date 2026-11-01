@@ -262,6 +262,137 @@ def test_landmark_path_command_requires_two_landmarks(tmp_path) -> None:
     assert result.exit_code == 2
 
 
+def test_landmark_path_requires_two_received_landmarks(tmp_path) -> None:
+    """RSSIピーク順で受信ありが2点未満になる計測は使用法エラーにする。"""
+    metadata = {
+        "recording_context": {"floor_id": "floor-1"},
+        "ble": {
+            "configuration": {
+                "beacons": [
+                    {
+                        "beacon_id": "received",
+                        "floor_id": "floor-1",
+                        "pixel_x": 20.0,
+                        "pixel_y": 20.0,
+                        "enabled": True,
+                    },
+                    {
+                        "beacon_id": "silent",
+                        "floor_id": "floor-1",
+                        "pixel_x": 60.0,
+                        "pixel_y": 20.0,
+                        "enabled": True,
+                    },
+                ]
+            }
+        },
+    }
+    (tmp_path / "metadata.json").write_text(
+        json.dumps(metadata, ensure_ascii=False), encoding="utf-8"
+    )
+    # silent は一度も受信していないため経路から外れる。
+    (tmp_path / "ble.csv").write_text(
+        "timestamp_s,beacon_id,rssi_dbm\n1.0,received,-50\n2.0,received,-45\n",
+        encoding="utf-8",
+    )
+    floormap = _write_floormap(tmp_path / "map.png")
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "landmark-path",
+            "--floormap",
+            str(floormap),
+            "--data-dir",
+            str(tmp_path),
+            "--no-plot",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "silent" in result.output
+
+
+def test_landmark_path_order_distinguishes_missing_log_from_no_reception(
+    tmp_path,
+) -> None:
+    """BLEログがあって既知ビーコンの受信が0件なら、空の順序として区別する。"""
+    (tmp_path / "ble.csv").write_text(
+        "timestamp_s,beacon_id,rssi_dbm\n1.0,other,-50\n2.0,other,-45\n",
+        encoding="utf-8",
+    )
+    landmarks = (("a", 10.0, 10.0), ("b", 40.0, 10.0))
+
+    # ログが無い場合だけ None（指定順へのフォールバック）になる。
+    assert cli_options._resolve_landmark_path_order(None, landmarks) is None
+    assert (
+        cli_options._resolve_landmark_path_order(str(tmp_path / "ble.csv"), landmarks)
+        == {}
+    )
+
+
+def test_landmark_path_rejects_log_without_any_reception(tmp_path) -> None:
+    """既知ビーコンの受信が0件のログは、指定順へ黙って落とさず使用法エラーにする。"""
+    metadata = {
+        "recording_context": {"floor_id": "floor-1"},
+        "ble": {
+            "configuration": {
+                "beacons": [
+                    {
+                        "beacon_id": "a",
+                        "floor_id": "floor-1",
+                        "pixel_x": 20.0,
+                        "pixel_y": 20.0,
+                        "enabled": True,
+                    },
+                    {
+                        "beacon_id": "b",
+                        "floor_id": "floor-1",
+                        "pixel_x": 60.0,
+                        "pixel_y": 20.0,
+                        "enabled": True,
+                    },
+                ]
+            }
+        },
+    }
+    (tmp_path / "metadata.json").write_text(
+        json.dumps(metadata, ensure_ascii=False), encoding="utf-8"
+    )
+    # 配置に無いビーコンだけが記録されたログ。
+    (tmp_path / "ble.csv").write_text(
+        "timestamp_s,beacon_id,rssi_dbm\n1.0,other,-50\n2.0,other,-45\n",
+        encoding="utf-8",
+    )
+    floormap = _write_floormap(tmp_path / "map.png")
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "landmark-path",
+            "--floormap",
+            str(floormap),
+            "--data-dir",
+            str(tmp_path),
+            "--no-plot",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "--order given" in result.output
+
+
+def test_landmark_path_reports_landmarks_without_reception(capsys) -> None:
+    """受信が無いランドマークは、経路を中止せず除外として知らせる。"""
+    landmarks = (("a", 10.0, 10.0), ("b", 40.0, 10.0), ("c", 70.0, 10.0))
+
+    cli_options._report_landmarks_without_passage(
+        landmarks, {"a": 1.0, "b": 2.0}, "metadata.json"
+    )
+
+    assert "BLE受信が無いため経路から除外: c" in capsys.readouterr().out
+
+
 def test_free_origin_runs_pdr_from_origin_without_initial_direction(
     tmp_path, monkeypatch
 ) -> None:
@@ -432,11 +563,16 @@ def test_render_trajectory_skips_background_when_floormap_missing(
     assert meter_plot.call_args.kwargs["floormap_path"] is None
 
 
-@pytest.mark.parametrize(("gx_mean", "gz_mean"), [(0.0, -9.8), (-9.8, 0.0)])
+@pytest.mark.parametrize(
+    ("gx_mean", "gz_mean", "expected_bottom_m", "expected_inverted"),
+    [(0.0, -9.8, -6.0, False), (-9.8, 0.0, 6.0, True)],
+)
 def test_plot_trajectory_meters_overlays_floormap_from_pixel_origin(
-    tmp_path, gx_mean, gz_mean
+    tmp_path, gx_mean, gz_mean, expected_bottom_m, expected_inverted
 ) -> None:
     """端末姿勢の符号によらず、地図画素(0, 0)を起点に重ねた図を保存する。"""
+    import matplotlib.pyplot as plt
+
     from rikka.plot.lib.trajectory import plot_trajectory_meters
 
     floormap = _write_floormap(tmp_path / "map.png", width=200, height=120)
@@ -452,4 +588,12 @@ def test_plot_trajectory_meters_overlays_floormap_from_pixel_origin(
         gz_mean=gz_mean,
     )
 
+    # 画素(0, 0)が原点、画素行の増加方向は y_sign に従う向きで敷かれる。
+    axes = plt.gcf().axes[0]
+    image = axes.images[0]
+    assert tuple(image.get_extent()) == (0.0, 10.0, expected_bottom_m, 0.0)
+    assert image.origin == "upper"
+    # 地図が画面上で上下反転しないよう、縦軸の向きまで固定する。
+    assert bool(axes.yaxis_inverted()) is expected_inverted
     assert (output_dir / "trajectory_meter.png").is_file()
+    plt.close("all")

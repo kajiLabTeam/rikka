@@ -33,6 +33,10 @@ FLOORMAP_SCALE = 0.01
 # フロアマップ画像上の上下は端末姿勢から決まる Y 軸反転設定に依存する
 INITIAL_DIRECTION = 90.0
 
+# 軌跡図の描画座標系。floormap は地図画素へ変換して重ね、meter は
+# 初期位置・初期方位を与えない実行向けに (0, 0) 起点のメートル座標で描く。
+TRAJECTORY_PLOT_MODE = "floormap"
+
 # センサーのサンプリングレート [Hz]、角速度積分・時間換算に使用
 SAMPLING_RATE = 100
 

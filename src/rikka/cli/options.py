@@ -67,6 +67,7 @@ from ..common.config import (
     SMOOTHING_MODE,
     STEP_DETECTION_METHOD,
     STEP_LENGTH_METHOD,
+    TRAJECTORY_PLOT_MODE,
     USER_HEIGHT_M,
 )
 from ..common.lib.models import Landmark
@@ -761,7 +762,7 @@ def _run_pdr(
         df_gyro=df_gyro,
         plot=not no_plot,
         use_particle_filter=False,
-        trajectory_plot="meter" if free_origin else "floormap",
+        trajectory_plot="meter" if free_origin else TRAJECTORY_PLOT_MODE,
         floormap_path=floormap,
         origin_px=origin_px,
         scale=scale,
@@ -1383,7 +1384,11 @@ def _resolve_landmark_path_order(
     ble_data_path: str | None,
     landmarks: tuple[tuple[str, float, float], ...],
 ) -> dict[str, float] | None:
-    """計測のBLEログがある場合に、平滑RSSIのピーク時刻を経路順として返す。"""
+    """計測のBLEログがある場合に、平滑RSSIのピーク時刻を経路順として返す。
+
+    BLEログが無い場合だけ ``None`` を返す。ログはあるが既知ランドマークの受信が
+    1件も無い場合は空の辞書を返し、指定順への無言のフォールバックを避ける。
+    """
     if ble_data_path is None or not Path(ble_data_path).is_file():
         return None
 
@@ -1398,7 +1403,26 @@ def _resolve_landmark_path_order(
             for beacon_id, pixel_x, pixel_y in landmarks
         ),
     )
-    return run_ble_peak_times(settings) or None
+    return run_ble_peak_times(settings)
+
+
+def _report_landmarks_without_passage(
+    landmarks: tuple[tuple[str, float, float], ...],
+    order_times: dict[str, float],
+    source: str,
+) -> None:
+    """BLE受信が無く経路から外れるランドマークを知らせ、2点未満なら中止する。"""
+    dropped = tuple(
+        beacon_id for beacon_id, _, _ in landmarks if beacon_id not in order_times
+    )
+    if len(landmarks) - len(dropped) < 2:
+        raise click.UsageError(
+            "BLEログに受信があるランドマークが2点未満のため経路になりません"
+            f"（出所: {source}、受信なし: {', '.join(dropped)}）。"
+            "指定順で結ぶ場合は --order given を使ってください。"
+        )
+    if dropped:
+        click.echo(f"BLE受信が無いため経路から除外: {', '.join(dropped)}")
 
 
 @cli.command(name="landmark-path")
@@ -1472,6 +1496,8 @@ def landmark_path(
         "経路順: "
         + ("計測BLEの平滑RSSIピーク時刻" if order_times is not None else "座標の指定順")
     )
+    if order_times is not None:
+        _report_landmarks_without_passage(landmarks, order_times, source)
     output_dir = run_landmark_path(
         landmarks,
         floormap_path=floormap,

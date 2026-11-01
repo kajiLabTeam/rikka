@@ -642,8 +642,6 @@ def _draw_meter_floormap(
     y_sign = pixel_y_sign(gx_mean, gz_mean)
     width_m = width_px * scale
     height_m = height_px * scale
-    # 画素行の増加方向は y_sign でメートル座標の符号が決まるため、
-    # 地図の上下と imshow の原点を合わせて歪みなく重ねる。
     # 画素行が増える向きのメートル符号は y_sign で決まる。地図は常に原画像と
     # 同じ向きで敷き、y_sign が正のときは縦軸の向きだけを反転表示にする。
     extent = (0.0, width_m, height_m * y_sign, 0.0)

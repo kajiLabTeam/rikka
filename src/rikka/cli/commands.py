@@ -63,6 +63,7 @@ from ..common.config import (
     SMOOTHING_MODE,
     STEP_DETECTION_METHOD,
     STEP_LENGTH_METHOD,
+    TRAJECTORY_PLOT_MODE,
     USER_HEIGHT_M,
 )
 from ..common.lib.floormap import (
@@ -236,7 +237,7 @@ def run(
     ble_retrofit_map_check: str = BLE_RETROFIT_MAP_CHECK,
     ble_retrofit_damp_factors: tuple[float, ...] = BLE_RETROFIT_DAMP_FACTORS,
     ble_landmarks: tuple[Landmark, ...] | None = None,
-    trajectory_plot: str = "floormap",
+    trajectory_plot: str = TRAJECTORY_PLOT_MODE,
     pf_proposal: str = PF_PROPOSAL_METHOD,
     pf_candidates: int | None = None,
 ) -> pd.DataFrame:
