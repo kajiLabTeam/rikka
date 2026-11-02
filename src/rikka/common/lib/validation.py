@@ -31,6 +31,7 @@ DEVICE_ORIENTATION_MODES = (
 )
 MOTION_ESTIMATION_METHODS = ("legacy", "adaptive", "robust")
 SMOOTHING_MODES = ("causal", "offline")
+TRAJECTORY_PLOT_MODES = ("floormap", "meter")
 PF_PATH_SELECTION_METHODS = ("current", "sequence")
 PF_LANDMARK_MODES = ("none", "observation", "reset", "hybrid", "ranging")
 BLE_PDR_CORRECTION_MODES = ("snap", "warp", "similarity")

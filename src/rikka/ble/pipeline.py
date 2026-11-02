@@ -11,11 +11,14 @@
 処理フロー:
     設定が無効なら ``None`` を返し、有効なら CSV 読み込みと閾値判定を
     行って検出列を返す。検出profileにより実測と合成の条件を分離する。
+    閾値判定とは別に、平滑RSSIが最大となる時刻だけを返す入口も持つ。
 """
 
 import json
 from dataclasses import replace
 from pathlib import Path
+
+import numpy as np
 
 from ..common.config import (
     BLE_PATH_LOSS_N,
@@ -109,6 +112,37 @@ def _uses_measured_detection(settings: BleLandmarkSettings) -> bool:
     return isinstance(configuration, dict) and isinstance(
         configuration.get("beacons"), list
     )
+
+
+def run_ble_peak_times(settings: BleLandmarkSettings) -> dict[str, float]:
+    """既知ランドマークごとに平滑RSSIが最大となる時刻を返す。
+
+    閾値や連続条件を課す ``detect_landmarks`` と異なり、受信があれば必ず最接近
+    の目安を返す。検出が成立しない記録でも通過順を決められるようにするための
+    入口で、位置補正には使用しない。
+    """
+    observations = load_ble_observations(settings.data_path)
+    known = settings.landmark_map()
+    radius = settings.rssi_smoothing_samples // 2
+    peaks: dict[str, float] = {}
+    for beacon_id in known:
+        beacon = [item for item in observations if item.beacon_id == beacon_id]
+        if not beacon:
+            continue
+        smoothed = [
+            float(
+                np.median(
+                    [
+                        item.rssi_dbm
+                        for item in beacon[max(0, index - radius) : index + radius + 1]
+                    ]
+                )
+            )
+            for index in range(len(beacon))
+        ]
+        best = max(range(len(beacon)), key=lambda index: (smoothed[index], -index))
+        peaks[beacon_id] = beacon[best].timestamp_s
+    return peaks
 
 
 def run_ble_ranging_input(settings: BleLandmarkSettings) -> BleRangingInput | None:

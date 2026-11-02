@@ -2,7 +2,8 @@
 
 役割:
     ステップ区間、検出結果、方位候補、ジャイロ補正結果、確定移動量、前処理済み
-    PDR 一式、歩検出候補診断、BLE補正結果、PFの履歴修正候補を共有型として定義する。
+    PDR 一式、歩検出候補診断、BLE補正結果、PFの履歴修正候補、ランドマークのみの
+    経路を共有型として定義する。
 依存元:
     ``config`` から ``PreparedPdrSteps`` の既定値を取得し、NumPy と Pandas の型を
     配列・DataFrame フィールドに使用する。
@@ -554,3 +555,26 @@ class TrajectoryResult:
     prepared: PreparedPdrSteps
     particle: ParticleFilterResult | None = None
     landmark: LandmarkCorrectionResult | None = None
+
+
+@dataclass(frozen=True)
+class LandmarkPathPoint:
+    """ランドマークのみで構成した経路上の1地点。"""
+
+    order: int
+    beacon_id: str
+    pixel_x: float
+    pixel_y: float
+    meter_x: float
+    meter_y: float
+    segment_length_m: float
+    cumulative_length_m: float
+
+
+@dataclass(frozen=True)
+class LandmarkPath:
+    """ランドマークを指定順に直線で結んだ経路。"""
+
+    points: tuple[LandmarkPathPoint, ...]
+    scale: float
+    total_length_m: float

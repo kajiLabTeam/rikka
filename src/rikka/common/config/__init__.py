@@ -33,6 +33,10 @@ FLOORMAP_SCALE = 0.01
 # フロアマップ画像上の上下は端末姿勢から決まる Y 軸反転設定に依存する
 INITIAL_DIRECTION = 90.0
 
+# 軌跡図の描画座標系。floormap は地図画素へ変換して重ね、meter は
+# 初期位置・初期方位を与えない実行向けに (0, 0) 起点のメートル座標で描く。
+TRAJECTORY_PLOT_MODE = "floormap"
+
 # センサーのサンプリングレート [Hz]、角速度積分・時間換算に使用
 SAMPLING_RATE = 100
 
@@ -273,8 +277,22 @@ BLE_PDR_CORRECTION_MODE = "warp"
 
 # ランドマークとして扱う BLE ビーコンのフロアマップ上の既知座標
 # (beacon_id, pixel_x, pixel_y) の並び。--origin-px と同じ画像左上原点の
-# ピクセル座標で設定する。既定値は現在地図上の合成サンプル用の歩行可能点。
-# 実測BLEの配置を表すものではなく、実測時はmetadata/位置CSVを指定する。
+# ピクセル座標で設定する。
+#
+# 既定値は合成BLEサンプル専用の架空配置である。14号館5階の地図上で歩行可能な
+# 3点を選んだだけの値で、実測ビーコンの設置座標ではない。実測の設置座標は
+# 計測フォルダの BLE_pos.csv か metadata.json の ble.configuration.beacons に
+# あり、CLI はそちらを優先して解決する（cli.options._resolve_ble_inputs）。
+# この既定値が使われるのは、配置情報を持たない標準CSVを --ble-data で渡した
+# 場合と、BleLandmarkSettings() を座標指定なしで作った場合だけである。
+# 実測の軌跡や精度をこの座標で評価しないこと。
+#
+# 用途は3つに限られる。
+#   1. BleLandmarkSettings.landmarks の最終既定値
+#   2. rikka ble-sample が合成RSSIを逆算するときの前提配置
+#   3. BLE_LANDMARK_ANCHORS の beacon_id 整合チェックの基準表
+# 合成BLEを使う回帰テストがこの配置に依存するため、変更するとそれらの
+# 期待値の再校正が必要になる。
 BLE_LANDMARKS_PX: tuple[tuple[str, float, float], ...] = (
     ("beacon_1", 2056, 2400),
     ("beacon_2", 1450, 1479),

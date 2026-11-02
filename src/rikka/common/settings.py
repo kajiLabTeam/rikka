@@ -82,6 +82,7 @@ from .config import (
     SMOOTHING_MODE,
     STEP_DETECTION_METHOD,
     STEP_LENGTH_METHOD,
+    TRAJECTORY_PLOT_MODE,
     USER_HEIGHT_M,
 )
 from .lib.models import Landmark
@@ -104,6 +105,7 @@ from .lib.validation import (
     SMOOTHING_MODES,
     STEP_DETECTION_METHODS,
     STEP_LENGTH_METHODS,
+    TRAJECTORY_PLOT_MODES,
     validate_choice,
     validate_landmarks,
     validate_non_negative_parameter,
@@ -561,8 +563,10 @@ class OutputSettings:
     step_frames_arrows: int = PF_STEP_FRAMES_ARROWS
     step_frames_dpi: int = PF_STEP_FRAMES_DPI
     save_path_comparison: bool = False
+    trajectory_plot: str = TRAJECTORY_PLOT_MODE
 
     def __post_init__(self) -> None:
+        validate_choice("trajectory_plot", self.trajectory_plot, TRAJECTORY_PLOT_MODES)
         if self.step_frames_range is not None:
             first_step, last_step = self.step_frames_range
             if first_step < 1 or first_step > last_step:

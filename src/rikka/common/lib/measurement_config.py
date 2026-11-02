@@ -3,6 +3,7 @@
 役割:
     ``walk_config.csv`` の起点、初期方位、任意の身長を読み、値域を検証する。
     Androidロガー形式ではCSV未指定時にmetadata.jsonのstart制約を利用する。
+    初期位置・初期方位を使わない実行向けに、身長だけを読む経路も持つ。
 依存元:
     ``common.lib.models.MeasurementConfig`` を返却型として利用する。
 利用先:
@@ -115,3 +116,23 @@ def load_measurement_config(
     note_value = row.get("note", "")
     note = "" if pd.isna(note_value) else str(note_value).strip()
     return MeasurementConfig(origin, direction, user_height, note)
+
+
+def load_measurement_user_height(data_dir: str | Path) -> float | None:
+    """起点・初期方位を使わない実行向けに、計測CSVの身長だけを読む。"""
+    path = Path(data_dir) / "walk_config.csv"
+    if not path.is_file():
+        return None
+    try:
+        dataframe = pd.read_csv(path)
+    except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
+        raise ValueError(f"walk_config.csv を読み込めません: {path}") from exc
+    if "user_height_m" not in dataframe.columns or len(dataframe) != 1:
+        return None
+    height_value = dataframe.iloc[0]["user_height_m"]
+    if pd.isna(height_value) or not str(height_value).strip():
+        return None
+    user_height = _required_number(dataframe.iloc[0], "user_height_m")
+    if user_height <= 0:
+        raise ValueError("walk_config.csv の user_height_m は正の値にしてください。")
+    return user_height

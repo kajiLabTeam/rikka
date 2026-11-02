@@ -2,7 +2,8 @@
 
 役割:
     メートル座標の軌跡をフロアマップのピクセル座標へ変換し、ステップ分類、方位、
-    始点・終点、BLE ランドマーク補正を重ねた画像として表示・保存する。
+    始点・終点、BLE ランドマーク補正を重ねた画像として表示・保存する。初期位置・
+    初期方位を与えない実行では、地図を使わずメートル座標のまま描画する。
 依存元:
     ``config`` から地図の既定値、``models`` から ``StepHeading`` を取得し、
     NumPy、Pandas、Matplotlib を座標変換と描画に利用する。
@@ -32,7 +33,11 @@ from ...common.config import (
     FLOORMAP_PATH,
     FLOORMAP_SCALE,
 )
-from ...common.lib.floormap import compute_pixel_coords, pixel_vector_from_heading
+from ...common.lib.floormap import (
+    compute_pixel_coords,
+    pixel_vector_from_heading,
+    pixel_y_sign,
+)
 from ...common.lib.models import (
     LandmarkCorrection,
     LandmarkCorrectionResult,
@@ -621,4 +626,71 @@ def plot_trajectory(
     if output_dir is not None:
         # グラフ画像をoutputフォルダに保存
         fig.savefig(output_dir / "trajectory.png", dpi=150, bbox_inches="tight")
+    plt.show()
+
+
+def _draw_meter_floormap(
+    ax: Axes,
+    floormap_path: str | Path,
+    scale: float,
+    gx_mean: float,
+    gz_mean: float,
+) -> None:
+    """フロアマップ画素(0, 0)をメートル座標の原点に合わせて背景へ敷く。"""
+    map_img = plt.imread(Path(floormap_path))
+    height_px, width_px = map_img.shape[0], map_img.shape[1]
+    y_sign = pixel_y_sign(gx_mean, gz_mean)
+    width_m = width_px * scale
+    height_m = height_px * scale
+    # 画素行が増える向きのメートル符号は y_sign で決まる。地図は常に原画像と
+    # 同じ向きで敷き、y_sign が正のときは縦軸の向きだけを反転表示にする。
+    extent = (0.0, width_m, height_m * y_sign, 0.0)
+    ax.imshow(map_img, extent=extent, origin="upper", zorder=0)
+
+
+def plot_trajectory_meters(
+    trajectory: list[list[float]],
+    output_dir: Path | None = None,
+    floormap_path: str | Path | None = None,
+    scale: float = FLOORMAP_SCALE,
+    gx_mean: float = 0.0,
+    gz_mean: float = 0.0,
+) -> None:
+    """初期位置・初期方位を与えない軌跡を (0, 0) 起点のメートル座標で描画する。
+
+    ``floormap_path`` を渡した場合は、地図の画素 (0, 0) を軌跡の起点に合わせて
+    背景へ重ねる。地図が無い環境でも描けるよう、省略時は軌跡だけを描画する。
+    """
+    configure_japanese_font()
+    df = pd.DataFrame(trajectory, columns=["x", "y"])
+    xs = df["x"].to_numpy()
+    ys = df["y"].to_numpy()
+
+    fig, ax = plt.subplots(figsize=(7, 7))
+    if floormap_path is not None:
+        _draw_meter_floormap(ax, floormap_path, scale, gx_mean, gz_mean)
+
+    # 地図座標へ合わせ込まないため、軌跡はメートル座標の等尺比で描画する。
+    n = len(xs)
+    norm = Normalize(vmin=0, vmax=max(n - 1, 1))
+    cmap = plt.get_cmap("plasma")
+    pts = np.column_stack([xs, ys]).reshape(-1, 1, 2)
+    segments = np.concatenate([pts[:-1], pts[1:]], axis=1)
+    lc = LineCollection(segments.tolist(), cmap=cmap, norm=norm, zorder=2)
+    lc.set_array(np.arange(max(n - 1, 1)))
+    ax.add_collection(lc)
+    sc = ax.scatter(xs, ys, c=np.arange(n), cmap=cmap, norm=norm, s=20, zorder=3)
+    fig.colorbar(sc, ax=ax, label="歩番号")
+    ax.plot(xs[0], ys[0], "go", markersize=10, label="開始点 (0, 0)", zorder=4)
+    ax.plot(xs[-1], ys[-1], "rs", markersize=10, label="終了点", zorder=4)
+
+    ax.set_xlabel("X [m]")
+    ax.set_ylabel("Y [m]")
+    ax.set_aspect("equal", adjustable="datalim")
+    ax.grid(True, linestyle=":", linewidth=0.5)
+    ax.set_title("初期位置・初期方位なしの歩行軌跡（メートル座標）")
+    ax.legend()
+    plt.tight_layout()
+    if output_dir is not None:
+        fig.savefig(output_dir / "trajectory_meter.png", dpi=150, bbox_inches="tight")
     plt.show()
