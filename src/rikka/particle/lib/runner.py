@@ -20,6 +20,12 @@ from ...common.config import (
     FLOORMAP_PATH,
     FLOORMAP_SCALE,
     FORWARD_HEADING_SOURCE,
+    PF_CONVERGENCE_CELL_M,
+    PF_CONVERGENCE_RESTORE_NORMAL,
+    PF_CONVERGENCE_SINGLE_STEPS,
+    PF_CONVERGENCE_SPREAD_M,
+    PF_CONVERGENCE_TOP_K,
+    PF_CONVERGENCE_WEIGHT_RATIO,
     PF_GLOBAL_RESAMPLE_ESS_RATIO,
     PF_HEADING_DRIFT_RETENTION,
     PF_INIT_MODE,
@@ -65,10 +71,12 @@ from ...common.lib.models import (
     LandmarkCorrection,
     LandmarkObservation,
     LandmarkRange,
+    ParticleConvergenceDiagnostic,
     StepHeading,
     StepMotionEvidence,
     StepMotionPosterior,
 )
+from .convergence import record_convergence
 from .evaluate_map import resolve_map_constraints
 from .finalize import finalize
 from .hard_anchor import apply_hard_position
@@ -169,10 +177,24 @@ def run_particle_steps(
     initial_particles: np.ndarray | None = None,
     initial_heading_drift: np.ndarray | None = None,
     initial_heading_correction: np.ndarray | None = None,
+    convergence_cell_m: float = PF_CONVERGENCE_CELL_M,
+    convergence_top_k: int = PF_CONVERGENCE_TOP_K,
+    convergence_weight_ratio: float = PF_CONVERGENCE_WEIGHT_RATIO,
+    convergence_spread_m: float = PF_CONVERGENCE_SPREAD_M,
+    convergence_single_steps: int = PF_CONVERGENCE_SINGLE_STEPS,
+    convergence_restore_normal: bool = PF_CONVERGENCE_RESTORE_NORMAL,
+    convergence_collector: list[ParticleConvergenceDiagnostic] | None = None,
 ) -> ParticleStepsResult:
     """準備済み歩列を受け、元と同じ順序でPF段階を実行する。"""
     ctx = ParticleRuntime(
         init_mode=init_mode,
+        convergence_cell_m=convergence_cell_m,
+        convergence_top_k=convergence_top_k,
+        convergence_weight_ratio=convergence_weight_ratio,
+        convergence_spread_m=convergence_spread_m,
+        convergence_single_steps=convergence_single_steps,
+        convergence_restore_normal=convergence_restore_normal,
+        convergence_collector=convergence_collector,
         global_resample_ess_ratio=global_resample_ess_ratio,
         initial_particles=initial_particles,
         initial_heading_drift=initial_heading_drift,
@@ -275,6 +297,8 @@ def run_particle_steps(
         ctx.ess_after_resampling = _effective_sample_size(ctx.weights)
         ctx.position_history.append(ctx.particles.copy())
         record(ctx)
+        if ctx.init_mode == "uniform":
+            record_convergence(ctx)
     return finalize(ctx)
 
 

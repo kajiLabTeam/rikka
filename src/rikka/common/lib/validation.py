@@ -130,3 +130,20 @@ def validate_landmarks(
                 f"ランドマークのピクセル座標は有限な値を指定してください: {beacon_id}"
             )
     return landmarks
+
+
+def validate_convergence_parameters(
+    cell_m: float, top_k: int, weight_ratio: float, spread_m: float, single_steps: int
+) -> None:
+    """粗グリッド収束判定の有限値、範囲、整数条件を検証する。"""
+    validate_positive_parameter("convergence_cell_m", cell_m)
+    validate_non_negative_parameter("convergence_spread_m", spread_m)
+    validate_positive_parameter("convergence_weight_ratio", weight_ratio)
+    if weight_ratio > 1.0:
+        raise ValueError("convergence_weight_ratio は1以下を指定してください。")
+    for name, value in (
+        ("convergence_top_k", top_k),
+        ("convergence_single_steps", single_steps),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(f"{name} は正の整数を指定してください。")

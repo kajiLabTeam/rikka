@@ -23,6 +23,7 @@ from ..common.lib.models import (
     LandmarkCorrectionResult,
     LandmarkObservation,
     LandmarkRange,
+    ParticleConvergenceDiagnostic,
     ParticleFilterResult,
     PreparedPdrSteps,
     RangingConsistency,
@@ -128,6 +129,7 @@ def run_particle(
     path_comparisons: list[ParticlePathComparison] = []
     landmark_events: list[LandmarkCorrection] = []
     hard_events: list[HardAnchorCorrection] = []
+    convergence_diagnostics: list[ParticleConvergenceDiagnostic] = []
     runtime_detections = () if detections is None else detections
     runtime_ranging_observations = (
         tuple(item for item in runtime_detections if isinstance(item, LandmarkRange))
@@ -151,6 +153,13 @@ def run_particle(
         prepared.gz_mean,
         floormap_path=floormap.path,
         init_mode=settings.init_mode,
+        convergence_cell_m=settings.convergence_cell_m,
+        convergence_top_k=settings.convergence_top_k,
+        convergence_weight_ratio=settings.convergence_weight_ratio,
+        convergence_spread_m=settings.convergence_spread_m,
+        convergence_single_steps=settings.convergence_single_steps,
+        convergence_restore_normal=settings.convergence_restore_normal,
+        convergence_collector=convergence_diagnostics,
         origin_px=floormap.origin_px,
         scale=floormap.scale,
         n_particles=settings.count,
@@ -206,6 +215,15 @@ def run_particle(
         trajectory=trajectory,
         all_particles=[item for item in all_particles],
         diagnostics=tuple(diagnostics),
+        convergence_diagnostics=tuple(convergence_diagnostics),
+        convergence=next(
+            (
+                item
+                for item in convergence_diagnostics
+                if item.convergence_step == item.step_number
+            ),
+            None,
+        ),
         stages=tuple(stages),
         path_comparisons=tuple(path_comparisons),
         history_candidate=(

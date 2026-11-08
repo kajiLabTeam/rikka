@@ -14,6 +14,7 @@ from rikka.common.lib import sensors as sensors_module
 from rikka.common.lib.floormap import compute_pixel_coords
 from rikka.common.lib.models import StepHeading, StepMotionEvidence
 from rikka.common.settings import ParticleSettings
+from rikka.particle.lib import runner as runner_module
 from rikka.particle.lib.global_init import (
     sample_uniform_headings,
     sample_uniform_walkable_particles,
@@ -147,7 +148,7 @@ def test_uniform_cli_reads_only_height(tmp_path, monkeypatch) -> None:
 
 @pytest.mark.parametrize("seed", [0, 1, 2, 10, 42, 100])
 @pytest.mark.parametrize("proposal", ["legacy", "no-relocation", "candidate-bank"])
-def test_uniform_runner_returns_weighted_mean(
+def test_uniform_runner_returns_delayed_particle_path(
     pf_inputs, monkeypatch, seed, proposal
 ) -> None:
     """分散した履歴にクラスタ経路選択や局所再配置を適用しない。"""
@@ -169,16 +170,14 @@ def test_uniform_runner_returns_weighted_mean(
     )
     assert len(result[0]) == 4
     assert result[3].shape == (4, 12, 2)
-    for index, stage in enumerate(stages, start=1):
-        np.testing.assert_allclose(
-            result[0][index],
-            np.average(stage.after_positions, axis=0, weights=stage.after_weights),
-        )
+    for stage in stages:
         assert stage.recovery_mode == "none"
         assert np.all(stage.posterior_weights[~stage.valid_transition] == 0.0)
-    np.testing.assert_allclose(result[0][0], result[3][0].mean(axis=0))
-    assert paths[0].selected_mode == "uniform_mean"
-    assert all(d.trajectory_mode == "uniform_mean" for d in diagnostics)
+    assert any(
+        np.array_equal(result[0], candidate) for candidate in paths[0].particle_paths
+    )
+    assert paths[0].selected_mode == "uniform_delayed"
+    assert all(d.trajectory_mode == "uniform_delayed" for d in diagnostics)
     assert all(d.trajectory_source_index is None for d in diagnostics)
 
 
@@ -310,3 +309,343 @@ def test_global_phase_keeps_survivors_without_recovery(
             ].sum() == pytest.approx(0.25)
             assert counts[parent] >= 1
     forbidden.assert_not_called()
+
+
+def test_grid_clusters_ignore_zero_weights_and_rank_by_mass() -> None:
+    """離れた分布を分離し、ゼロ重みの橋を連結に含めない。"""
+    from rikka.particle.lib.convergence import cluster_distribution
+
+    positions = np.array([[0.1, 0.1], [0.3, 0.1], [6.1, 0.1], [3.1, 0.1]])
+    record, indices = cluster_distribution(positions, np.array([2.0, 1.0, 1.0, 0.0]))
+    assert record.cluster_count == 2
+    assert record.dominant_weight_ratio == pytest.approx(0.75)
+    assert record.surviving_particle_count == 3
+    assert [c.weight_ratio for c in record.top_clusters] == pytest.approx([0.75, 0.25])
+    assert record.dominant_centroid_x_m == pytest.approx(1 / 6)
+    assert record.dominant_spread_rms_m == pytest.approx(np.sqrt(2 / 225))
+    np.testing.assert_array_equal(indices, [0, 1])
+    assert record.position_spread_rms_m > 2.0
+
+
+def test_grid_single_cluster_and_empty_distribution() -> None:
+    """小さい集中分布と全ゼロ分布の両方を診断できる。"""
+    from rikka.particle.lib.convergence import cluster_distribution
+
+    positions = np.array([[-0.1, 0.1], [0.1, 0.1], [0.2, 0.1]])
+    record, _ = cluster_distribution(positions, np.ones(3))
+    assert record.cluster_count == 1
+    assert record.dominant_weight_ratio == 1.0
+    assert record.dominant_spread_rms_m < 0.2
+    empty, indices = cluster_distribution(positions, np.zeros(3))
+    assert empty.cluster_count == 0
+    assert empty.convergence_step is None
+    assert not len(indices)
+
+
+@pytest.mark.parametrize("converges", [True, False])
+def test_online_convergence_switches_recovery_path(
+    pf_inputs, monkeypatch, converges
+) -> None:
+    """収束した次歩から通常の地図評価へ戻り、元の歩番号でKを保持する。"""
+    runner = import_module("rikka.particle.lib.runner")
+    resolve = runner.resolve_map_constraints
+    finalize = runner.finalize
+    phases = []
+    captured = []
+
+    def observe_phase(ctx):
+        phases.append(ctx.global_phase_active)
+        resolve(ctx)
+
+    def observe_final(ctx):
+        captured.append(ctx)
+        return finalize(ctx)
+
+    monkeypatch.setattr(runner, "resolve_map_constraints", observe_phase)
+    monkeypatch.setattr(runner, "finalize", observe_final)
+    records = []
+    result = run_particle_steps(
+        **pf_inputs,
+        init_mode="uniform",
+        initial_particles=np.full((12, 2), 5.0),
+        initial_heading_correction=np.zeros(12),
+        convergence_cell_m=100.0,
+        convergence_spread_m=100.0 if converges else 0.0,
+        convergence_single_steps=2,
+        convergence_restore_normal=True,
+        convergence_collector=records,
+    )
+    assert phases == ([True, True, False] if converges else [True] * 3)
+    assert [r.convergence_step for r in records] == (
+        [None, 2, 2] if converges else [None] * 3
+    )
+    ctx = captured[0]
+    assert ctx.global_phase_active is not converges
+    assert (ctx.convergence is not None) is converges
+    from rikka.particle.lib.convergence import cluster_distribution
+
+    _, indices = cluster_distribution(ctx.particles, ctx.weights, 100.0)
+    best = indices[np.argmax(ctx.path_log_score_history[-1][indices])]
+    np.testing.assert_array_equal(result[0], ctx.particle_paths[best])
+    if converges:
+        assert ctx.convergence.step_number == 2
+        assert ctx.convergence == ctx.convergence_diagnostics[1]
+
+
+def test_convergence_streak_resets_and_never_reopens_global_phase() -> None:
+    """連続条件の中断と、確定後に分散しても大域探索へ戻さないことを確認する。"""
+    from types import SimpleNamespace
+
+    from rikka.particle.lib.convergence import record_convergence
+
+    ctx = SimpleNamespace(
+        particles=np.zeros((2, 2)),
+        weights=np.ones(2),
+        convergence_cell_m=1.5,
+        convergence_top_k=3,
+        convergence_weight_ratio=0.6,
+        convergence_spread_m=0.1,
+        convergence_single_steps=2,
+        convergence_streak=0,
+        convergence=None,
+        convergence_diagnostics=[],
+        convergence_collector=None,
+        convergence_restore_normal=True,
+        global_phase_active=True,
+        step_number=0,
+        step_time=0.0,
+    )
+    for step, spread in enumerate([0.0, 10.0, 0.0, 0.0, 10.0], start=1):
+        ctx.step_number = step
+        ctx.particles[1, 0] = spread
+        record_convergence(ctx)
+    assert [r.convergence_step for r in ctx.convergence_diagnostics] == [
+        None,
+        None,
+        None,
+        4,
+        4,
+    ]
+    assert ctx.convergence.step_number == 4
+    assert not ctx.global_phase_active
+
+
+def test_origin_does_not_measure_convergence(pf_inputs, monkeypatch) -> None:
+    """起点既知では収束処理を呼ばず、不使用の判定設定も影響させない。"""
+    runner = import_module("rikka.particle.lib.runner")
+    forbidden = Mock(side_effect=AssertionError("originでは収束処理を呼べません"))
+    monkeypatch.setattr(runner, "record_convergence", forbidden)
+    records = []
+    run_particle_steps(
+        **pf_inputs, convergence_collector=records, convergence_cell_m=0.0
+    )
+    assert records == []
+    forbidden.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "parameters",
+    [
+        {"convergence_cell_m": 0.0},
+        {"convergence_cell_m": float("nan")},
+        {"convergence_top_k": 0},
+        {"convergence_top_k": True},
+        {"convergence_weight_ratio": 1.1},
+        {"convergence_spread_m": -1.0},
+        {"convergence_single_steps": 1.5},
+    ],
+)
+def test_invalid_convergence_settings(pf_inputs, parameters) -> None:
+    """直接runnerと設定経由の不正値を同じ基準で拒否する。"""
+    with pytest.raises(ValueError, match="convergence"):
+        ParticleSettings(init_mode="uniform", **parameters)
+    with pytest.raises(ValueError, match="convergence"):
+        run_particle_steps(**pf_inputs, init_mode="uniform", **parameters)
+
+
+def test_uniform_pipeline_saves_convergence_with_no_plot(pf_inputs, tmp_path) -> None:
+    """合成歩列で設定の伝搬、CSV列、非表示でのPNG保存を一緒に検証する。"""
+    import pandas as pd
+
+    from rikka.common.lib.models import (
+        FloorMap,
+        PreparedPdrSteps,
+        StepDetectionResult,
+        StepMotionPosterior,
+    )
+    from rikka.common.settings import OutputSettings, PdrSettings
+    from rikka.particle.pipeline import run_particle
+    from rikka.plot.pipeline import render, write_outputs
+
+    prepared = PreparedPdrSteps(
+        df_acc=pd.DataFrame(),
+        df_gyro=pd.DataFrame(),
+        step_detection=StepDetectionResult("peak", np.arange(3), (), None, None),
+        trajectory=[[0.0, 0.0]] * 4,
+        step_lengths=pf_inputs["prepared_step_lengths"],
+        t_at_steps=pf_inputs["prepared_step_times"],
+        step_headings=pf_inputs["prepared_step_headings"],
+        gx_mean=0.0,
+        gz_mean=1.0,
+        weinberg_k=0.39,
+        heading_method="gyro",
+        motion_heading_correction="none",
+        sidestep_smoothing="none",
+        forward_heading_source="body",
+        sidestep_heading_source="motion",
+        sidestep_suspect_mode="motion",
+        motion_evidences=tuple(pf_inputs["prepared_motion_evidences"]),
+        particle_motion_headings=(0.0, 0.2, 0.5),
+        motion_posteriors=tuple(
+            StepMotionPosterior(
+                i + 1,
+                0.95,
+                0.02,
+                0.02,
+                0.01,
+                h,
+                0.1,
+                0.5,
+                0.05,
+                0.0,
+                0.1,
+                "forward",
+                "synthetic",
+            )
+            for i, h in enumerate((0.0, 0.2, 0.5))
+        ),
+    )
+    settings = ParticleSettings(
+        init_mode="uniform",
+        count=12,
+        seed=42,
+        convergence_cell_m=100.0,
+        convergence_spread_m=100.0,
+        convergence_single_steps=2,
+    )
+    result = run_particle(
+        prepared,
+        FloorMap(str(pf_inputs["floormap_path"]), (0, 0), 0.5),
+        settings,
+    )
+    assert result.particle.convergence.step_number == 2
+    write_outputs(result, tmp_path)
+    render(
+        result,
+        PdrSettings(),
+        settings,
+        OutputSettings(plot=False, save_animation=False),
+        tmp_path,
+    )
+    csv = pd.read_csv(tmp_path / "convergence_diagnostics.csv")
+    assert list(csv.step_number) == [1, 2, 3]
+    assert list(csv.cluster_count) == [1, 1, 1]
+    np.testing.assert_allclose(csv["cluster_1_weight_ratio"], 1.0, atol=1e-14)
+    assert np.isnan(csv.convergence_step.iloc[0])
+    assert list(csv.convergence_step.iloc[1:]) == [2, 2]
+    image = mpimg.imread(tmp_path / "convergence_history.png")
+    assert image.shape[0] > 100 and image.shape[1] > 100
+
+
+def test_convergence_uses_original_step_numbers_after_skip(pf_inputs) -> None:
+    """実行されない歩は連続判定に数えず、Kは元の歩番号で保存する。"""
+    records = []
+    run_particle_steps(
+        **(pf_inputs | {"prepared_particle_motion_headings": [0.0, None, 0.5]}),
+        init_mode="uniform",
+        initial_particles=np.full((12, 2), 5.0),
+        initial_heading_correction=np.zeros(12),
+        convergence_cell_m=100.0,
+        convergence_spread_m=100.0,
+        convergence_single_steps=2,
+        convergence_collector=records,
+    )
+    assert [r.step_number for r in records] == [1, 3]
+    assert [r.convergence_step for r in records] == [None, 3]
+
+
+def test_convergence_cli_options_forward_values(tmp_path, monkeypatch) -> None:
+    """新しい5オプションが互換アダプタへ渡ることを検証する。"""
+    monkeypatch.setattr(
+        sensors_module, "load_sensor_data", Mock(return_value=(Mock(), Mock()))
+    )
+    run = Mock()
+    monkeypatch.setattr(cli_commands, "run", run)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "particle",
+            "--pf-init",
+            "uniform",
+            "--data-dir",
+            str(tmp_path),
+            "--pf-converge-cell",
+            "2.0",
+            "--pf-converge-top-k",
+            "2",
+            "--pf-converge-weight-ratio",
+            "0.8",
+            "--pf-converge-spread",
+            "1.2",
+            "--pf-converge-steps",
+            "4",
+            "--no-plot",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    for key, value in dict(
+        convergence_cell_m=2.0,
+        convergence_top_k=2,
+        convergence_weight_ratio=0.8,
+        convergence_spread_m=1.2,
+        convergence_single_steps=4,
+    ).items():
+        assert run.call_args.kwargs[key] == value
+
+
+def _spy_global_phase(monkeypatch) -> list[bool]:
+    """runner が参照する収束判定を包み、各歩の大域フェーズ状態を集める。"""
+    captured: list[bool] = []
+    original = runner_module.record_convergence
+
+    def spy(ctx) -> None:
+        original(ctx)
+        captured.append(ctx.global_phase_active)
+
+    monkeypatch.setattr(runner_module, "record_convergence", spy)
+    return captured
+
+
+def test_convergence_keeps_global_phase_by_default(pf_inputs, monkeypatch) -> None:
+    """既定では収束後も大域フェーズを維持する。
+
+    4号館1024で収束後に通常PFへ戻すと、ESS閾値が 0.2 から 0.5 へ上がって
+    全体再標本化が頻発し、正解系譜が失われて代表経路の平均誤差が
+    0.78 m から 24.91 m へ悪化した。
+    """
+    captured = _spy_global_phase(monkeypatch)
+    run_particle_steps(
+        **pf_inputs,
+        init_mode="uniform",
+        convergence_weight_ratio=0.0001,
+        convergence_spread_m=1e9,
+        convergence_single_steps=1,
+    )
+    assert captured, "収束判定が1歩も呼ばれていません"
+    assert all(captured), "既定で大域フェーズが解除されました"
+
+
+def test_convergence_restores_normal_phase_when_requested(
+    pf_inputs, monkeypatch
+) -> None:
+    """明示指定時は収束後に通常PFへ戻す。"""
+    captured = _spy_global_phase(monkeypatch)
+    run_particle_steps(
+        **pf_inputs,
+        init_mode="uniform",
+        convergence_weight_ratio=0.0001,
+        convergence_spread_m=1e9,
+        convergence_single_steps=1,
+        convergence_restore_normal=True,
+    )
+    assert captured and not captured[-1], "収束後も大域フェーズが解除されませんでした"

@@ -19,7 +19,15 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from ...common.config import PF_GLOBAL_RESAMPLE_ESS_RATIO
+from ...common.config import (
+    PF_CONVERGENCE_CELL_M,
+    PF_CONVERGENCE_RESTORE_NORMAL,
+    PF_CONVERGENCE_SINGLE_STEPS,
+    PF_CONVERGENCE_SPREAD_M,
+    PF_CONVERGENCE_TOP_K,
+    PF_CONVERGENCE_WEIGHT_RATIO,
+    PF_GLOBAL_RESAMPLE_ESS_RATIO,
+)
 from ...common.lib.models import (
     HardAnchorCorrection,
     HardPositionObservation,
@@ -27,6 +35,7 @@ from ...common.lib.models import (
     LandmarkCorrection,
     LandmarkObservation,
     LandmarkRange,
+    ParticleConvergenceDiagnostic,
     StepHeading,
     StepMotionEvidence,
     StepMotionPosterior,
@@ -124,6 +133,18 @@ class ParticleRuntime:
     initial_heading_drift: np.ndarray | None = None
     initial_heading_correction: np.ndarray | None = None
     global_phase_active: bool = False
+    convergence_cell_m: float = PF_CONVERGENCE_CELL_M
+    convergence_top_k: int = PF_CONVERGENCE_TOP_K
+    convergence_weight_ratio: float = PF_CONVERGENCE_WEIGHT_RATIO
+    convergence_spread_m: float = PF_CONVERGENCE_SPREAD_M
+    convergence_single_steps: int = PF_CONVERGENCE_SINGLE_STEPS
+    convergence_restore_normal: bool = PF_CONVERGENCE_RESTORE_NORMAL
+    convergence_diagnostics: list[ParticleConvergenceDiagnostic] = field(
+        default_factory=list
+    )
+    convergence_collector: list[ParticleConvergenceDiagnostic] | None = None
+    convergence: ParticleConvergenceDiagnostic | None = None
+    convergence_streak: int = 0
     last_hard_anchor_step: int = field(init=False, default=0)
     hard_anchor_by_step: dict[int, HardPositionObservation] = field(
         init=False, default_factory=dict

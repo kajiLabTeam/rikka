@@ -59,6 +59,12 @@ from .config import (
     INITIAL_DIRECTION,
     MOTION_ESTIMATION,
     PF_CANDIDATE_COUNT,
+    PF_CONVERGENCE_CELL_M,
+    PF_CONVERGENCE_RESTORE_NORMAL,
+    PF_CONVERGENCE_SINGLE_STEPS,
+    PF_CONVERGENCE_SPREAD_M,
+    PF_CONVERGENCE_TOP_K,
+    PF_CONVERGENCE_WEIGHT_RATIO,
     PF_INIT_MODE,
     PF_LANDMARK_LIKELIHOOD_FLOOR,
     PF_LANDMARK_MAX_JUMP_M,
@@ -108,6 +114,7 @@ from .lib.validation import (
     STEP_LENGTH_METHODS,
     TRAJECTORY_PLOT_MODES,
     validate_choice,
+    validate_convergence_parameters,
     validate_landmarks,
     validate_non_negative_parameter,
     validate_positive_parameter,
@@ -244,9 +251,23 @@ class ParticleSettings:
     proposal_method: str = PF_PROPOSAL_METHOD
     candidate_count: int | None = None
     init_mode: str = PF_INIT_MODE
+    convergence_cell_m: float = PF_CONVERGENCE_CELL_M
+    convergence_top_k: int = PF_CONVERGENCE_TOP_K
+    convergence_weight_ratio: float = PF_CONVERGENCE_WEIGHT_RATIO
+    convergence_spread_m: float = PF_CONVERGENCE_SPREAD_M
+    convergence_single_steps: int = PF_CONVERGENCE_SINGLE_STEPS
+    convergence_restore_normal: bool = PF_CONVERGENCE_RESTORE_NORMAL
 
     def __post_init__(self) -> None:
         validate_choice("init_mode", self.init_mode, ("origin", "uniform"))
+        if self.init_mode == "uniform":
+            validate_convergence_parameters(
+                self.convergence_cell_m,
+                self.convergence_top_k,
+                self.convergence_weight_ratio,
+                self.convergence_spread_m,
+                self.convergence_single_steps,
+            )
         validate_choice(
             "proposal_method",
             self.proposal_method,

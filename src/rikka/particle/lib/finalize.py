@@ -23,6 +23,7 @@ from ...landmark.lib.retrofit import (
 from ...particle.lib.recorder import (
     ParticlePathComparison,
 )
+from .convergence import cluster_distribution
 from .hard_anchor import hard_segment_reversals, select_hard_segment
 from .path_history import _reconstruct_particle_paths
 from .path_selection import _select_reachable_cluster_path
@@ -89,19 +90,28 @@ def finalize(
         ctx.position_history, ctx.parent_history
     )
     if ctx.init_mode == "uniform":
-        # 収束判定が入る次イテレーションまでの暫定代表経路。
-        # 到達可能クラスタ化は時点ごとのPythonループによる線分判定が必要で、
-        # 散らばった N=5,000 粒子では1回1.2秒かかるため収束前履歴には使わない。
-        ctx.selected_path = np.asarray(
-            [
-                np.average(positions, axis=0, weights=weights)
-                for positions, weights in zip(
-                    ctx.position_history, ctx.weight_history, strict=True
-                )
-            ]
+        _, indices = cluster_distribution(
+            ctx.position_history[-1],
+            ctx.weight_history[-1],
+            ctx.convergence_cell_m,
+            ctx.convergence_top_k,
         )
-        ctx.selected_mode = "uniform_mean"
-        ctx.trajectory_modes = ["uniform_mean"] * len(ctx.selected_path)
+        if not len(indices):
+            raise RuntimeError("代表経路を選択できる生存粒子がありません")
+        best = int(indices[np.argmax(ctx.path_log_score_history[-1][indices])])
+        ctx.selected_path = ctx.particle_paths[best].copy()
+        ctx.selected_mode = "uniform_delayed"
+        ctx.trajectory_modes = ["uniform_delayed"] * len(ctx.selected_path)
+        if ctx.convergence is None:
+            print("PF収束: 未収束")
+        else:
+            convergence = ctx.convergence
+            print(
+                f"PF収束: K={convergence.step_number}, "
+                f"位置=({convergence.dominant_centroid_x_m:.3f}, "
+                f"{convergence.dominant_centroid_y_m:.3f}) m, "
+                f"最大クラスタ重み比={convergence.dominant_weight_ratio:.4f}"
+            )
         ctx.trajectory_sources = [None] * len(ctx.selected_path)
         ctx.current_path = ctx.selected_path.copy()
         ctx.sequence_path = ctx.selected_path.copy()

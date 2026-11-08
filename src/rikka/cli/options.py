@@ -52,6 +52,12 @@ from ..common.config import (
     INITIAL_DIRECTION,
     MOTION_ESTIMATION,
     PF_CANDIDATE_COUNT,
+    PF_CONVERGENCE_CELL_M,
+    PF_CONVERGENCE_RESTORE_NORMAL,
+    PF_CONVERGENCE_SINGLE_STEPS,
+    PF_CONVERGENCE_SPREAD_M,
+    PF_CONVERGENCE_TOP_K,
+    PF_CONVERGENCE_WEIGHT_RATIO,
     PF_INIT_MODE,
     PF_LANDMARK_MODE,
     PF_LANDMARK_RETROFIT,
@@ -916,6 +922,47 @@ cli.add_command(run, name="pdr")
 
 @cli.command()
 @click.option(
+    "--pf-converge-cell",
+    type=click.FloatRange(min=0.0, min_open=True),
+    default=PF_CONVERGENCE_CELL_M,
+    show_default=True,
+    help="一様初期化PFのクラスタセル幅 [m]",
+)
+@click.option(
+    "--pf-converge-top-k",
+    type=click.IntRange(min=1),
+    default=PF_CONVERGENCE_TOP_K,
+    show_default=True,
+    help="一様初期化PFで記録する上位クラスタ数",
+)
+@click.option(
+    "--pf-converge-weight-ratio",
+    type=click.FloatRange(min=0.0, max=1.0, min_open=True),
+    default=PF_CONVERGENCE_WEIGHT_RATIO,
+    show_default=True,
+    help="一様初期化PFの収束に必要な最大クラスタ重み比",
+)
+@click.option(
+    "--pf-converge-spread",
+    type=click.FloatRange(min=0.0, min_open=False),
+    default=PF_CONVERGENCE_SPREAD_M,
+    show_default=True,
+    help="一様初期化PFの収束に許容するクラスタRMS広がり [m]",
+)
+@click.option(
+    "--pf-converge-steps",
+    type=click.IntRange(min=1),
+    default=PF_CONVERGENCE_SINGLE_STEPS,
+    show_default=True,
+    help="一様初期化PFの収束条件が連続成立する歩数",
+)
+@click.option(
+    "--pf-converge-restore-normal/--no-pf-converge-restore-normal",
+    default=PF_CONVERGENCE_RESTORE_NORMAL,
+    show_default=True,
+    help="収束後に通常PF（recovery・ESS 0.5）へ戻す。既定では戻さない",
+)
+@click.option(
     "--pf-init",
     type=click.Choice(["origin", "uniform"]),
     default=PF_INIT_MODE,
@@ -1087,6 +1134,12 @@ def particle(
     history_candidate: bool,
     pf_particles: int,
     pf_init: str,
+    pf_converge_cell: float,
+    pf_converge_top_k: int,
+    pf_converge_weight_ratio: float,
+    pf_converge_spread: float,
+    pf_converge_steps: int,
+    pf_converge_restore_normal: bool,
     pf_seed: int | None,
     motion_predictive_weight_power: float,
     pf_path_selection: str,
@@ -1171,6 +1224,12 @@ def particle(
         particle_seed=pf_seed,
         particle_count=pf_particles,
         init_mode=pf_init,
+        convergence_cell_m=pf_converge_cell,
+        convergence_top_k=pf_converge_top_k,
+        convergence_weight_ratio=pf_converge_weight_ratio,
+        convergence_spread_m=pf_converge_spread,
+        convergence_single_steps=pf_converge_steps,
+        convergence_restore_normal=pf_converge_restore_normal,
         motion_predictive_weight_power=motion_predictive_weight_power,
         pf_path_selection=pf_path_selection,
         pf_landmark_mode=pf_landmark_mode,

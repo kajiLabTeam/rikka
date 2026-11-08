@@ -15,6 +15,7 @@ import numpy as np
 from ...common.lib.validation import (
     PF_LANDMARK_MODES,
     validate_choice,
+    validate_convergence_parameters,
     validate_forward_heading_source,
     validate_motion_heading_correction,
     validate_non_negative_parameter,
@@ -28,6 +29,14 @@ from .state import ParticleRuntime
 
 def setup(ctx: ParticleRuntime) -> None:
     validate_choice("init_mode", ctx.init_mode, ("origin", "uniform"))
+    if ctx.init_mode == "uniform":
+        validate_convergence_parameters(
+            ctx.convergence_cell_m,
+            ctx.convergence_top_k,
+            ctx.convergence_weight_ratio,
+            ctx.convergence_spread_m,
+            ctx.convergence_single_steps,
+        )
     validate_positive_parameter(
         "global_resample_ess_ratio", ctx.global_resample_ess_ratio
     )

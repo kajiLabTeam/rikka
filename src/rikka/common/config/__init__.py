@@ -171,6 +171,17 @@ K_FORWARD = 9.0
 
 # パーティクルフィルタ設定
 PF_INIT_MODE = "origin"
+
+# 一様初期化PFのオンライン収束判定。
+# 収束後に通常PF（recovery・ESS 0.5）へ戻すか。
+# 4号館1024の比較で戻すと悪化したため、既定では戻さない。
+PF_CONVERGENCE_RESTORE_NORMAL = False
+PF_CONVERGENCE_CELL_M = 1.5
+PF_CONVERGENCE_TOP_K = 3
+PF_CONVERGENCE_WEIGHT_RATIO = 0.6
+PF_CONVERGENCE_SPREAD_M = 3.0
+PF_CONVERGENCE_SINGLE_STEPS = 3
+
 PF_GLOBAL_RESAMPLE_ESS_RATIO = 0.2  # 大域探索中の分布を潰さないよう閾値を下げる
 PF_NUM_PARTICLES = 500
 

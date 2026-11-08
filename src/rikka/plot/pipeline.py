@@ -36,6 +36,7 @@ from .lib.frames import (
 from .lib.history import save_history_comparison, save_history_csv
 from .lib.landmark_path import plot_landmark_path
 from .lib.outputs import (
+    _build_convergence_dataframe,
     _build_direction_posteriors_dataframe,
     _build_gyro_bias_dataframe,
     _build_landmark_corrections_dataframe,
@@ -47,6 +48,7 @@ from .lib.outputs import (
     _build_step_vectors_dataframe,
     _build_trajectory_dataframe,
     _create_output_dir,
+    _save_convergence_history,
     _step_plot_signal,
 )
 from .lib.sensor import plot_sensor_data, plot_step_lengths, plot_step_vectors
@@ -142,6 +144,12 @@ def write_outputs(result: TrajectoryResult, output_dir: Path) -> pd.DataFrame:
     if result.particle is not None:
         if result.particle.hard_anchor_corrections:
             _write_hard_anchor_outputs(result, output_dir)
+        if result.particle.convergence_diagnostics:
+            _write_csv(
+                _build_convergence_dataframe(result.particle.convergence_diagnostics),
+                output_dir / "convergence_diagnostics.csv",
+                "Convergence diagnostics",
+            )
         columns = [field.name for field in fields(ParticleFilterStepDiagnostics)]
         _write_csv(
             pd.DataFrame(
@@ -220,6 +228,8 @@ def render(
 ) -> None:
     """要求された軌跡図、センサー図、PF診断画像を描画する。"""
     prepared = result.prepared
+    if result.particle is not None and result.particle.convergence_diagnostics:
+        _save_convergence_history(result.particle.convergence_diagnostics, output_dir)
     if output_settings.plot:
         _render_trajectory(result, particle_settings, output_settings, output_dir)
         t_acc = (

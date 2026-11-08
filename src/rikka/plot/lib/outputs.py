@@ -2,8 +2,8 @@
 
 役割:
     軌跡、歩幅ベクトル、ステップ区間、方位診断、ジャイロ補正結果、ランドマーク
-    のみの経路を保存可能な Pandas DataFrame に変換し、タイムスタンプ付き出力
-    ディレクトリを作る。
+    のみの経路と収束診断を保存可能な Pandas DataFrame に変換し、タイムスタンプ付き出力
+    ディレクトリを作る。収束履歴図は表示せず保存する。
 依存元:
     ``models`` の各結果型と ``time_utils`` の時刻参照を利用し、NumPy、Pandas、
     pathlib、datetime で列値と保存先を構成する。
@@ -14,16 +14,20 @@
 """
 
 from collections import Counter
+from dataclasses import asdict, fields
 from datetime import datetime
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from matplotlib.figure import Figure
 
 from ...common.lib.models import (
     GyroBiasResult,
     LandmarkCorrectionResult,
     LandmarkPath,
+    ParticleClusterSummary,
+    ParticleConvergenceDiagnostic,
     StepDetectionResult,
     StepDirectionPosterior,
     StepHeading,
@@ -557,3 +561,63 @@ def _build_landmark_path_dataframe(path: LandmarkPath) -> pd.DataFrame:
             "cumulative_length_m": [point.cumulative_length_m for point in path.points],
         }
     )
+
+
+def _build_convergence_dataframe(
+    diagnostics: tuple[ParticleConvergenceDiagnostic, ...],
+) -> pd.DataFrame:
+    """上位クラスタを順位別の列へ展開し、既存CSVとは独立して出力する。"""
+    columns = [
+        item.name
+        for item in fields(ParticleConvergenceDiagnostic)
+        if item.name != "top_clusters"
+    ]
+    top_k = max((len(item.top_clusters) for item in diagnostics), default=0)
+    columns += [
+        f"cluster_{rank}_{item.name}"
+        for rank in range(1, top_k + 1)
+        for item in fields(ParticleClusterSummary)
+    ]
+    rows = []
+    for diagnostic in diagnostics:
+        row = asdict(diagnostic)
+        row.pop("top_clusters")
+        for rank, cluster in enumerate(diagnostic.top_clusters, start=1):
+            row.update(
+                {
+                    f"cluster_{rank}_{key}": value
+                    for key, value in asdict(cluster).items()
+                }
+            )
+        rows.append(row)
+    return pd.DataFrame(rows, columns=columns)
+
+
+def _save_convergence_history(
+    diagnostics: tuple[ParticleConvergenceDiagnostic, ...],
+    output_dir: Path,
+) -> None:
+    """収束履歴を表示せず保存する。--no-plotでもGUIを開かない。"""
+    figure = Figure(figsize=(9, 6))
+    axes = figure.subplots(2, 1, sharex=True)
+    steps = [item.step_number for item in diagnostics]
+    axes[0].plot(steps, [item.cluster_count for item in diagnostics])
+    axes[0].set_ylabel("Cluster count")
+    axes[1].plot(steps, [item.dominant_spread_rms_m for item in diagnostics])
+    axes[1].set_ylabel("Dominant RMS spread [m]")
+    axes[1].set_xlabel("Step")
+    convergence_step = next(
+        (
+            item.convergence_step
+            for item in diagnostics
+            if item.convergence_step is not None
+        ),
+        None,
+    )
+    for axis in axes:
+        axis.grid(True, alpha=0.3)
+        if convergence_step is not None:
+            axis.axvline(convergence_step, color="tab:red", linestyle="--")
+    figure.tight_layout()
+    figure.savefig(output_dir / "convergence_history.png")
+    figure.clear()

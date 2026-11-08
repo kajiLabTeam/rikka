@@ -369,6 +369,33 @@ class HardAnchorCorrection:
 
 
 @dataclass(frozen=True)
+class ParticleClusterSummary:
+    """重み比順に並べた粗グリッドクラスタの位置と広がり。"""
+
+    centroid_x_m: float
+    centroid_y_m: float
+    weight_ratio: float
+    spread_rms_m: float
+
+
+@dataclass(frozen=True)
+class ParticleConvergenceDiagnostic:
+    """元の歩番号に対応する収束指標。収束歩以降も分布を観測する。"""
+
+    step_number: int
+    step_time: float
+    cluster_count: int
+    dominant_weight_ratio: float
+    dominant_spread_rms_m: float
+    dominant_centroid_x_m: float | None
+    dominant_centroid_y_m: float | None
+    position_spread_rms_m: float
+    surviving_particle_count: int
+    top_clusters: tuple[ParticleClusterSummary, ...] = ()
+    convergence_step: int | None = None
+
+
+@dataclass(frozen=True)
 class ParticleFilterResult:
     """particle filter の代表軌跡と描画・診断用状態。"""
 
@@ -381,6 +408,8 @@ class ParticleFilterResult:
     hard_anchor_corrections: tuple[HardAnchorCorrection, ...] = ()
     uncorrected_trajectory: list[list[float]] | None = None
     correction_steps: tuple[int, ...] = ()
+    convergence_diagnostics: tuple[ParticleConvergenceDiagnostic, ...] = ()
+    convergence: ParticleConvergenceDiagnostic | None = None
 
 
 @dataclass(frozen=True)
