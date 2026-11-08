@@ -71,14 +71,16 @@ def _reset_recovery_diagnostics(ctx: ParticleRuntime) -> None:
     ctx.next_path_log_scores = np.empty(0, dtype=float)
 
 
-def _resample_or_keep(ctx: ParticleRuntime) -> None:
+def _resample_or_keep(ctx: ParticleRuntime, *, ess_ratio: float | None = None) -> None:
     """低ESSでは全粒子、それ以外では死亡枠だけを再標本化する。"""
     if ctx.valid_weight_mass <= 0.0:
         raise RuntimeError("内部エラー: recoveryせず粒子重みが全滅しました")
     ctx.posterior_weights /= ctx.valid_weight_mass
     dead = ctx.posterior_weights == 0.0
     dead_count = int(np.count_nonzero(dead))
-    full_resample = ctx.ess_after_observation < ctx.resample_ess_ratio * ctx.n_particles
+    if ess_ratio is None:
+        ess_ratio = ctx.resample_ess_ratio
+    full_resample = ctx.ess_after_observation < ess_ratio * ctx.n_particles
     replaced = np.ones(ctx.n_particles, dtype=bool) if full_resample else dead
     replaced_count = int(np.count_nonzero(replaced))
     ctx.indices = np.arange(ctx.n_particles, dtype=int)
@@ -392,6 +394,15 @@ def _landmark_reset_within_limit(ctx: ParticleRuntime) -> bool:
 def resolve_map_constraints(ctx: ParticleRuntime) -> None:
     """地図制約違反を復旧し、通常粒子はESSに応じて再標本化する。"""
     _reset_recovery_diagnostics(ctx)
+    if ctx.global_phase_active:
+        if not np.any(ctx.posterior_weights > 0.0):
+            raise RuntimeError(
+                "一様初期化の全粒子が地図制約で無効になりました。"
+                "粒子数を増やすか地図とscaleを確認してください"
+            )
+        ctx.recovery_attempted = False
+        _resample_or_keep(ctx, ess_ratio=ctx.global_resample_ess_ratio)
+        return
     landmark = ctx.landmark_definition
     if (
         ctx.landmark_mode != "ranging"

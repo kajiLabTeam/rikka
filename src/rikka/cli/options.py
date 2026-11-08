@@ -52,6 +52,7 @@ from ..common.config import (
     INITIAL_DIRECTION,
     MOTION_ESTIMATION,
     PF_CANDIDATE_COUNT,
+    PF_INIT_MODE,
     PF_LANDMARK_MODE,
     PF_LANDMARK_RETROFIT,
     PF_MOTION_PREDICTIVE_WEIGHT_POWER,
@@ -356,6 +357,7 @@ def _resolve_free_origin_settings(
     direction: float,
     height_m: float,
     ble_landmark: bool,
+    option_label: str = "--free-origin",
 ) -> tuple[tuple[int, int], float, float]:
     """初期位置・初期方位なし実行の起点・方位を固定し、身長だけ計測値を反映する。"""
     from click.core import ParameterSource  # noqa: PLC0415
@@ -366,10 +368,17 @@ def _resolve_free_origin_settings(
 
     for name, label in (("origin_px", "--origin-px"), ("direction", "--direction")):
         if ctx.get_parameter_source(name) is ParameterSource.COMMANDLINE:
-            raise click.UsageError(f"--free-origin と {label} は同時に指定できません。")
+            raise click.UsageError(
+                f"{option_label} と {label} は同時に指定できません。"
+            )
     if ble_landmark:
+        reason = (
+            "地図座標を使わない"
+            if option_label == "--free-origin"
+            else "初期位置を使わない"
+        )
         raise click.UsageError(
-            "--free-origin は地図座標を使わないため --ble-landmark と併用できません。"
+            f"{option_label} は{reason}ため --ble-landmark と併用できません。"
         )
 
     # 起点・初期方位を使わないため、計測設定からは身長だけを読む。
@@ -907,6 +916,13 @@ cli.add_command(run, name="pdr")
 
 @cli.command()
 @click.option(
+    "--pf-init",
+    type=click.Choice(["origin", "uniform"]),
+    default=PF_INIT_MODE,
+    show_default=True,
+    help="PFの初期分布（uniformは初期位置・初期方位なし）",
+)
+@click.option(
     "--pf-proposal",
     type=click.Choice(["legacy", "no-relocation", "candidate-bank"]),
     default=PF_PROPOSAL_METHOD,
@@ -1070,6 +1086,7 @@ def particle(
     save_path_comparison: bool,
     history_candidate: bool,
     pf_particles: int,
+    pf_init: str,
     pf_seed: int | None,
     motion_predictive_weight_power: float,
     pf_path_selection: str,
@@ -1096,14 +1113,24 @@ def particle(
             "1以外の候補数には --pf-proposal candidate-bank が必要です。",
             param_hint="--pf-candidates",
         )
-    origin_px, direction, height_m = _resolve_measurement_settings(
-        ctx,
-        data_dir,
-        floormap,
-        origin_px,
-        direction,
-        height_m,
-    )
+    if pf_init == "uniform":
+        origin_px, direction, height_m = _resolve_free_origin_settings(
+            ctx,
+            data_dir,
+            direction,
+            height_m,
+            ble_landmark,
+            option_label="--pf-init uniform",
+        )
+    else:
+        origin_px, direction, height_m = _resolve_measurement_settings(
+            ctx,
+            data_dir,
+            floormap,
+            origin_px,
+            direction,
+            height_m,
+        )
     df_acc, df_gyro = load_sensor_data(data_dir)
     ble_data_path, ble_landmarks = _resolve_ble_inputs(
         data_dir,
@@ -1143,6 +1170,7 @@ def particle(
         smoothing_mode=smoothing_mode,
         particle_seed=pf_seed,
         particle_count=pf_particles,
+        init_mode=pf_init,
         motion_predictive_weight_power=motion_predictive_weight_power,
         pf_path_selection=pf_path_selection,
         pf_landmark_mode=pf_landmark_mode,

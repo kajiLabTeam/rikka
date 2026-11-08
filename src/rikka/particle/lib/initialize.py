@@ -32,6 +32,11 @@ from ...particle.lib.proposal import (
 from ...particle.lib.recorder import (
     ParticleRecorder,
 )
+from .global_init import (
+    sample_uniform_headings,
+    sample_uniform_walkable_particles,
+    walkable_area_m2,
+)
 from .hard_anchor import initialize_hard_positions
 from .landmark import meter_walkable_mask
 from .state import ParticleRuntime
@@ -62,10 +67,52 @@ def _adaptive_heading_rejuvenation_sigma(
 def initialize(ctx: ParticleRuntime) -> None:
     ctx.map_gray = _normalize_floormap_gray(mpimg.imread(Path(ctx.floormap_path)))
     _validate_floormap_shape(ctx.map_gray)
-    _validate_floormap_origin(ctx.map_gray, ctx.origin_px)
-    ctx.particles = np.zeros((ctx.n_particles, 2))
-    ctx.heading_correction = np.zeros(ctx.n_particles, dtype=float)
-    ctx.heading_drift = ctx.rng.normal(0, ctx.sigma_init_heading, ctx.n_particles)
+    ctx.global_phase_active = ctx.init_mode == "uniform"
+    if not ctx.global_phase_active:
+        _validate_floormap_origin(ctx.map_gray, ctx.origin_px)
+    if ctx.initial_particles is not None:
+        ctx.particles = np.asarray(ctx.initial_particles, dtype=float).copy()
+        if ctx.particles.shape != (ctx.n_particles, 2):
+            raise ValueError("initial_particles の形状は (n_particles, 2) が必要です")
+    elif ctx.global_phase_active:
+        ctx.particles = sample_uniform_walkable_particles(
+            ctx.map_gray,
+            ctx.n_particles,
+            ctx.gx_mean,
+            ctx.gz_mean,
+            ctx.origin_px,
+            ctx.scale,
+            ctx.rng,
+        )
+    else:
+        ctx.particles = np.zeros((ctx.n_particles, 2))
+    if ctx.initial_heading_correction is not None:
+        ctx.heading_correction = np.asarray(
+            ctx.initial_heading_correction, dtype=float
+        ).copy()
+        if ctx.heading_correction.shape != (ctx.n_particles,):
+            raise ValueError(
+                "initial_heading_correction の形状は (n_particles,) が必要です"
+            )
+    elif ctx.global_phase_active:
+        # 初期方位の不確かさは減衰しない補正項へ入れる。heading_drift は毎歩
+        # PF_HEADING_DRIFT_RETENTION で0へ引き戻されるため、一様な初期方位をそこへ
+        # 入れると数歩で全粒子が同じ方位へ collapse し、地図制約で全滅する。
+        ctx.heading_correction = sample_uniform_headings(ctx.n_particles, ctx.rng)
+    else:
+        ctx.heading_correction = np.zeros(ctx.n_particles, dtype=float)
+    if ctx.initial_heading_drift is not None:
+        ctx.heading_drift = np.asarray(ctx.initial_heading_drift, dtype=float).copy()
+        if ctx.heading_drift.shape != (ctx.n_particles,):
+            raise ValueError("initial_heading_drift の形状は (n_particles,) が必要です")
+    else:
+        ctx.heading_drift = ctx.rng.normal(0, ctx.sigma_init_heading, ctx.n_particles)
+    if ctx.global_phase_active:
+        area = walkable_area_m2(ctx.map_gray, ctx.scale)
+        print(
+            f"一様初期化: 歩行可能面積 {area:.3f} m^2、粒子数 {ctx.n_particles}、"
+            f"1粒子あたり {area / ctx.n_particles:.6f} m^2/粒子"
+        )
     ctx.motion_state = np.full(ctx.n_particles, _MOTION_FORWARD, dtype=np.int8)
     ctx.stride_scale = np.clip(
         ctx.stride_scale_prior_mean

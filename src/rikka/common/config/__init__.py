@@ -170,6 +170,8 @@ TURNING_YAW_DELTA_THRESHOLD_DEG = 35.0
 K_FORWARD = 9.0
 
 # パーティクルフィルタ設定
+PF_INIT_MODE = "origin"
+PF_GLOBAL_RESAMPLE_ESS_RATIO = 0.2  # 大域探索中の分布を潰さないよう閾値を下げる
 PF_NUM_PARTICLES = 500
 
 # 標準のPF候補生成。legacyは明示指定で引き続き利用できる。

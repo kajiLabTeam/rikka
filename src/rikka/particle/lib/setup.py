@@ -27,6 +27,12 @@ from .state import ParticleRuntime
 
 
 def setup(ctx: ParticleRuntime) -> None:
+    validate_choice("init_mode", ctx.init_mode, ("origin", "uniform"))
+    validate_positive_parameter(
+        "global_resample_ess_ratio", ctx.global_resample_ess_ratio
+    )
+    if ctx.global_resample_ess_ratio > 1.0:
+        raise ValueError("global_resample_ess_ratio は1以下を指定してください")
     validate_choice(
         "proposal_method",
         ctx.proposal_method,

@@ -47,6 +47,7 @@ from ..common.config import (
     HEADING_METHOD,
     INITIAL_DIRECTION,
     MOTION_ESTIMATION,
+    PF_INIT_MODE,
     PF_LANDMARK_MODE,
     PF_LANDMARK_RANGE_WEIGHT_POWER,
     PF_LANDMARK_RETROFIT,
@@ -240,6 +241,7 @@ def run(
     trajectory_plot: str = TRAJECTORY_PLOT_MODE,
     pf_proposal: str = PF_PROPOSAL_METHOD,
     pf_candidates: int | None = None,
+    init_mode: str = PF_INIT_MODE,
 ) -> pd.DataFrame:
     """後方互換引数を設定へ変換し、解析と成果物保存を実行する。"""
     if (
@@ -334,6 +336,7 @@ def run(
         scale=scale,
         seed=particle_seed,
         count=particle_count,
+        init_mode=init_mode,
         motion_predictive_weight_power=motion_predictive_weight_power,
         path_selection=pf_path_selection,
         landmark_mode=pf_landmark_mode,
@@ -353,7 +356,8 @@ def run(
         trajectory_plot=trajectory_plot,
     )
     if use_particle_filter:
-        _validate_particle_floormap(floormap_path, origin_px)
+        if particle_settings.init_mode != "uniform":
+            _validate_particle_floormap(floormap_path, origin_px)
         if ble_landmark:
             map_gray = _load_floormap_gray(floormap_path)
             _validate_landmark_pixels(map_gray, landmark_settings.landmarks)

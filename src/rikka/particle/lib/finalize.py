@@ -88,7 +88,26 @@ def finalize(
     ctx.particle_paths = _reconstruct_particle_paths(
         ctx.position_history, ctx.parent_history
     )
-    if ctx.hard_anchor_events:
+    if ctx.init_mode == "uniform":
+        # 収束判定が入る次イテレーションまでの暫定代表経路。
+        # 到達可能クラスタ化は時点ごとのPythonループによる線分判定が必要で、
+        # 散らばった N=5,000 粒子では1回1.2秒かかるため収束前履歴には使わない。
+        ctx.selected_path = np.asarray(
+            [
+                np.average(positions, axis=0, weights=weights)
+                for positions, weights in zip(
+                    ctx.position_history, ctx.weight_history, strict=True
+                )
+            ]
+        )
+        ctx.selected_mode = "uniform_mean"
+        ctx.trajectory_modes = ["uniform_mean"] * len(ctx.selected_path)
+        ctx.trajectory_sources = [None] * len(ctx.selected_path)
+        ctx.current_path = ctx.selected_path.copy()
+        ctx.sequence_path = ctx.selected_path.copy()
+        ctx.current_reversals = 0
+        ctx.sequence_reversals = 0
+    elif ctx.hard_anchor_events:
         current, sequence = select_hard_segment(ctx)
         ctx.current_path = np.asarray([*ctx.hard_current_prefix, *current.tolist()[1:]])
         ctx.sequence_path = np.asarray(

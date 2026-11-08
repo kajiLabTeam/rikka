@@ -325,24 +325,29 @@ def propose(ctx: ParticleRuntime) -> None:
         _propose_candidate_bank(ctx)
     else:
         _generate_motion_candidate(ctx)
-        # 壁や地図外へ出た粒子は、重み0で捨てる前に前歩位置中心の円内へ戻す。
-        (
-            ctx.proposed_particles,
-            ctx.valid_transition,
-            ctx.relocated_invalid_count,
-        ) = relocate_invalid_particles(
-            ctx.particles_before,
-            ctx.proposed_particles,
-            ctx.valid_transition,
-            ctx.invalid_relocation_radius_m if ctx.proposal_method == "legacy" else 0.0,
-            ctx.invalid_relocation_attempts,
-            ctx.rng,
-            ctx.map_gray,
-            ctx.gx_mean,
-            ctx.gz_mean,
-            ctx.origin_px,
-            ctx.scale,
-        )
+        if ctx.global_phase_active:
+            ctx.relocated_invalid_count = 0
+        else:
+            # 壁や地図外へ出た粒子は、重み0で捨てる前に前歩位置中心の円内へ戻す。
+            (
+                ctx.proposed_particles,
+                ctx.valid_transition,
+                ctx.relocated_invalid_count,
+            ) = relocate_invalid_particles(
+                ctx.particles_before,
+                ctx.proposed_particles,
+                ctx.valid_transition,
+                ctx.invalid_relocation_radius_m
+                if ctx.proposal_method == "legacy"
+                else 0.0,
+                ctx.invalid_relocation_attempts,
+                ctx.rng,
+                ctx.map_gray,
+                ctx.gx_mean,
+                ctx.gz_mean,
+                ctx.origin_px,
+                ctx.scale,
+            )
         _set_stride_likelihood(ctx)
     # 再配置した粒子の実移動量は提案歩幅と一致しないため、診断には提案値では
     # なく実座標の変位を使う。再配置が無効なら提案歩幅と一致する。

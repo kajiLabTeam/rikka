@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from ...common.config import PF_GLOBAL_RESAMPLE_ESS_RATIO
 from ...common.lib.models import (
     HardAnchorCorrection,
     HardPositionObservation,
@@ -117,6 +118,12 @@ class ParticleRuntime:
     hard_positions: tuple[HardPositionObservation, ...] = ()
     floormap_floor_id: str | None = None
     hard_anchor_events_collector: list[HardAnchorCorrection] | None = None
+    init_mode: str = "origin"
+    global_resample_ess_ratio: float = PF_GLOBAL_RESAMPLE_ESS_RATIO
+    initial_particles: np.ndarray | None = None
+    initial_heading_drift: np.ndarray | None = None
+    initial_heading_correction: np.ndarray | None = None
+    global_phase_active: bool = False
     last_hard_anchor_step: int = field(init=False, default=0)
     hard_anchor_by_step: dict[int, HardPositionObservation] = field(
         init=False, default_factory=dict

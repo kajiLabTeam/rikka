@@ -59,6 +59,7 @@ from .config import (
     INITIAL_DIRECTION,
     MOTION_ESTIMATION,
     PF_CANDIDATE_COUNT,
+    PF_INIT_MODE,
     PF_LANDMARK_LIKELIHOOD_FLOOR,
     PF_LANDMARK_MAX_JUMP_M,
     PF_LANDMARK_MODE,
@@ -242,8 +243,10 @@ class ParticleSettings:
     landmark_retrofit: bool = PF_LANDMARK_RETROFIT
     proposal_method: str = PF_PROPOSAL_METHOD
     candidate_count: int | None = None
+    init_mode: str = PF_INIT_MODE
 
     def __post_init__(self) -> None:
+        validate_choice("init_mode", self.init_mode, ("origin", "uniform"))
         validate_choice(
             "proposal_method",
             self.proposal_method,

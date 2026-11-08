@@ -150,6 +150,7 @@ def run_particle(
         prepared.gx_mean,
         prepared.gz_mean,
         floormap_path=floormap.path,
+        init_mode=settings.init_mode,
         origin_px=floormap.origin_px,
         scale=floormap.scale,
         n_particles=settings.count,
