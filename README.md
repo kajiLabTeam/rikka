@@ -17,6 +17,7 @@ PDR（Pedestrian Dead Reckoning）ライブラリです。
   - [初期位置・初期方位を与えない PDR（`--free-origin`）](#初期位置初期方位を与えない-pdr--free-origin)
   - [ランドマークのみの軌跡（`landmark-path`）](#ランドマークのみの軌跡landmark-path)
   - [初期位置・初期方位を与えない PF（`--pf-init uniform`）](#初期位置初期方位を与えない-pf--pf-init-uniform)
+    - [向きが定まらない地図について](#向きが定まらない地図について)
 - [推定軌跡の精度評価](#推定軌跡の精度評価)
   - [正解軌跡との複数 seed 比較](#正解軌跡との複数-seed-比較)
   - [代表軌跡の選択と終端方向の検査](#代表軌跡の選択と終端方向の検査)
@@ -155,7 +156,8 @@ uv run rikka pdr --free-origin
 uv run rikka particle --pf-init uniform --pf-particles 5000
 ```
 
-`--origin-px`、`--direction`、`--ble-landmark` とは併用できません。メートル座標の
+`--origin-px`、`--direction` とは併用できません。確定位置の経路選択は未対応のため、
+`--pf-hard-anchors` も併用できません。メートル座標の
 原点は画像の画素 (0, 0) で、`pixel = meter / scale` の関係になります。
 
 通常モードとの違いは次の3点です。
@@ -177,8 +179,39 @@ uv run rikka particle --pf-init uniform --pf-particles 5000
 `--pf-converge-spread`、`--pf-converge-steps`、`--pf-converge-top-k` で変更できます。
 
 このモードで動画を保存すると、`particle_filter.mp4` に加えて `convergence_story.mp4`
-が出力されます。粒子分布と指標グラフ、フェーズの説明を並べ、探索中・収束・追従の
-経緯を追えるようにしたものです。冒頭と収束歩、末尾で静止します。
+が出力されます。左に地図と粒子分布、右に1歩目・候補が最も分かれた歩・収束歩の
+固定サムネイル、下にフェーズの日本語説明を並べ、探索中・収束・追従の経緯を
+追えるようにしたものです。冒頭と収束歩、末尾で静止します。最後に代表軌跡の祖先を
+末尾から1歩目へ遡る巻き戻し区間を付け、収束前の区間が逆方向 PF ではなく
+生き残った粒子の系譜であることを示します。
+
+#### 向きが定まらない地図について
+
+地図の歩行可能領域が点対称に近い場合、推定した軌跡が**180度反転した位置に
+置かれることがあります**。一本の直線廊下が主体の階が典型です。
+
+反転した軌跡も地図制約を1つも破らないため、地図だけでは正しい向きを選べません。
+粒子数を増やしても解決しません（`agent/EXPERIMENT_LOG.md` の EXP-091 で、
+4号館2階の記録を粒子2,000〜10,000・seed 5本で評価した結果、
+粒子10,000でも5実行中2実行が反転しました）。
+
+**この地図形状に由来する制約であり、修正対象としていません。**
+向きを確定させたい場合は、既知座標の BLE ビーコンのように
+地図上の絶対位置を与える観測が別途必要です。一様初期化でも BLE ランドマークを
+併用でき、実測 BLE では次のように `--pf-landmark-mode ranging` を指定します。
+
+```sh
+uv run rikka particle -d input/1024計測4号館1 \
+  --floormap input/Floormap_building4_2floor.png \
+  --pf-init uniform --pf-particles 2000 \
+  --ble-landmark --pf-landmark-mode ranging
+```
+
+実測では、4号館2階・粒子2,000の BLE なしは5 seed すべてが180度反転し、
+基準から約24.8 m ずれました。`ranging` の併用では5/5成功、平均0.78 m、
+収束歩 K は全 seed で8でした。14号館5階・粒子2,000では精度が1.46 mから
+1.16 mとなり、収束歩 K は33〜48から4へ安定しました。
+`observation` は粒子2,000で5 seed 中3 seed が失敗したため推奨しません。
 
 ### ランドマークのみの軌跡（`landmark-path`）
 
@@ -563,6 +596,9 @@ BLE 有効時は `output/<timestamp>/landmark_corrections.csv` に検出時刻�
 ### PF のランドマーク反映モード（`--pf-landmark-mode`）
 
 particle filter では `--pf-landmark-mode` で反映方式を選びます。
+既定の `candidate-bank` 提案方式で BLE を反映できるのは `ranging` / `observation`
+のみです（`none` は反映無効として指定可能）。既定の `hybrid` や `reset` を使う場合は、
+`--pf-proposal legacy` または `no-relocation` を指定してください。
 
 - `none`: 検出を軌跡へ反映しない。BLE 無効時と固定 seed の結果が一致します。
 - `observation`: ランドマーク距離の下限付きガウス尤度を粒子重みと

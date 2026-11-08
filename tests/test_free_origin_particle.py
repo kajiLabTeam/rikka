@@ -9,6 +9,7 @@ import pytest
 from click.testing import CliRunner
 
 from rikka.cli import commands as cli_commands
+from rikka.cli import options as cli_options
 from rikka.cli.options import cli
 from rikka.common.lib import sensors as sensors_module
 from rikka.common.lib.floormap import compute_pixel_coords
@@ -112,11 +113,9 @@ def test_uniform_headings_cover_full_circle() -> None:
     assert abs(np.mean(np.exp(1j * headings))) < 0.05
 
 
-@pytest.mark.parametrize(
-    "extra", [["--origin-px", "0", "0"], ["--direction", "0"], ["--ble-landmark"]]
-)
+@pytest.mark.parametrize("extra", [["--origin-px", "0", "0"], ["--direction", "0"]])
 def test_uniform_cli_rejects_initial_conditions(tmp_path, extra) -> None:
-    """既定と同じ値でも明示された起点・方位やBLEを拒否する。"""
+    """既定と同じ値でも明示された起点・方位を拒否する。"""
     result = CliRunner().invoke(
         cli, ["particle", "--pf-init", "uniform", "--data-dir", str(tmp_path), *extra]
     )
@@ -144,6 +143,116 @@ def test_uniform_cli_reads_only_height(tmp_path, monkeypatch) -> None:
     assert run.call_args.kwargs["origin_px"] == (0, 0)
     assert run.call_args.kwargs["initial_direction"] == 0.0
     assert run.call_args.kwargs["height_m"] == 1.75
+
+
+@pytest.mark.parametrize(
+    ("proposal", "mode"),
+    [
+        ("candidate-bank", "ranging"),
+        ("candidate-bank", "observation"),
+        ("candidate-bank", "none"),
+        ("legacy", "hybrid"),
+        ("no-relocation", "hybrid"),
+    ],
+)
+def test_uniform_cli_accepts_ble_landmark(
+    tmp_path, monkeypatch, proposal, mode
+) -> None:
+    """一様初期化でも対応するBLE反映方式と提案方式を実行へ渡す。"""
+    sensor_load = Mock(return_value=(Mock(), Mock()))
+    run = Mock()
+    resolve_ble = Mock(return_value=(str(tmp_path / "BLE.csv"), ()))
+    monkeypatch.setattr(sensors_module, "load_sensor_data", sensor_load)
+    monkeypatch.setattr(cli_commands, "run", run)
+    monkeypatch.setattr(cli_options, "_resolve_ble_inputs", resolve_ble)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "particle",
+            "--pf-init",
+            "uniform",
+            "--data-dir",
+            str(tmp_path),
+            "--ble-landmark",
+            "--pf-landmark-mode",
+            mode,
+            "--pf-proposal",
+            proposal,
+            "--no-plot",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    sensor_load.assert_called_once_with(str(tmp_path))
+    resolve_ble.assert_called_once()
+    assert resolve_ble.call_args.args[1] is True
+    run.assert_called_once()
+    assert run.call_args.kwargs["init_mode"] == "uniform"
+    assert run.call_args.kwargs["ble_landmark"] is True
+    assert run.call_args.kwargs["pf_landmark_mode"] == mode
+    assert run.call_args.kwargs["pf_proposal"] == proposal
+    assert run.call_args.kwargs["origin_px"] == (0, 0)
+    assert run.call_args.kwargs["initial_direction"] == 0.0
+
+
+@pytest.mark.parametrize("init_mode", ["uniform", "origin"])
+def test_particle_cli_rejects_default_ble_mode(
+    tmp_path, monkeypatch, init_mode
+) -> None:
+    """両初期化モードで既定提案方式とBLE反映方式の非互換を案内する。"""
+    sensor_load = Mock()
+    run = Mock()
+    monkeypatch.setattr(sensors_module, "load_sensor_data", sensor_load)
+    monkeypatch.setattr(cli_commands, "run", run)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "particle",
+            "--pf-init",
+            init_mode,
+            "--data-dir",
+            str(tmp_path),
+            "--ble-landmark",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "--pf-landmark-mode ranging" in result.output
+    assert "observation" in result.output
+    assert "--pf-proposal legacy" in result.output
+    assert "no-relocation" in result.output
+    sensor_load.assert_not_called()
+    run.assert_not_called()
+
+
+def test_uniform_cli_rejects_hard_anchors(tmp_path) -> None:
+    """未対応の確定位置による経路選択を黙って無視せず拒否する。"""
+    anchors_path = tmp_path / "anchors.json"
+    anchors_path.write_text("[]")
+    result = CliRunner().invoke(
+        cli,
+        [
+            "particle",
+            "--pf-init",
+            "uniform",
+            "--data-dir",
+            str(tmp_path),
+            "--pf-hard-anchors",
+            str(anchors_path),
+        ],
+    )
+    assert result.exit_code == 2
+    assert "uniform では確定位置の経路選択が未対応" in result.output
+    assert "--pf-hard-anchors" in result.output
+
+
+def test_free_origin_pdr_still_rejects_ble_landmark(tmp_path) -> None:
+    """地図座標を使わない通常PDRでは引き続きBLE補正を拒否する。"""
+    result = CliRunner().invoke(
+        cli,
+        ["pdr", "--free-origin", "--ble-landmark", "--data-dir", str(tmp_path)],
+    )
+    assert result.exit_code == 2
+    assert "--free-origin" in result.output
+    assert "--ble-landmark" in result.output
 
 
 @pytest.mark.parametrize("seed", [0, 1, 2, 10, 42, 100])

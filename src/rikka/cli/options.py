@@ -364,8 +364,10 @@ def _resolve_free_origin_settings(
     height_m: float,
     ble_landmark: bool,
     option_label: str = "--free-origin",
+    *,
+    allow_ble_landmark: bool = False,
 ) -> tuple[tuple[int, int], float, float]:
-    """初期位置・初期方位なし実行の起点・方位を固定し、身長だけ計測値を反映する。"""
+    """起点・方位を固定し、身長だけ反映する。BLE併用は明示的な許可時のみ認める。"""
     from click.core import ParameterSource  # noqa: PLC0415
 
     from ..common.lib.measurement_config import (  # noqa: PLC0415
@@ -377,7 +379,7 @@ def _resolve_free_origin_settings(
             raise click.UsageError(
                 f"{option_label} と {label} は同時に指定できません。"
             )
-    if ble_landmark:
+    if ble_landmark and not allow_ble_landmark:
         reason = (
             "地図座標を使わない"
             if option_label == "--free-origin"
@@ -1150,11 +1152,26 @@ def particle(
     pf_hard_anchors: Path | None,
     floormap_floor_id: str | None,
 ) -> None:
-    """パーティクルフィルタ + マップマッチングで歩行軌跡を推定する。"""
+    """オプションの互換性を検証し、PFとマップマッチングで歩行軌跡を推定する。"""
     from ..common.lib.sensors import load_sensor_data  # noqa: PLC0415
     from ..landmark.lib.hard_anchor import load_hard_positions  # noqa: PLC0415
     from .commands import run as _run  # noqa: PLC0415
 
+    if pf_init == "uniform" and pf_hard_anchors is not None:
+        raise click.UsageError(
+            "--pf-init uniform では確定位置の経路選択が未対応のため、"
+            "--pf-hard-anchors は併用できません。"
+        )
+    if (
+        ble_landmark
+        and pf_proposal == "candidate-bank"
+        and pf_landmark_mode not in {"ranging", "observation", "none"}
+    ):
+        raise click.UsageError(
+            "candidate-bank と --ble-landmark の併用には "
+            "--pf-landmark-mode ranging（推奨）または observation を指定するか、"
+            "--pf-proposal legacy または no-relocation を指定してください。"
+        )
     hard_positions = (
         () if pf_hard_anchors is None else load_hard_positions(pf_hard_anchors)
     )
@@ -1174,6 +1191,7 @@ def particle(
             height_m,
             ble_landmark,
             option_label="--pf-init uniform",
+            allow_ble_landmark=True,
         )
     else:
         origin_px, direction, height_m = _resolve_measurement_settings(
