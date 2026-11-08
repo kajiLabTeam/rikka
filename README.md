@@ -16,6 +16,7 @@ PDR（Pedestrian Dead Reckoning）ライブラリです。
 - [基本コマンド](#基本コマンド)
   - [初期位置・初期方位を与えない PDR（`--free-origin`）](#初期位置初期方位を与えない-pdr--free-origin)
   - [ランドマークのみの軌跡（`landmark-path`）](#ランドマークのみの軌跡landmark-path)
+  - [初期位置・初期方位を与えない PF（`--pf-init uniform`）](#初期位置初期方位を与えない-pf--pf-init-uniform)
 - [推定軌跡の精度評価](#推定軌跡の精度評価)
   - [正解軌跡との複数 seed 比較](#正解軌跡との複数-seed-比較)
   - [代表軌跡の選択と終端方向の検査](#代表軌跡の選択と終端方向の検査)
@@ -144,6 +145,40 @@ uv run rikka pdr --free-origin
 `--ble-landmark` とは併用できません。`walk_config.csv` や `metadata.json` が
 ある計測フォルダでも、起点と初期方位は読み込まず固定します。身長だけは
 `--height-m` を明示しない限り計測設定の値を使います。
+
+### 初期位置・初期方位を与えない PF（`--pf-init uniform`）
+
+起点も初期方位も与えず、フロアマップと `--scale` だけで軌跡を推定します。粒子を
+地図の歩行可能領域へ一様に配置し、初期方位も一様に取って大域的に探索します。
+
+```sh
+uv run rikka particle --pf-init uniform --pf-particles 5000
+```
+
+`--origin-px`、`--direction`、`--ble-landmark` とは併用できません。メートル座標の
+原点は画像の画素 (0, 0) で、`pixel = meter / scale` の関係になります。
+
+通常モードとの違いは次の3点です。
+
+- **recovery を行わない。** 地図を跨いだ粒子は重み0で捨てます。粒子が大量に死ぬのは
+  大域探索の正常な動作で、通常の復旧処理はこれを異常として扱うためです。
+  再標本化の ESS 閾値も `PF_GLOBAL_RESAMPLE_ESS_RATIO`（0.2）へ下げます。
+  収束後に通常処理へ戻す `--pf-converge-restore-normal` もありますが、既定は無効です。
+- **収束を観測する。** 毎歩、粒子を粗いグリッドで連結成分化し、クラスタ数・最大クラスタの
+  重み比・広がり・重心を `convergence_diagnostics.csv` へ記録します。条件を満たした歩を
+  収束歩 K として表示します。
+- **代表軌跡は遅延決定。** 全区間を走らせたあと、最終時点の最大クラスタで経路スコアが
+  最大の粒子を選び、その祖先経路を代表軌跡にします。実在する粒子の経路なので壁を跨ぎません。
+
+粒子数は `--pf-particles` で指定します。一様配置では歩行可能面積あたりの密度が精度を
+決めるため、既定の 500 では足りません。
+
+収束判定のしきい値は `--pf-converge-cell`、`--pf-converge-weight-ratio`、
+`--pf-converge-spread`、`--pf-converge-steps`、`--pf-converge-top-k` で変更できます。
+
+このモードで動画を保存すると、`particle_filter.mp4` に加えて `convergence_story.mp4`
+が出力されます。粒子分布と指標グラフ、フェーズの説明を並べ、探索中・収束・追従の
+経緯を追えるようにしたものです。冒頭と収束歩、末尾で静止します。
 
 ### ランドマークのみの軌跡（`landmark-path`）
 
@@ -890,6 +925,9 @@ uv run rikka run \
 | `pf_trajectory.png` | PF の平均優先、または反転抑制された単一祖先軌跡 |
 | `particle_diagnostics.csv` | 各歩のESS、有効粒子数、位置・方位分散、歩幅倍率、recovery、軌跡選択モード |
 | `particle_filter.mp4` / `.webm` / `.gif` | パーティクル分布アニメーション |
+| `convergence_diagnostics.csv` | `--pf-init uniform` 時の各歩のクラスタ数、最大クラスタの重み比・広がり・重心、上位クラスタ |
+| `convergence_history.png` | `--pf-init uniform` 時のクラスタ数と最大クラスタ広がりの推移。赤破線が収束歩 K |
+| `convergence_story.mp4` / `.webm` / `.gif` | `--pf-init uniform` 時の探索・収束・追従を説明するアニメーション |
 | `particle_frames/step_*.png` | 明示保存時の開始・提案・壁判定・重み・選択/復旧・確定と方位ローズ |
 | `particle_paths_comparison.png` | 明示保存時の加重平均・単一祖先・個別粒子経路と方位変化の比較 |
 | `particle_history_candidate.csv` | `--history-candidate`指定時。原点を含む元/候補座標、センサー時刻、修正量、参照粒子・状態、接続の出所 |
