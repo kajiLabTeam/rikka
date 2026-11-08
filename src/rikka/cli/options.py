@@ -1085,6 +1085,12 @@ cli.add_command(run, name="pdr")
     help="根拠付き確定位置イベントのJSON（歩境界時刻のみ）",
 )
 @_common_options
+@click.option(
+    "--pf-backward/--no-pf-backward",
+    default=False,
+    show_default=True,
+    help="検証用の独立した後方PFを実行し、前向き経路と比較する",
+)
 @click.pass_context
 def particle(
     ctx: click.Context,
@@ -1151,6 +1157,7 @@ def particle(
     pf_candidates: int | None,
     pf_hard_anchors: Path | None,
     floormap_floor_id: str | None,
+    pf_backward: bool = False,
 ) -> None:
     """オプションの互換性を検証し、PFとマップマッチングで歩行軌跡を推定する。"""
     from ..common.lib.sensors import load_sensor_data  # noqa: PLC0415
@@ -1242,6 +1249,7 @@ def particle(
         particle_seed=pf_seed,
         particle_count=pf_particles,
         init_mode=pf_init,
+        pf_backward=pf_backward,
         convergence_cell_m=pf_converge_cell,
         convergence_top_k=pf_converge_top_k,
         convergence_weight_ratio=pf_converge_weight_ratio,

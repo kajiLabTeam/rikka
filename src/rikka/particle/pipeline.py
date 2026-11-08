@@ -10,12 +10,17 @@
 処理フロー:
     診断収集器を用意し、準備済み歩列をrunnerへ渡して共有結果型へまとめる。
     明示指定時は、前向き結果を維持したまま粒子履歴から別の経路候補を作る。
+    後方検証では共有歩列を反転して独立に実行し、元の歩番号で距離を比較する。
 """
 
 from dataclasses import replace
 
+import numpy as np
+
 from ..ble.lib.ranging_check import run_ranging_preflight
 from ..common.lib.models import (
+    BackwardParticleResult,
+    BidirectionalAgreement,
     FloorMap,
     HardAnchorCorrection,
     HardPositionObservation,
@@ -36,6 +41,12 @@ from ..landmark.lib.assignment import (
 )
 from ..landmark.lib.coordinates import build_landmark_meter_map
 from ..landmark.lib.timing import evaluate_landmark_timing
+from .lib.backward import (
+    backward_to_forward,
+    build_backward_prepared,
+    reverse_observation_times,
+    reverse_step_time,
+)
 from .lib.history_correction import build_history_candidate
 from .lib.recorder import (
     ParticleFilterStepDiagnostics,
@@ -265,4 +276,102 @@ def run_particle(
         prepared=prepared,
         particle=particle,
         landmark=landmark,
+    )
+
+
+def run_backward_particle(
+    prepared: PreparedPdrSteps,
+    floormap: FloorMap,
+    settings: ParticleSettings,
+    *,
+    detections: tuple[LandmarkObservation, ...] | None = None,
+    ranging_observations: tuple[LandmarkRange, ...] | None = None,
+    landmark_settings: BleLandmarkSettings | None = None,
+    history_candidate: bool = False,
+    hard_positions: tuple[HardPositionObservation, ...] = (),
+    forward_result: TrajectoryResult | None = None,
+) -> BackwardParticleResult:
+    """後方PFを独立に実行し、元の歩番号で前向き経路との距離を返す。
+
+    前向き結果を省略した直接呼び出しでは、同じ引数で前向きPFも実行する。
+    CLIは既存結果を渡し、前向きPFの重複実行と追加の乱数消費を避ける。
+    収束診断の歩番号・時刻は後方実行のまま保持する。
+    """
+    if forward_result is None:
+        forward_result = run_particle(
+            prepared,
+            floormap,
+            settings,
+            detections=detections,
+            ranging_observations=ranging_observations,
+            landmark_settings=landmark_settings,
+            history_candidate=history_candidate,
+            hard_positions=hard_positions,
+        )
+    first = prepared.t_at_steps[0] if prepared.t_at_steps else 0.0
+    last = prepared.t_at_steps[-1] if prepared.t_at_steps else 0.0
+    result = run_particle(
+        build_backward_prepared(prepared),
+        floormap,
+        settings,
+        detections=(
+            None
+            if detections is None
+            else reverse_observation_times(detections, first, last)
+        ),
+        ranging_observations=(
+            None
+            if ranging_observations is None
+            else reverse_observation_times(ranging_observations, first, last)
+        ),
+        landmark_settings=landmark_settings,
+        history_candidate=history_candidate,
+        hard_positions=tuple(
+            sorted(
+                (
+                    replace(
+                        obs,
+                        timestamp_s=reverse_step_time(obs.timestamp_s, first, last),
+                        heading_deg=(
+                            None
+                            if obs.heading_deg is None
+                            else (obs.heading_deg + 360.0) % 360.0 - 180.0
+                        ),
+                    )
+                    for obs in hard_positions
+                ),
+                key=lambda obs: obs.timestamp_s,
+            )
+        ),
+    )
+    trajectory = backward_to_forward(result.trajectory)
+    # 実行歩だけが履歴に積まれる。逆順の変位を戻すと同じノード列になる。
+    # 例: 有効歩が1,3なら、後方の歩1,3の終点は前向きノード1,0に対応する。
+    step_numbers = [0] + [
+        i
+        for i, heading in enumerate(prepared.particle_motion_headings, 1)
+        if heading is not None
+    ]
+    agreement = tuple(
+        BidirectionalAgreement(
+            step,
+            float(f[0]),
+            float(f[1]),
+            float(b[0]),
+            float(b[1]),
+            float(np.hypot(f[0] - b[0], f[1] - b[1])),
+        )
+        for step, f, b in zip(
+            step_numbers, forward_result.trajectory, trajectory, strict=True
+        )
+    )
+    distances = [item.distance_m for item in agreement]
+    assert result.particle is not None
+    return BackwardParticleResult(
+        trajectory=trajectory,
+        convergence=result.particle.convergence,
+        agreement=agreement,
+        start_distance_m=distances[0],
+        median_distance_m=float(np.median(distances)),
+        max_distance_m=max(distances),
     )

@@ -27,6 +27,7 @@ from ..common.lib.models import (
 from ..common.settings import OutputSettings, ParticleSettings, PdrSettings
 from ..particle.lib.recorder import ParticleFilterStepDiagnostics
 from .lib.animation import plot_particle_filter_trajectory, save_particle_animation
+from .lib.backward import save_backward_comparison, save_backward_csv
 from .lib.console import print_trajectory_summary
 from .lib.convergence_animation import save_convergence_animation
 from .lib.frames import (
@@ -65,6 +66,8 @@ def write_outputs(result: TrajectoryResult, output_dir: Path) -> pd.DataFrame:
     """PDR/PFの共通CSVと方式固有の診断CSVを書き出す。"""
     print_trajectory_summary(result)
     prepared = result.prepared
+    if result.particle is not None and result.particle.backward is not None:
+        save_backward_csv(result, output_dir)
 
     dataframe = _build_trajectory_dataframe(result.trajectory, result.t_at_steps)
     if result.particle is not None and result.particle.hard_anchor_corrections:
@@ -269,6 +272,16 @@ def render(
         output_settings,
         output_dir,
     )
+    if result.particle.backward is not None:
+        save_backward_comparison(
+            result,
+            FloorMap(
+                str(particle_settings.floormap_path),
+                particle_settings.origin_px,
+                particle_settings.scale,
+            ),
+            output_dir / "bidirectional_comparison.png",
+        )
 
 
 def _render_trajectory(

@@ -96,7 +96,7 @@ from ..common.settings import (
     StepSettings,
 )
 from ..landmark.pipeline import prepare_landmark_path
-from ..particle.pipeline import run_particle
+from ..particle.pipeline import run_backward_particle, run_particle
 from ..pdr.pipeline import run_pdr
 from ..plot import pipeline as plot_pipeline
 
@@ -254,6 +254,7 @@ def run(
     convergence_spread_m: float = PF_CONVERGENCE_SPREAD_M,
     convergence_single_steps: int = PF_CONVERGENCE_SINGLE_STEPS,
     convergence_restore_normal: bool = PF_CONVERGENCE_RESTORE_NORMAL,
+    pf_backward: bool = False,
 ) -> pd.DataFrame:
     """後方互換引数を設定へ変換し、解析と成果物保存を実行する。"""
     if (
@@ -401,6 +402,24 @@ def run(
             landmark_settings=landmark_settings if ble_landmark else None,
             history_candidate=history_candidate,
         )
+        if pf_backward:
+            backward = run_backward_particle(
+                result.prepared,
+                floormap,
+                particle_settings,
+                detections=None if particle_ble is None else particle_ble.detections,
+                ranging_observations=(
+                    None if particle_ble is None else particle_ble.observations
+                ),
+                landmark_settings=landmark_settings if ble_landmark else None,
+                history_candidate=history_candidate,
+                hard_positions=hard_positions,
+                forward_result=result,
+            )
+            assert result.particle is not None
+            result = replace(
+                result, particle=replace(result.particle, backward=backward)
+            )
     _print_prepared_summary(result.prepared, pdr_settings)
     output_dir = plot_pipeline.create_output_dir()
     dataframe = plot_pipeline.write_outputs(result, output_dir)

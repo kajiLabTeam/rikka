@@ -396,6 +396,30 @@ class ParticleConvergenceDiagnostic:
 
 
 @dataclass(frozen=True)
+class BidirectionalAgreement:
+    """前向きと後方の代表軌跡の一致度。歩番号は前向きの並び。"""
+
+    step_number: int
+    forward_x_m: float
+    forward_y_m: float
+    backward_x_m: float
+    backward_y_m: float
+    distance_m: float
+
+
+@dataclass(frozen=True)
+class BackwardParticleResult:
+    """後方PFの結果。代表軌跡は前向きの歩順へ戻してある。"""
+
+    trajectory: list[list[float]]
+    convergence: ParticleConvergenceDiagnostic | None
+    agreement: tuple[BidirectionalAgreement, ...]
+    start_distance_m: float
+    median_distance_m: float
+    max_distance_m: float
+
+
+@dataclass(frozen=True)
 class ParticleFilterResult:
     """particle filter の代表軌跡と描画・診断用状態。"""
 
@@ -410,6 +434,7 @@ class ParticleFilterResult:
     correction_steps: tuple[int, ...] = ()
     convergence_diagnostics: tuple[ParticleConvergenceDiagnostic, ...] = ()
     convergence: ParticleConvergenceDiagnostic | None = None
+    backward: BackwardParticleResult | None = None
 
 
 @dataclass(frozen=True)
