@@ -28,6 +28,7 @@ from ..common.settings import OutputSettings, ParticleSettings, PdrSettings
 from ..particle.lib.recorder import ParticleFilterStepDiagnostics
 from .lib.animation import plot_particle_filter_trajectory, save_particle_animation
 from .lib.console import print_trajectory_summary
+from .lib.convergence_animation import save_convergence_animation
 from .lib.frames import (
     generated_files_size,
     save_particle_path_comparison,
@@ -388,6 +389,17 @@ def _render_particle_artifacts(
             landmark=result.landmark,
             hard_corrections=result.particle.hard_anchor_corrections,
         )
+        if settings.init_mode == "uniform" and result.particle.convergence_diagnostics:
+            save_convergence_animation(
+                result.particle,
+                gx_mean=prepared.gx_mean,
+                gz_mean=prepared.gz_mean,
+                floormap_path=settings.floormap_path,
+                origin_px=settings.origin_px,
+                scale=settings.scale,
+                cell_m=settings.convergence_cell_m,
+                output_path=output_dir / "convergence_story.mp4",
+            )
 
 
 def render_sensor(

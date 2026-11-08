@@ -24,6 +24,7 @@ from matplotlib.artist import Artist
 from matplotlib.axes import Axes
 from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize
+from matplotlib.figure import Figure
 
 from ...common.config import FLOORMAP_ORIGIN_PX, FLOORMAP_PATH, FLOORMAP_SCALE
 from ...common.lib.floormap import compute_pixel_coords
@@ -229,8 +230,6 @@ def save_particle_animation(
         landmark: BLE ランドマーク補正結果。粒子が寄る先を確認できるよう、
             ランドマーク位置を全フレームへ、補正が起きた歩を該当フレーム以降へ描く
     """
-    from matplotlib.animation import FFMpegWriter, PillowWriter  # noqa: PLC0415
-
     configure_japanese_font()
     map_img = plt.imread(Path(floormap_path))
     representative_arr = np.array(mean_trajectory)  # shape: (T, 2)
@@ -311,6 +310,18 @@ def save_particle_animation(
         return []
 
     anim = FuncAnimation(fig, update, frames=len(all_particles), interval=1000 // fps)
+
+    return save_animation_with_fallback(anim, fig, output_path, fps)
+
+
+def save_animation_with_fallback(
+    anim: FuncAnimation,
+    fig: Figure,
+    output_path: Path | str,
+    fps: int,
+) -> Path:
+    """動画形式を順に試し、一時ファイルの整理と図の解放まで共通で行う。"""
+    from matplotlib.animation import FFMpegWriter, PillowWriter  # noqa: PLC0415
 
     output_path = Path(output_path)
     if output_path.suffix.lower() not in {".mp4", ".webm", ".gif"}:
