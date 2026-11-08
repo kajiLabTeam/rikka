@@ -1,15 +1,17 @@
 """一様初期化PFの探索・収束・追従を説明する動画。
 
 役割:
-    粒子分布とクラスタ指標、伸びる代表軌跡を同時に示し、収束の経緯を伝える。
+    粒子分布と固定の地図サムネイルで収束を示し、代表軌跡の系譜を説明する。
 依存元:
     common の共有結果型・座標変換・地図正規化、Matplotlib、NumPy と
     plot.lib.animation の共通保存関数を使用する。
 利用先:
     plot.pipeline が uniform モードのアニメーション保存時に呼び出す。
 処理フロー:
-    診断と粒子履歴を対応付け、先頭・収束歩・末尾に静止区間を挿入する。
-    地図と指標グラフ、フェーズ文を更新し、MP4優先で保存する。
+    診断と粒子履歴を対応付け、1歩目・最大クラスタ数の歩・収束歩を固定表示する。
+    前向き区間の先頭・収束歩・末尾に静止区間を挿入する。続いて共有結果型の
+    復元済み代表軌跡を末尾から1歩目へ辿り、祖先から最終歩までの線を伸ばす。
+    巻き戻しの前後にも静止区間を挿入し、MP4優先で保存する。
 """
 
 from pathlib import Path
@@ -45,10 +47,15 @@ def save_convergence_animation(
     convergence_hold_frames: int | None = None,
     final_hold_frames: int | None = None,
     cell_m: float = PF_CONVERGENCE_CELL_M,
+    rewind_stride: int = 1,
+    rewind_hold_frames: int | None = None,
+    rewind_final_hold_frames: int | None = None,
 ) -> Path:
     """診断ごとに1フレーム進め、静止区間付きの説明動画を保存する。
 
-    hold 引数は追加するフレーム数で、None は順に fps の2・3・3倍とする。
+    hold 引数は追加するフレーム数で、None は前向き区間では fps の2・3・3倍、
+    巻き戻しの先頭・末尾では2・3倍とする。rewind_stride は遡る歩の間隔で、
+    間引いても必ず1歩目を含める。系譜は復元済み代表軌跡を使い、PFは実行しない。
     粒子履歴・代表軌跡は先頭に初期配置を含み、以後は診断列の順に対応する。
     元の歩番号は診断から取得するため、欠けた歩番号も詰めて表示しない。
     最大クラスタの色分けは重心からの距離による近似である。
@@ -57,11 +64,15 @@ def save_convergence_animation(
         fps * 2 if initial_hold_frames is None else initial_hold_frames,
         fps * 3 if convergence_hold_frames is None else convergence_hold_frames,
         fps * 3 if final_hold_frames is None else final_hold_frames,
+        fps * 2 if rewind_hold_frames is None else rewind_hold_frames,
+        fps * 3 if rewind_final_hold_frames is None else rewind_final_hold_frames,
     )
     diagnostics = particle.convergence_diagnostics
     count = len(diagnostics)
-    if fps <= 0 or min(holds) < 0 or scale <= 0 or cell_m <= 0:
-        raise ValueError("fps・縮尺・セル幅は正、hold は非負にしてください")
+    if fps <= 0 or min(holds) < 0 or scale <= 0 or cell_m <= 0 or rewind_stride <= 0:
+        raise ValueError(
+            "fps・縮尺・セル幅・rewind_stride は正、hold は非負にしてください"
+        )
     if not count:
         raise ValueError("収束診断が必要です")
     if (
@@ -96,6 +107,13 @@ def save_convergence_animation(
             frames.extend((index, "convergence", tick) for tick in range(holds[1]))
     frames.extend([(count - 1, "final", 0)] * holds[2])
 
+    rewind_indices = list(range(count - 1, -1, -rewind_stride))
+    if rewind_indices[-1] != 0:
+        rewind_indices.append(0)
+    frames.extend([(count - 1, "rewind_start", 0)] * holds[3])
+    frames.extend((index, "rewind", 0) for index in rewind_indices)
+    frames.extend([(0, "rewind_final", 0)] * holds[4])
+
     configure_japanese_font()
     map_gray = normalize_floormap_gray(plt.imread(Path(floormap_path)))
     trajectory = np.asarray(particle.trajectory)
@@ -105,37 +123,37 @@ def save_convergence_animation(
             points[:, 0], points[:, 1], gx_mean, gz_mean, origin_px, scale
         )
 
-    fig = plt.figure(figsize=(13, 8), layout="constrained")
-    grid = fig.add_gridspec(3, 2, width_ratios=(1.7, 1))
-    map_ax = fig.add_subplot(grid[:, 0])
-    cluster_ax = fig.add_subplot(grid[0, 1])
-    spread_ax = fig.add_subplot(grid[1, 1])
-    text_ax = fig.add_subplot(grid[2, 1])
+    fig = plt.figure(figsize=(13, 10), layout="constrained")
+    grid = fig.add_gridspec(4, 2, width_ratios=(1.7, 1), height_ratios=(1, 1, 1, 0.5))
+    map_ax = fig.add_subplot(grid[:3, 0])
+    thumbnail_axes = [fig.add_subplot(grid[row, 1]) for row in range(3)]
+    text_ax = fig.add_subplot(grid[3, :])
     text_ax.set_axis_off()
     phase_text = text_ax.text(0, 0.9, "", va="top", fontsize=12, linespacing=1.7)
     steps = [item.step_number for item in diagnostics]
-    cursors = []
-    for ax, values, label in (
-        (cluster_ax, [item.cluster_count for item in diagnostics], "候補クラスタ数"),
-        (
-            spread_ax,
-            [item.dominant_spread_rms_m for item in diagnostics],
-            "最大クラスタ広がり [m]",
-        ),
+    peak_index = max(range(count), key=lambda index: diagnostics[index].cluster_count)
+    last_index = convergence_index if convergence_index is not None else count - 1
+    captions = (
+        "1歩目: 地図全体へ一様配置",
+        f"{steps[peak_index]}歩目: 候補が最も分かれた時点"
+        f"（クラスタ{diagnostics[peak_index].cluster_count}個）",
+        f"{steps[last_index]}歩目: 収束"
+        if convergence_index is not None
+        else "最終歩: 未収束のまま終了",
+    )
+    for ax, index, caption in zip(
+        thumbnail_axes, (0, peak_index, last_index), captions, strict=True
     ):
-        ax.plot(steps, values)
-        ax.set_ylabel(label)
-        ax.set_xlabel("歩番号")
-        ax.grid(alpha=0.3)
-        cursors.append(ax.axvline(steps[0], color="black", label="現在歩"))
-        if convergence is not None:
-            ax.axvline(
-                convergence.step_number, color="red", linestyle="--", label="収束 K"
-            )
-        ax.legend(loc="best", fontsize=8)
+        ax.imshow(map_gray > 128, cmap="gray", vmin=0, vmax=1)
+        points = np.asarray(particle.all_particles[index + 1])
+        ax.scatter(*pixels(points), s=5, c="gray", alpha=0.5)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_title(caption, fontsize=10, wrap=True)
 
     def update(frame: tuple[int, str, int]) -> list[Artist]:
         index, phase, tick = frame
+        rewinding = phase.startswith("rewind")
         diagnostic = diagnostics[index]
         step = diagnostic.step_number
         points = np.asarray(particle.all_particles[index + 1])
@@ -152,25 +170,38 @@ def save_convergence_animation(
             dominant = np.linalg.norm(points - center, axis=1) <= radius
         map_ax.clear()
         map_ax.imshow(map_gray > 128, cmap="gray", vmin=0, vmax=1)
-        for mask, color, label in (
+        groups = [
             (~dominant, "gray", "その他の粒子"),
             (dominant, "darkorange", "最大クラスタ（近似）"),
-        ):
+        ]
+        if rewinding:
+            groups = [(np.ones(len(points), dtype=bool), "gray", "全粒子")]
+        for mask, color, label in groups:
             map_ax.scatter(*pixels(points[mask]), s=10, c=color, alpha=0.5, label=label)
-        map_ax.plot(
-            *pixels(trajectory[: index + 2]), color="royalblue", label="代表軌跡"
-        )
-        if center is not None:
+        visible_path = trajectory[index + 1 :] if rewinding else trajectory[: index + 2]
+        map_ax.plot(*pixels(visible_path), color="royalblue", label="代表軌跡")
+        if rewinding:
+            map_ax.scatter(
+                *pixels(trajectory[index + 1 : index + 2]),
+                marker="o",
+                s=220,
+                c="deepskyblue",
+                edgecolors="navy",
+                linewidths=2,
+                zorder=5,
+                label="この歩のときの祖先",
+            )
+        if center is not None and not rewinding:
             map_ax.scatter(
                 *pixels(center), marker="*", s=180, c="red", label="最大重心"
             )
 
         text = (
-            f"探索中\n候補クラスタ {diagnostic.cluster_count} 個\n"
+            f"探索中（前向き1パス）/ 候補クラスタ {diagnostic.cluster_count} 個 / "
             f"最大クラスタ広がり {diagnostic.dominant_spread_rms_m:.1f} m\n"
             f"生存粒子 {diagnostic.surviving_particle_count}"
         )
-        if convergence is not None and step >= convergence.step_number:
+        if convergence is not None and (rewinding or step >= convergence.step_number):
             location = np.array(
                 [
                     [
@@ -201,7 +232,7 @@ def save_convergence_animation(
             else:
                 distance = float(np.linalg.norm(trajectory[index + 1] - location[0]))
                 text = (
-                    f"追従中\n収束位置から {distance:.1f} m 移動\n"
+                    f"追従中 / 収束位置から {distance:.1f} m 移動\n"
                     f"候補クラスタ {diagnostic.cluster_count} 個"
                 )
         if phase == "initial":
@@ -210,11 +241,24 @@ def save_convergence_animation(
             )
         elif phase == "final":
             text = f"最終軌跡: 全{steps[-1]}歩"
-        if convergence is None and index == count - 1 and phase != "initial":
+        if phase == "rewind_start" or (
+            phase == "rewind" and index == count - 1 and index > 0
+        ):
+            text = "巻き戻し: 最後に残った粒子の親を1歩ずつ遡る"
+        elif rewinding:
+            text = (
+                "収束前の区間は、逆方向PFではなく生き残った粒子の系譜"
+                if index == 0
+                else f"{step}歩目の祖先 / ここから先は実際に粒子が通った経路"
+            )
+        if (
+            convergence is None
+            and index == count - 1
+            and phase != "initial"
+            and not rewinding
+        ):
             text += "\n未収束のまま終了"
         phase_text.set_text(text)
-        for cursor in cursors:
-            cursor.set_xdata([step, step])
         map_ax.legend(loc="upper right", fontsize=8)
         fig.suptitle(f"初期位置・初期方位なしPF: 収束の経緯 — 歩番号 {step}")
         return []
