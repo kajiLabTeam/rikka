@@ -79,11 +79,13 @@ from ..common.lib.floormap import (
     validate_floormap_origin,
 )
 from ..common.lib.models import (
+    BleRangingInput,
     FloorMap,
     GyroBiasResult,
     HardPositionObservation,
     Landmark,
     PreparedPdrSteps,
+    TrajectoryResult,
 )
 from ..common.settings import (
     BleLandmarkSettings,
@@ -185,6 +187,49 @@ def run_landmark_path(
     return target_dir
 
 
+def _run_particle_stage(
+    result: TrajectoryResult,
+    floormap: FloorMap,
+    particle_settings: ParticleSettings,
+    hard_positions: tuple[HardPositionObservation, ...],
+    particle_ble: BleRangingInput | None,
+    landmark_settings: BleLandmarkSettings,
+    ble_landmark: bool,
+    history_candidate: bool,
+    pf_backward: bool,
+) -> TrajectoryResult:
+    """前向き PF と任意の後方 PF を実行し、解析結果を返す。"""
+    result = run_particle(
+        result.prepared,
+        floormap,
+        particle_settings,
+        hard_positions=hard_positions,
+        detections=None if particle_ble is None else particle_ble.detections,
+        ranging_observations=(
+            None if particle_ble is None else particle_ble.observations
+        ),
+        landmark_settings=landmark_settings if ble_landmark else None,
+        history_candidate=history_candidate,
+    )
+    if pf_backward:
+        backward = run_backward_particle(
+            result.prepared,
+            floormap,
+            particle_settings,
+            detections=None if particle_ble is None else particle_ble.detections,
+            ranging_observations=(
+                None if particle_ble is None else particle_ble.observations
+            ),
+            landmark_settings=landmark_settings if ble_landmark else None,
+            history_candidate=history_candidate,
+            hard_positions=hard_positions,
+            forward_result=result,
+        )
+        assert result.particle is not None
+        result = replace(result, particle=replace(result.particle, backward=backward))
+    return result
+
+
 def run(
     df_acc: pd.DataFrame | None = None,
     df_gyro: pd.DataFrame | None = None,
@@ -262,50 +307,28 @@ def run(
     ) and not use_particle_filter:
         raise ValueError("粒子可視化の保存には use_particle_filter=True が必要です。")
     floormap = FloorMap(str(floormap_path), origin_px, scale, floormap_floor_id)
-    landmark_settings = (
-        BleLandmarkSettings(
-            enabled=ble_landmark,
-            detection_profile=ble_detection_profile,
-            data_path=ble_data_path,
-            rssi_threshold_dbm=ble_rssi_threshold,
-            release_margin_db=ble_release_margin,
-            release_streak=ble_release_streak,
-            sync_window_s=ble_sync_window,
-            correction_mode=ble_correction,
-            preflight_mode=ble_preflight,
-            max_correction_m=ble_max_correction,
-            max_warp_span_m=ble_max_warp_span,
-            retrofit_forward_mode=ble_retrofit_forward,
-            retrofit_max_heading_deg=ble_retrofit_max_heading,
-            retrofit_stride_scale_min=ble_retrofit_stride_scale_min,
-            retrofit_stride_scale_max=ble_retrofit_stride_scale_max,
-            retrofit_min_span_m=ble_retrofit_min_span,
-            retrofit_map_check=ble_retrofit_map_check,
-            retrofit_damp_factors=ble_retrofit_damp_factors,
-        )
-        if ble_landmarks is None
-        else BleLandmarkSettings(
-            enabled=ble_landmark,
-            detection_profile=ble_detection_profile,
-            data_path=ble_data_path,
-            rssi_threshold_dbm=ble_rssi_threshold,
-            release_margin_db=ble_release_margin,
-            release_streak=ble_release_streak,
-            sync_window_s=ble_sync_window,
-            correction_mode=ble_correction,
-            preflight_mode=ble_preflight,
-            max_correction_m=ble_max_correction,
-            max_warp_span_m=ble_max_warp_span,
-            retrofit_forward_mode=ble_retrofit_forward,
-            retrofit_max_heading_deg=ble_retrofit_max_heading,
-            retrofit_stride_scale_min=ble_retrofit_stride_scale_min,
-            retrofit_stride_scale_max=ble_retrofit_stride_scale_max,
-            retrofit_min_span_m=ble_retrofit_min_span,
-            retrofit_map_check=ble_retrofit_map_check,
-            retrofit_damp_factors=ble_retrofit_damp_factors,
-            landmarks=ble_landmarks,
-        )
+    landmark_settings = BleLandmarkSettings(
+        enabled=ble_landmark,
+        detection_profile=ble_detection_profile,
+        data_path=ble_data_path,
+        rssi_threshold_dbm=ble_rssi_threshold,
+        release_margin_db=ble_release_margin,
+        release_streak=ble_release_streak,
+        sync_window_s=ble_sync_window,
+        correction_mode=ble_correction,
+        preflight_mode=ble_preflight,
+        max_correction_m=ble_max_correction,
+        max_warp_span_m=ble_max_warp_span,
+        retrofit_forward_mode=ble_retrofit_forward,
+        retrofit_max_heading_deg=ble_retrofit_max_heading,
+        retrofit_stride_scale_min=ble_retrofit_stride_scale_min,
+        retrofit_stride_scale_max=ble_retrofit_stride_scale_max,
+        retrofit_min_span_m=ble_retrofit_min_span,
+        retrofit_map_check=ble_retrofit_map_check,
+        retrofit_damp_factors=ble_retrofit_damp_factors,
     )
+    if ble_landmarks is not None:
+        landmark_settings = replace(landmark_settings, landmarks=ble_landmarks)
     pdr_settings = PdrSettings(
         sensor=SensorSettings(
             gyro_bias_method=(
@@ -390,36 +413,17 @@ def run(
     )
     result = run_pdr(pdr_settings, df_acc, df_gyro, floormap)
     if use_particle_filter:
-        result = run_particle(
-            result.prepared,
+        result = _run_particle_stage(
+            result,
             floormap,
             particle_settings,
-            hard_positions=hard_positions,
-            detections=None if particle_ble is None else particle_ble.detections,
-            ranging_observations=(
-                None if particle_ble is None else particle_ble.observations
-            ),
-            landmark_settings=landmark_settings if ble_landmark else None,
-            history_candidate=history_candidate,
+            hard_positions,
+            particle_ble,
+            landmark_settings,
+            ble_landmark,
+            history_candidate,
+            pf_backward,
         )
-        if pf_backward:
-            backward = run_backward_particle(
-                result.prepared,
-                floormap,
-                particle_settings,
-                detections=None if particle_ble is None else particle_ble.detections,
-                ranging_observations=(
-                    None if particle_ble is None else particle_ble.observations
-                ),
-                landmark_settings=landmark_settings if ble_landmark else None,
-                history_candidate=history_candidate,
-                hard_positions=hard_positions,
-                forward_result=result,
-            )
-            assert result.particle is not None
-            result = replace(
-                result, particle=replace(result.particle, backward=backward)
-            )
     _print_prepared_summary(result.prepared, pdr_settings)
     output_dir = plot_pipeline.create_output_dir()
     dataframe = plot_pipeline.write_outputs(result, output_dir)

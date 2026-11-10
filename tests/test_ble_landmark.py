@@ -25,7 +25,7 @@ from rikka.ble.lib.sample import (
 )
 from rikka.ble.pipeline import run_ble_landmark_detection, run_ble_ranging_input
 from rikka.cli import commands as cli_commands
-from rikka.cli import options as cli_options
+from rikka.cli import resolvers as cli_resolvers
 from rikka.cli.commands import run as run_command
 from rikka.cli.options import _resolve_ble_inputs, cli
 from rikka.common import settings as settings_module
@@ -262,7 +262,7 @@ def test_resolve_ble_inputs_merges_anchor_and_keeps_path_loss(
         ]
     ).to_csv(tmp_path / "BLE_pos.csv", index=False)
     monkeypatch.setattr(
-        cli_options,
+        cli_resolvers,
         "BLE_LANDMARK_ANCHORS",
         (("elpis_001", 0.3, 90.0, 10.0, True),),
     )
@@ -305,7 +305,7 @@ def test_resolve_ble_inputs_rejects_anchor_without_local_coordinate(
         ]
     ).to_csv(tmp_path / "BLE_pos.csv", index=False)
     monkeypatch.setattr(
-        cli_options,
+        cli_resolvers,
         "BLE_LANDMARK_ANCHORS",
         (("unknown", 0.3, None, 15.0, False),),
     )

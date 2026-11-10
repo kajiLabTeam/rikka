@@ -1,13 +1,19 @@
-"""particle filter の入力検証。
+"""PF 実行前の設定検証。歩ループへ入る前に不正な組み合わせを弾く。
 
 役割:
-    入力検証を独立した段階として実装する。
+    初期分布・提案方式・ランドマーク反映・歩幅倍率などの設定が
+    互いに矛盾していないことを確認し、乱数系列と実効パラメータを確定する。
 依存元:
-    common の共有型・設定と particle/lib の部品、ParticleRuntime を利用する。
+    ``common.lib.validation`` の検証関数と ``ParticleRuntime`` を利用する。
 利用先:
-    particle/lib/runner が元の実行順序どおりに呼び出す。
+    ``particle.lib.runner`` が歩ループの前に1回だけ呼び出す。
 処理フロー:
-    設定値を検証し、乱数系列と有効パラメータを準備する。
+    値域と選択肢を順に検証し、不正値は ``ValueError`` にする。
+    組み合わせの制約として、``candidate_count`` は candidate-bank 方式でのみ
+    指定でき、candidate-bank と併用できるランドマーク反映は
+    ``none`` / ``ranging`` / ``observation`` だけである。
+    検証を通したあと、再現性のある乱数系列と、範囲内へ丸めた
+    歩幅倍率の実効値を ``ParticleRuntime`` へ書き込む。
 """
 
 import numpy as np
@@ -28,6 +34,7 @@ from .state import ParticleRuntime
 
 
 def setup(ctx: ParticleRuntime) -> None:
+    """設定を検証し、乱数系列と実効パラメータを ``ctx`` へ確定する。"""
     validate_choice("init_mode", ctx.init_mode, ("origin", "uniform"))
     if ctx.init_mode == "uniform":
         validate_convergence_parameters(

@@ -1,13 +1,28 @@
-"""particle filter の代表軌跡確定。
+"""全歩を走らせたあとの代表軌跡の確定。どの粒子の足跡を採るかを決める。
 
 役割:
-    代表軌跡確定を独立した段階として実装する。
+    粒子の位置履歴と親系譜から1本の代表軌跡を選び、呼び出し側へ返す形に整える。
 依存元:
-    common の共有型・設定と particle/lib の部品、ParticleRuntime を利用する。
+    ``landmark/lib`` の相似変換、``particle/lib`` の経路復元・経路選択・
+    収束クラスタ化、``ParticleRuntime``。
 利用先:
-    particle/lib/runner が元の実行順序どおりに呼び出す。
+    ``particle.lib.runner`` が歩ループを終えたあとに1回だけ呼び出す。
 処理フロー:
-    履歴から代表軌跡を選択し、互換戻り値を組み立てる。
+    代表軌跡の選び方は、実行条件によって次の順に分岐する。
+
+    1. ``init_mode="uniform"``: 最終時点の最大クラスタの中で経路スコアが最大の
+       粒子を選び、その祖先経路を採る（遅延決定）。実在した粒子の足跡なので
+       壁を跨がない。全粒子の重み付き平均は複数クラスタの中点を通り壁を
+       突き抜けるため使わない。
+    2. 確定位置アンカーがある場合: アンカーで区切った区間ごとに選んだ経路を
+       連結する。
+    3. ランドマーク reset が発生した場合: 祖先経路が不連続になるため、
+       時点別の到達可能クラスタ経路（current）を使う。
+    4. それ以外: ``path_selection`` が ``sequence`` なら、持続反転が減る場合だけ
+       単一祖先経路を採り、減らなければ current へ戻る。
+
+    選択後、``landmark_retrofit`` が有効なら確定アンカー直前の区間だけを相似変換し、
+    位置ジャンプを除く。最後に診断へ採用モードを書き戻す。
 """
 
 from dataclasses import replace
@@ -84,6 +99,10 @@ def finalize(
     np.ndarray,
     list[StepHeading],
 ]:
+    """代表軌跡を選び、(軌跡, 歩幅, 時刻, 全粒子列, 歩方位) を返す。
+
+    戻り値はこの順の5要素で、``run_particle_steps()`` の互換形式である。
+    """
     allowed_jump_steps = ctx.landmark_reset_steps or None
     ctx.all_particles = np.stack(ctx.all_particles_list)
     ctx.particle_paths = _reconstruct_particle_paths(

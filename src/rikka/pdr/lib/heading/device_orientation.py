@@ -20,8 +20,8 @@ from ....common.config import (
     SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
     TURNING_YAW_DELTA_THRESHOLD_DEG,
 )
+from ....common.lib.angles import normalize_angle
 from ....common.lib.models import StepSegment
-from ....common.lib.pdr_math import _normalize_angle
 from ....common.lib.time_utils import (
     _sample_gyro_angle,
     _step_mid_index,
@@ -119,7 +119,7 @@ def _estimate_device_orientation_mode(
             )
             if gyro_base is None:
                 continue
-            body_heading = _normalize_angle(gyro_base + direction_offset)
+            body_heading = normalize_angle(gyro_base + direction_offset)
             from .motion import _estimate_motion_heading_from_horizontal_accel
 
             motion = _estimate_motion_heading_from_horizontal_accel(
@@ -147,7 +147,7 @@ def _estimate_device_orientation_mode(
                 continue
             forward = motion.forward_displacement
             lateral = abs(motion.lateral_displacement)
-            diff = abs(_normalize_angle(motion.motion_heading - body_heading))
+            diff = abs(normalize_angle(motion.motion_heading - body_heading))
             score += forward - lateral - max(-forward, 0.0) - 0.25 * diff
             count += 1
         # 初期区間が横歩き・旋回中心なら装着向きを推定せず、既定向きを保つ。

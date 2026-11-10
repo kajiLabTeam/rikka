@@ -7,7 +7,7 @@ import pytest
 
 from rikka.common.lib.models import StepHeading
 from rikka.particle.lib.initialize import _adaptive_heading_rejuvenation_sigma
-from rikka.particle.lib.proposal import _motion_state_transition_matrix
+from rikka.particle.lib.motion_model import _motion_state_transition_matrix
 from rikka.particle.lib.recorder import (
     ParticleFilterStepDiagnostics,
     ParticlePathComparison,

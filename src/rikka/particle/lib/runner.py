@@ -1,13 +1,26 @@
-"""particle filter の段階実行。
+"""particle filter の歩ループ本体。1歩あたりの段階を順に呼ぶ。
 
 役割:
-    段階実行を独立した段階として実装する。
+    準備済みの歩列を受け、粒子の提案から代表軌跡の確定までを実行する。
 依存元:
-    common の共有型・設定と particle/lib の部品、ParticleRuntime を利用する。
+    ``config`` の PF 既定値、``common.lib.models`` の共有歩行型、
+    ``particle/lib`` の各段階モジュールと ``ParticleRuntime`` を利用する。
 利用先:
-    particle/lib/runner が元の実行順序どおりに呼び出す。
+    ``particle.pipeline.run_particle()`` が低水準の実行部として呼び出す。
 処理フロー:
-    互換引数をruntimeへ束ね、初期化後に5段階を歩ごとに呼び、結果を確定する。
+    引数を ``ParticleRuntime`` へ束ね、``setup``（設定検証）と
+    ``initialize``（地図読み込みと初期粒子生成）を1回ずつ実行する。
+    以降は歩ごとに次を呼ぶ。
+
+    1. ``propose``: 運動モデルから次の1歩の候補状態を生成する
+    2. ``resolve_map_constraints``: 壁遷移を判定し、重み付けと再標本化、
+       必要なら recovery を行う
+    3. ``apply_hard_position``: 確定位置アンカーがある歩だけ位置を訂正する
+    4. ``record_step.record``: 履歴・診断・補正イベントを保存する
+    5. ``record_convergence``: ``init_mode="uniform"`` のときだけクラスタ指標を記録する
+
+    方位が未定義の歩（``particle_heading is None``）はスキップし、履歴へ積まない。
+    全歩を処理したあと ``finalize`` が代表軌跡を選び、互換形式の戻り値を組み立てる。
 """
 
 from pathlib import Path
@@ -82,7 +95,7 @@ from .finalize import finalize
 from .hard_anchor import apply_hard_position
 from .initialize import initialize
 from .propose import propose
-from .record import record
+from .record_step import record
 from .recorder import (
     ParticleFilterStepDiagnostics,
     ParticlePathComparison,
@@ -185,7 +198,11 @@ def run_particle_steps(
     convergence_restore_normal: bool = PF_CONVERGENCE_RESTORE_NORMAL,
     convergence_collector: list[ParticleConvergenceDiagnostic] | None = None,
 ) -> ParticleStepsResult:
-    """準備済み歩列を受け、元と同じ順序でPF段階を実行する。"""
+    """準備済み歩列へ地図制約を掛け、軌跡・歩幅・時刻・粒子列・方位を返す。
+
+    引数は ``ParticleRuntime`` のフィールドへそのまま渡される互換形式である。
+    呼び出し側は原則 ``particle.pipeline.run_particle()`` を使う。
+    """
     ctx = ParticleRuntime(
         init_mode=init_mode,
         convergence_cell_m=convergence_cell_m,

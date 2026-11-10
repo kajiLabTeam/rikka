@@ -23,11 +23,8 @@ from ....common.config import (
     SIDESTEP_LATERAL_RATIO,
     SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
 )
+from ....common.lib.angles import normalize_angle, score_ratio
 from ....common.lib.models import StepSegment
-from ....common.lib.pdr_math import (
-    _normalize_angle,
-    _score_ratio,
-)
 from ....common.lib.time_utils import (
     _sample_gyro_angle,
     _step_mid_index,
@@ -104,7 +101,7 @@ def _motion_result_from_samples(
     """有効サンプルを世界座標へ積分し移動状態を返す。"""
     angles = np.interp(sample_times, gyro_times[valid_gyro], low_angle[valid_gyro])
     angles = angles + direction_offset
-    yaw_delta = _normalize_angle(float(angles[-1] - angles[0]))
+    yaw_delta = normalize_angle(float(angles[-1] - angles[0]))
     world_x = h_y * np.cos(angles) - h_z * np.sin(angles)
     world_y = h_y * np.sin(angles) + h_z * np.cos(angles)
     disp_x, disp_y = _integrate_motion_with_zero_velocity(
@@ -126,7 +123,7 @@ def _motion_result_from_samples(
             "zero_motion",
             yaw_delta,
         )
-    motion_heading = _normalize_angle(float(np.arctan2(disp_y, disp_x)))
+    motion_heading = normalize_angle(float(np.arctan2(disp_y, disp_x)))
     body_axis = np.array([np.cos(body_heading), np.sin(body_heading)], dtype=float)
     lateral_axis = np.array([-body_axis[1], body_axis[0]], dtype=float)
     displacement = np.array([disp_x, disp_y], dtype=float)
@@ -139,7 +136,7 @@ def _motion_result_from_samples(
         sidestep_lateral_ratio,
         sidestep_min_lateral_displacement,
     )
-    confidence = _score_ratio(displacement_norm, MOTION_HEADING_MIN_DISPLACEMENT_M)
+    confidence = score_ratio(displacement_norm, MOTION_HEADING_MIN_DISPLACEMENT_M)
     return _MotionHeadingResult(
         body_heading=body_heading,
         motion_heading=motion_heading,
@@ -265,7 +262,7 @@ def _estimate_motion_heading_correction(
         )
         if gyro_base is None:
             continue
-        body_heading = _normalize_angle(gyro_base + direction_offset)
+        body_heading = normalize_angle(gyro_base + direction_offset)
         motion = _estimate_motion_heading_from_horizontal_accel(
             df_acc,
             df_gyro,
@@ -281,14 +278,14 @@ def _estimate_motion_heading_correction(
             or motion.confidence < MOTION_HEADING_CONFIDENCE_THRESHOLD
         ):
             continue
-        diff = _normalize_angle(motion.motion_heading - body_heading)
+        diff = normalize_angle(motion.motion_heading - body_heading)
         sin_sum += float(np.sin(diff))
         cos_sum += float(np.cos(diff))
         count += 1
 
     if count == 0 or float(np.hypot(sin_sum, cos_sum)) <= 1e-12:
         return 0.0
-    return _normalize_angle(float(np.arctan2(sin_sum, cos_sum)))
+    return normalize_angle(float(np.arctan2(sin_sum, cos_sum)))
 
 
 def _resolve_motion_heading_correction(

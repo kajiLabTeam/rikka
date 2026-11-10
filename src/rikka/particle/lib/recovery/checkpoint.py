@@ -17,15 +17,11 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from ....common.lib.angles import normalize_angle_array
 from ..diagnostics import _build_step_diagnostics
 from ..map_constraints import _evaluate_particle_transitions
-from ..proposal import _normalize_angle
 from ..recorder import ParticleStepStages
-from .local import (
-    _LOCAL_OFFSET_DEGREES,
-    _recovery_length_factors,
-    _RecoveryResult,
-)
+from .local import _LOCAL_OFFSET_DEGREES, _recovery_length_factors, _RecoveryResult
 
 if TYPE_CHECKING:
     from ..state import ParticleRuntime
@@ -116,7 +112,7 @@ def record_checkpoint_replay(ctx: ParticleRuntime) -> None:
 
     if recorder.stages_enabled:
         replay_weights = np.full(ctx.n_particles, 1.0 / ctx.n_particles)
-        replay_offsets = _normalize_angle(
+        replay_offsets = normalize_angle_array(
             ctx.recovery.heading_correction + ctx.recovery.heading_drift
         )
         for replay_offset in range(ctx.replay_depth - 1):
@@ -299,7 +295,7 @@ def _replay_from_checkpoint(
     recovery = _RecoveryResult(
         particles=current[select],
         heading_correction=parent_correction[select],
-        heading_drift=_normalize_angle(parent_drift[select] + selected_offsets),
+        heading_drift=normalize_angle_array(parent_drift[select] + selected_offsets),
         stride_scale=np.clip(
             selected_factors
             if allow_stride_adaptation

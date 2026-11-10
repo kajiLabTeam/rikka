@@ -1,4 +1,4 @@
-"""粒子ごとの歩行運動状態モデル。
+"""歩行運動状態の遷移行列・観測尤度・状態別方位を提供する。
 
 役割:
     前進・左右横歩き・旋回の状態遷移、観測尤度、状態別方位と角度統計を扱う。
@@ -13,6 +13,7 @@
 import numpy as np
 
 from ...common.config import PF_MOTION_STATE_TRANSITION_STAY
+from ...common.lib.angles import normalize_angle_array
 from ...common.lib.models import StepHeading, StepMotionEvidence
 
 _MOTION_FORWARD = 0
@@ -20,11 +21,6 @@ _MOTION_SIDESTEP_LEFT = 1
 _MOTION_SIDESTEP_RIGHT = 2
 _MOTION_TURNING = 3
 _MOTION_STATE_NAMES = ("forward", "sidestep_left", "sidestep_right", "turning")
-
-
-def _normalize_angle(angle: np.ndarray) -> np.ndarray:
-    """角度配列を -pi 以上 pi 未満へ正規化する。"""
-    return (angle + np.pi) % (2 * np.pi) - np.pi
 
 
 def _motion_state_transition_matrix() -> np.ndarray:
@@ -98,7 +94,9 @@ def _motion_state_headings(
     }:
         right = motion
     turning = motion if movement.startswith("turning") else fallback
-    return _normalize_angle(np.asarray([forward, left, right, turning], dtype=float))
+    return normalize_angle_array(
+        np.asarray([forward, left, right, turning], dtype=float)
+    )
 
 
 def _motion_state_likelihoods(evidence: StepMotionEvidence) -> np.ndarray:

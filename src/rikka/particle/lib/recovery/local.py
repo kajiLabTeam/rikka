@@ -17,9 +17,9 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from ....common.lib.angles import normalize_angle_array
 from ..branches import branch_preserving_resample
 from ..map_constraints import _evaluate_particle_transitions
-from ..proposal import _normalize_angle
 
 
 @dataclass(frozen=True)
@@ -47,7 +47,7 @@ class _RecoveryResult:
 
 def _recovery_route_branch_ids(offsets: np.ndarray) -> np.ndarray:
     """recovery方位差を直進・左・右・後退の経路族へ分類する。"""
-    degrees = np.degrees(_normalize_angle(offsets))
+    degrees = np.degrees(normalize_angle_array(offsets))
     absolute_degrees = np.abs(degrees)
     branch_ids = np.zeros(len(offsets), dtype=np.int8)
     branch_ids[(degrees >= 60.0) & (absolute_degrees < 135.0)] = 1
@@ -213,7 +213,9 @@ def _generate_recovery_candidates(
             return _RecoveryResult(
                 particles=candidates[select],
                 heading_correction=parent_correction[select],
-                heading_drift=_normalize_angle(parent_drift[select] + selected_offsets),
+                heading_drift=normalize_angle_array(
+                    parent_drift[select] + selected_offsets
+                ),
                 stride_scale=np.clip(
                     selected_factors
                     if allow_stride_adaptation
@@ -280,7 +282,7 @@ def _generate_recovery_candidates(
     selected_factors = length_factors_all[select]
     selected_costs = costs_all[select]
     selected_correction = corrections_all[select]
-    selected_drift = _normalize_angle(drifts_all[select] + selected_offsets)
+    selected_drift = normalize_angle_array(drifts_all[select] + selected_offsets)
     selected_candidate_indices = (
         np.concatenate(captured_valid_indices)[select] if capture_candidates else None
     )

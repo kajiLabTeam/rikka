@@ -1,15 +1,25 @@
-"""particle filter の提案・観測重み計算。
+"""1歩分の粒子状態の提案。更新前の状態を保存し、次の位置候補を作る。
 
 役割:
-    1歩の粒子状態を提案し、地図遷移と観測尤度から事後重みを計算する。
+    運動モデルから各粒子の次歩の方位・歩幅・運動状態・位置を提案し、
+    地図制約の判定に渡せる形にする。
 依存元:
-    common の共有型・設定と particle/lib の部品、ParticleRuntime を利用する。
+    ``config`` のパスロス・歩幅倍率の既定値、``common.lib.models`` の共有型、
+    ``particle/lib`` の運動モデル・地図判定・ランドマーク尤度、``ParticleRuntime``。
 利用先:
-    particle/lib/runner が元の実行順序どおりに呼び出す。
+    ``particle.lib.runner`` が各歩の先頭で呼び出す。
 処理フロー:
-    歩の観測と乱数を使い提案状態を生成し、遷移の歩行可否、運動状態尤度、
-    歩幅尤度を統合してrecovery判定まで行う。明示指定時のみ、通常モデルの
-    複数候補を因子Gで選択し、平均因子S/Kで親重みを補正する。
+    まず更新前の粒子・重み・経路スコアを ``*_before`` へ退避する（recovery と
+    診断が参照する）。次に ``proposal_method`` で分岐する。
+
+    - ``legacy`` / ``no-relocation``: 単一候補を提案する。``legacy`` では壁へ
+      出た粒子を前歩位置中心の円内へ再配置してから重み0の判定へ回す。
+    - ``candidate-bank``: 親ごとに K 個の候補をまとめて生成し、地図と既存因子 G で
+      1つを選ぶ。親重みには平均因子 ``SigmaG/K`` を掛け、採用候補の G を
+      重ねて掛けない。
+
+    大域フェーズ（``init_mode="uniform"``）では円内再配置を行わない。
+    地図を跨いだ粒子を捨てることが大域探索の正常な動作だからである。
 """
 
 import numpy as np
@@ -21,21 +31,17 @@ from ...common.config import (
     SIDESTEP_LENGTH_SCALE,
     TURNING_LENGTH_SCALE,
 )
+from ...common.lib.angles import normalize_angle_array
 from ...common.lib.models import PathLossModel
 from ...particle.lib.landmark import landmark_likelihood, landmark_range_likelihood
-from ...particle.lib.map_constraints import (
-    _evaluate_particle_transitions,
-)
-from ...particle.lib.proposal import (
+from ...particle.lib.map_constraints import _evaluate_particle_transitions
+from ...particle.lib.motion_model import (
     _motion_state_headings,
     _motion_state_likelihoods,
-    _normalize_angle,
     _sample_motion_states,
 )
 from ...particle.lib.relocate import relocate_invalid_particles
-from ...particle.lib.resampling import (
-    _effective_sample_size,
-)
+from ...particle.lib.resampling import _effective_sample_size
 from ...particle.lib.weighting import weight, weight_candidate_bank
 from .candidate_bank import ParticleCandidateBank, select_candidate_bank
 from .soft_landmark import record_soft_landmark_diagnostics, soft_landmark_likelihood
@@ -137,7 +143,7 @@ def _generate_motion_candidate(ctx: ParticleRuntime) -> None:
         if ctx.motion_posterior is not None
         else ctx.sigma_heading
     )
-    ctx.proposed_drift = _normalize_angle(
+    ctx.proposed_drift = normalize_angle_array(
         ctx.heading_drift_retention * ctx.heading_drift_before
         + ctx.rng.normal(0, ctx.heading_process_sigma, ctx.n_particles)
     )
@@ -296,6 +302,7 @@ def _propose_candidate_bank(ctx: ParticleRuntime) -> None:
 
 
 def propose(ctx: ParticleRuntime) -> None:
+    """更新前の状態を退避し、提案方式に応じて次歩の候補を生成する。"""
     assert ctx.particle_heading is not None
     ctx.motion_posterior = (
         ctx.prepared_motion_posteriors[ctx.step_number - 1]

@@ -12,20 +12,15 @@
 
 import numpy as np
 
-from ....common.config import (
-    FORWARD_HEADING_SOURCE,
-)
-from ....common.lib.angles import circular_mean_angles
-from ....common.lib.models import (
-    StepHeading,
-)
+from ....common.config import FORWARD_HEADING_SOURCE
+from ....common.lib.angles import circular_mean_angles, normalize_angle
+from ....common.lib.models import StepHeading
 from ....common.lib.pdr_math import (
     INITIAL_FORWARD_MOTION_BODY_CONSTRAINT_RAD,
     SIDESTEP_HEADING_MAX_STEP_DELTA_RAD,
     SIDESTEP_MOTION_LATERAL_CONSTRAINT_RAD,
     TRAJECTORY_HEADING_MAX_STEP_DELTA_RAD,
     TURNING_SIDESTEP_HEADING_MAX_STEP_DELTA_RAD,
-    _normalize_angle,
 )
 from .step_motion import _sidestep_body_lateral_heading
 
@@ -47,10 +42,10 @@ def _limit_heading_change(
     """前回方位からの変化量を制限した方位を返す。"""
     if heading is None or previous_heading is None:
         return heading
-    delta = _normalize_angle(heading - previous_heading)
+    delta = normalize_angle(heading - previous_heading)
     if abs(delta) <= max_delta:
         return heading
-    return _normalize_angle(previous_heading + float(np.sign(delta)) * max_delta)
+    return normalize_angle(previous_heading + float(np.sign(delta)) * max_delta)
 
 
 def _heading_change_limit_for_movement_type(movement_type: str) -> float:
@@ -89,7 +84,7 @@ def _forward_motion_heading(
         previous_heading is None
         and step_heading.motion_heading is not None
         and body_heading is not None
-        and abs(_normalize_angle(step_heading.motion_heading - body_heading))
+        and abs(normalize_angle(step_heading.motion_heading - body_heading))
         > INITIAL_FORWARD_MOTION_BODY_CONSTRAINT_RAD
     ):
         return body_heading, "trajectory_initial_body_fallback"
@@ -136,7 +131,7 @@ def _sidestep_motion_heading(
         if (
             motion_heading is not None
             and body_lateral_heading is not None
-            and abs(_normalize_angle(motion_heading - body_lateral_heading))
+            and abs(normalize_angle(motion_heading - body_lateral_heading))
             <= SIDESTEP_MOTION_LATERAL_CONSTRAINT_RAD
         ):
             candidate = circular_mean_angles([motion_heading, body_lateral_heading])
@@ -151,7 +146,7 @@ def _sidestep_motion_heading(
     else:
         if motion_heading is not None and (
             body_lateral_heading is None
-            or abs(_normalize_angle(motion_heading - body_lateral_heading))
+            or abs(normalize_angle(motion_heading - body_lateral_heading))
             <= SIDESTEP_MOTION_LATERAL_CONSTRAINT_RAD
         ):
             candidate = motion_heading
@@ -204,7 +199,7 @@ def _resolve_world_motion_heading(
         if (
             limited is not None
             and candidate is not None
-            and abs(_normalize_angle(limited - candidate)) > 1e-12
+            and abs(normalize_angle(limited - candidate)) > 1e-12
         ):
             source = f"{source}_limited" if source is not None else "trajectory_limited"
         candidate = limited

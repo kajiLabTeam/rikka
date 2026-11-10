@@ -12,10 +12,8 @@
 
 import numpy as np
 
-from ....common.lib.models import (
-    AdaptivePdrState,
-    StepHeading,
-)
+from ....common.lib.angles import normalize_angle
+from ....common.lib.models import AdaptivePdrState, StepHeading
 
 _MODE_NAMES = ("forward", "sidestep_left", "sidestep_right", "turning")
 _TRANSITION = np.asarray(
@@ -27,11 +25,6 @@ _TRANSITION = np.asarray(
     ],
     dtype=float,
 )
-
-
-def _normalize_angle(angle: float) -> float:
-    """角度を ``[-pi, pi)`` に正規化する。"""
-    return float((angle + np.pi) % (2.0 * np.pi) - np.pi)
 
 
 def _circular_mean(angles: np.ndarray, weights: np.ndarray) -> float:
@@ -110,10 +103,10 @@ def _mode_heading_candidates(step_heading: StepHeading) -> np.ndarray:
     reliability = float(np.clip(step_heading.motion_confidence, 0.0, 1.0))
 
     def side_candidate(sign: float) -> float:
-        lateral = _normalize_angle(body_value + sign * np.pi / 2.0)
+        lateral = normalize_angle(body_value + sign * np.pi / 2.0)
         if motion is None:
             return lateral
-        difference = abs(_normalize_angle(motion - lateral))
+        difference = abs(normalize_angle(motion - lateral))
         if difference > np.deg2rad(70.0):
             return lateral
         weight = 0.65 * reliability

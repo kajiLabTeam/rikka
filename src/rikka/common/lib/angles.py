@@ -47,6 +47,6 @@ def circular_mean_angles(angles: list[float]) -> float | None:
     return normalize_angle(float(np.arctan2(sin_sum, cos_sum)))
 
 
-_normalize_angle = normalize_angle
-_abs_angle_diff = abs_angle_diff
-_score_ratio = score_ratio
+def normalize_angle_array(angle: np.ndarray) -> np.ndarray:
+    """角度配列を -pi 以上 pi 未満へ正規化する。"""
+    return (angle + np.pi) % (2 * np.pi) - np.pi

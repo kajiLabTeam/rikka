@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from ....common.lib.angles import normalize_angle
 from ....common.lib.models import (
     AdaptivePdrResult,
     AdaptivePdrState,
@@ -35,7 +36,6 @@ from .adaptive_math import (
     _kalman_update,
     _length_moments,
     _mode_heading_candidates,
-    _normalize_angle,
 )
 
 _MODE_NAMES = ("forward", "sidestep_left", "sidestep_right", "turning")
@@ -73,7 +73,7 @@ def _adaptive_mode_probabilities(
         expected_yaw = float(step_heading.yaw_delta or 0.0)
         residuals = np.asarray(
             [
-                _normalize_angle(value - previous.heading_mean - expected_yaw)
+                normalize_angle(value - previous.heading_mean - expected_yaw)
                 for value in candidates
             ]
         )
@@ -114,7 +114,7 @@ def _has_observed_sidestep_start(
     lateral = body + (np.pi / 2.0 if side_index == 1 else -np.pi / 2.0)
     # 最尤モードから方位を生成せず、実際の選択方位を観測との一致で検証する。
     return all(
-        abs(_normalize_angle(left - right)) <= np.deg2rad(20.0)
+        abs(normalize_angle(left - right)) <= np.deg2rad(20.0)
         for left, right in ((selected, motion), (selected, lateral), (motion, lateral))
     )
 
@@ -140,7 +140,7 @@ def _adaptive_heading_state(
     )
     heading_mean = float(representative)
     if previous.heading_mean is not None:
-        heading_jump = _normalize_angle(heading_mean - previous.heading_mean)
+        heading_jump = normalize_angle(heading_mean - previous.heading_mean)
         movement_type = (
             step_heading.trajectory_movement_type or step_heading.movement_type
         )

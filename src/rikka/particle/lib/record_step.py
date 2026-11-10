@@ -1,24 +1,20 @@
-"""particle filter のrecord。
+"""PF 1歩分の履歴・診断とランドマーク補正イベントを記録する。
 
 役割:
-    recordを独立した段階として実装する。
+    粒子位置履歴・重み履歴・親添字・1歩分の診断・ランドマーク補正イベントを記録する。
 依存元:
-    common の共有型・設定と particle/lib の部品、ParticleRuntime を利用する。
+    common の共有型・角度演算と particle の診断・記録型、ParticleRuntime を使用する。
 利用先:
-    particle/lib/runner が元の実行順序どおりに呼び出す。
+    particle.lib.runner が各歩の更新後に記録段階として呼び出す。
 処理フロー:
-    履歴・診断・stageを元と同じ順序で記録する。
+    粒子位置・重み・親添字を保存し、診断と補正イベント、段階別情報を記録する。
 """
 
 import numpy as np
 
+from ...common.lib.angles import normalize_angle_array
 from ...common.lib.models import LandmarkCorrection, LandmarkRange
-from ...particle.lib.proposal import (
-    _normalize_angle,
-)
-from ...particle.lib.recorder import (
-    ParticleStepStages,
-)
+from ...particle.lib.recorder import ParticleStepStages
 from .diagnostics import _build_step_diagnostics
 from .state import ParticleRuntime
 
@@ -71,6 +67,7 @@ def _record_landmark_event(ctx: ParticleRuntime) -> None:
 
 
 def record(ctx: ParticleRuntime) -> None:
+    """1歩分の状態・履歴・診断・補正イベントを ``ctx`` へ追記する。"""
     _record_landmark_event(ctx)
     ctx.heading_correction_history.append(ctx.heading_correction.copy())
     ctx.heading_drift_history.append(ctx.heading_drift.copy())
@@ -149,13 +146,13 @@ def record(ctx: ParticleRuntime) -> None:
                 or ctx.step_heading.movement_type,
                 deterministic_step_length_m=ctx.sl_det,
                 before_positions=ctx.particles_before.copy(),
-                before_offsets=_normalize_angle(
+                before_offsets=normalize_angle_array(
                     ctx.heading_correction_before + ctx.heading_drift_before
                 ).copy(),
                 before_weights=ctx.weights_before.copy(),
                 before_motion_state=ctx.motion_state_before.copy(),
                 proposed_positions=ctx.proposed_particles.copy(),
-                proposed_headings=_normalize_angle(ctx.theta).copy(),
+                proposed_headings=normalize_angle_array(ctx.theta).copy(),
                 proposed_step_lengths=ctx.sl.copy(),
                 proposed_motion_state=ctx.proposed_motion_state.copy(),
                 valid_transition=ctx.valid_transition.copy(),
@@ -175,7 +172,7 @@ def record(ctx: ParticleRuntime) -> None:
                 if ctx.recovery_selected_index is not None
                 else None,
                 after_positions=ctx.particles.copy(),
-                after_offsets=_normalize_angle(
+                after_offsets=normalize_angle_array(
                     ctx.heading_correction + ctx.heading_drift
                 ).copy(),
                 after_weights=ctx.weights.copy(),

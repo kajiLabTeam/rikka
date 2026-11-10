@@ -19,14 +19,8 @@ from ....common.config import (
     SIDESTEP_SUSPECT_MODE,
     TURNING_LENGTH_SCALE,
 )
-from ....common.lib.angles import circular_mean_angles
-from ....common.lib.models import (
-    StepHeading,
-    StepMotion,
-)
-from ....common.lib.pdr_math import (
-    _normalize_angle,
-)
+from ....common.lib.angles import circular_mean_angles, normalize_angle
+from ....common.lib.models import StepHeading, StepMotion
 
 _circular_mean_angles = circular_mean_angles
 
@@ -288,7 +282,7 @@ def estimate_step_motion(
     )
 
     return StepMotion(
-        heading=_normalize_angle(float(resolved_heading)),
+        heading=normalize_angle(float(resolved_heading)),
         length=float(step_length * scale),
         movement_type=movement_type,
         length_scale=float(scale),

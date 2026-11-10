@@ -19,6 +19,7 @@ from typing import NamedTuple
 
 import numpy as np
 
+from ....common.lib.angles import normalize_angle
 from ....common.lib.models import StepMotionObservation
 
 _STABLE_WINDOW_STEPS = 3
@@ -40,11 +41,6 @@ class DynamicBodyHeadingEstimate(NamedTuple):
     confidence: float
     updated: bool
     reason: str
-
-
-def _normalize_angle(angle: float) -> float:
-    """角度を [-pi, pi) に正規化する。"""
-    return float((angle + np.pi) % (2.0 * np.pi) - np.pi)
 
 
 def _axis_residual(observed_axis: float, predicted_heading: float) -> float:
@@ -143,7 +139,7 @@ def _body_heading_for_observation(
     """端末 yaw とオフセットから身体方位を返し、欠損時は既存候補へ戻す。"""
     if observation.device_yaw_heading is None:
         return observation.body_heading_candidate
-    return _normalize_angle(observation.device_yaw_heading + device_body_offset)
+    return normalize_angle(observation.device_yaw_heading + device_body_offset)
 
 
 def estimate_dynamic_body_headings(
@@ -192,7 +188,7 @@ def estimate_dynamic_body_headings(
                             for item in window:
                                 assert item.device_yaw_heading is not None
                                 assert item.motion_axis_heading is not None
-                                predicted = _normalize_angle(
+                                predicted = normalize_angle(
                                     item.device_yaw_heading + device_body_offset
                                 )
                                 observed_body_axis = _body_axis_for_mode(
@@ -217,7 +213,7 @@ def estimate_dynamic_body_headings(
                                         _MAX_UPDATE_RAD,
                                     )
                                 )
-                                device_body_offset = _normalize_angle(
+                                device_body_offset = normalize_angle(
                                     device_body_offset + update
                                 )
                                 window_quality = float(np.mean(weights))

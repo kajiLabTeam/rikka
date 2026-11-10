@@ -16,15 +16,15 @@ from rikka.common.lib.models import (
     StepMotionEvidence,
     StepSegment,
 )
-from rikka.common.lib.pdr_math import (
-    _validate_non_negative_parameter,
-    _validate_positive_parameter,
-    _validate_scale,
-)
 from rikka.common.lib.sensors import load_sensor_data, process_sensor_data
 from rikka.common.lib.time_utils import (
     _sample_count_for_reference_rate,
     _sample_gyro_angle,
+)
+from rikka.common.lib.validation import (
+    validate_non_negative_parameter,
+    validate_positive_parameter,
+    validate_scale,
 )
 from rikka.particle.lib.branches import branch_preserving_resample
 from rikka.particle.lib.evaluate_map import _resample_or_keep
@@ -34,23 +34,17 @@ from rikka.particle.lib.map_constraints import (
     _normalize_floormap_gray,
     _snap_trajectory_to_walkable_pixels,
 )
-from rikka.particle.lib.path_history import _reconstruct_particle_paths
-from rikka.particle.lib.path_selection import _select_reachable_cluster_path
-from rikka.particle.lib.proposal import (
+from rikka.particle.lib.motion_model import (
     _motion_state_headings,
     _sample_motion_states,
 )
+from rikka.particle.lib.path_history import _reconstruct_particle_paths
+from rikka.particle.lib.path_selection import _select_reachable_cluster_path
 from rikka.particle.lib.recorder import ParticleFilterStepDiagnostics
 from rikka.particle.lib.recovery.checkpoint import _replay_from_checkpoint
 from rikka.particle.lib.recovery.local import _generate_recovery_candidates
-from rikka.particle.lib.relocate import (
-    _sample_uniform_disk,
-    relocate_invalid_particles,
-)
-from rikka.particle.lib.resampling import (
-    _effective_sample_size,
-    _systematic_resample,
-)
+from rikka.particle.lib.relocate import _sample_uniform_disk, relocate_invalid_particles
+from rikka.particle.lib.resampling import _effective_sample_size, _systematic_resample
 from rikka.particle.lib.runner import run_particle_filter as _run_particle_filter
 from rikka.pdr.lib.fusion.adaptive import estimate_adaptive_pdr
 from rikka.pdr.lib.heading.body import estimate_dynamic_body_headings
@@ -72,9 +66,7 @@ from rikka.pdr.lib.motion_state.evidence import (
     build_step_motion_observations,
 )
 from rikka.pdr.lib.motion_state.heading_policy import _stabilize_trajectory_headings
-from rikka.pdr.lib.motion_state.refinement import (
-    refine_step_headings_with_motion_model,
-)
+from rikka.pdr.lib.motion_state.refinement import refine_step_headings_with_motion_model
 from rikka.pdr.lib.motion_state.step_motion import (
     _is_sidestep_suspect_movement,
     _is_trajectory_sidestep_movement,
@@ -465,28 +457,28 @@ def test_build_trajectory_dataframe_adds_elapsed_timestamps() -> None:
 def test_numeric_validators_reject_non_finite_values() -> None:
     for value in (float("nan"), float("inf"), float("-inf")):
         try:
-            _validate_scale(value)
+            validate_scale(value)
         except ValueError as exc:
             assert "有限" in str(exc)
         else:
-            raise AssertionError("_validate_scale should reject non-finite values")
+            raise AssertionError("validate_scale should reject non-finite values")
 
         try:
-            _validate_positive_parameter("value", value)
+            validate_positive_parameter("value", value)
         except ValueError as exc:
             assert "有限" in str(exc)
         else:
             raise AssertionError(
-                "_validate_positive_parameter should reject non-finite values"
+                "validate_positive_parameter should reject non-finite values"
             )
 
         try:
-            _validate_non_negative_parameter("value", value)
+            validate_non_negative_parameter("value", value)
         except ValueError as exc:
             assert "有限" in str(exc)
         else:
             raise AssertionError(
-                "_validate_non_negative_parameter should reject non-finite values"
+                "validate_non_negative_parameter should reject non-finite values"
             )
 
 

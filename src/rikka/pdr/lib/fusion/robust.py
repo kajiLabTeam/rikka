@@ -21,6 +21,7 @@ from collections.abc import Sequence
 
 import numpy as np
 
+from ....common.lib.angles import normalize_angle
 from ....common.lib.models import (
     StepDirectionPosterior,
     StepHeading,
@@ -35,16 +36,11 @@ _DIRECTED_CONFIDENCE_THRESHOLD = 0.6
 _EPSILON = 1e-12
 
 
-def _normalize_angle(angle: float) -> float:
-    """角度を ``[-pi, pi)`` に正規化する。"""
-    return float((angle + np.pi) % (2.0 * np.pi) - np.pi)
-
-
 def _finite_angle(value: float | None) -> float | None:
     """有限な角度だけを正規化して返す。"""
     if value is None or not np.isfinite(value):
         return None
-    return _normalize_angle(float(value))
+    return normalize_angle(float(value))
 
 
 def _normalize_mode(mode: str) -> str:
@@ -85,7 +81,7 @@ def _axis_candidates(
     if axis is None:
         selected = _finite_angle(heading.selected_heading)
         axis = 0.0 if selected is None else float(selected % np.pi)
-    return axis, _normalize_angle(axis + np.pi)
+    return axis, normalize_angle(axis + np.pi)
 
 
 def _expected_heading(
@@ -99,9 +95,9 @@ def _expected_heading(
     if body is None:
         return None
     if mode == "sidestep_left":
-        return _normalize_angle(body + np.pi / 2.0)
+        return normalize_angle(body + np.pi / 2.0)
     if mode == "sidestep_right":
-        return _normalize_angle(body - np.pi / 2.0)
+        return normalize_angle(body - np.pi / 2.0)
     return body
 
 
@@ -117,7 +113,7 @@ def _emission_scores(
     if expected is not None:
         sigma = np.deg2rad(70.0 if mode == "turning" else 32.0)
         for state, candidate in enumerate(candidates):
-            residual = _normalize_angle(candidate - expected)
+            residual = normalize_angle(candidate - expected)
             scores[state] -= calibration * 0.5 * (residual / sigma) ** 2
 
     directed = _finite_angle(observation.directed_motion_heading)
@@ -127,7 +123,7 @@ def _emission_scores(
     if directed is not None and directed_weight > 0.0:
         sigma = np.deg2rad(38.0)
         for state, candidate in enumerate(candidates):
-            residual = _normalize_angle(candidate - directed)
+            residual = normalize_angle(candidate - directed)
             scores[state] -= directed_weight * 0.5 * (residual / sigma) ** 2
     return scores
 
@@ -148,7 +144,7 @@ def _flip_support(
     return all(
         item.motion_confidence >= _DIRECTED_CONFIDENCE_THRESHOLD
         and (directed := _finite_angle(item.directed_motion_heading)) is not None
-        and abs(_normalize_angle(directed - candidate)) <= _DIRECTED_SUPPORT_THRESHOLD
+        and abs(normalize_angle(directed - candidate)) <= _DIRECTED_SUPPORT_THRESHOLD
         for item in window
     )
 
@@ -163,15 +159,15 @@ def _transition_score(
 ) -> float:
     """方位連続性のスコアを返し、根拠のない180度反転を禁止する。"""
     yaw = float(observations[index].yaw_delta or 0.0)
-    physical_delta = abs(_normalize_angle(candidate - previous_candidate))
+    physical_delta = abs(normalize_angle(candidate - previous_candidate))
     if (
         previous_mode == mode
         and physical_delta >= _REVERSAL_THRESHOLD
         and not _flip_support(index, candidate, observations)
     ):
         return float("-inf")
-    expected = _normalize_angle(previous_candidate + yaw)
-    residual = _normalize_angle(candidate - expected)
+    expected = normalize_angle(previous_candidate + yaw)
+    residual = normalize_angle(candidate - expected)
     sigma = np.deg2rad(75.0 if mode == "turning" else 30.0)
     return float(-0.5 * (residual / sigma) ** 2)
 
@@ -205,7 +201,7 @@ def _decode_sequence(
         preferred_state = min(
             range(2),
             key=lambda state: abs(
-                _normalize_angle(candidates[0][state] - initial_selected)
+                normalize_angle(candidates[0][state] - initial_selected)
             ),
         )
         scores[0, preferred_state] += 1e-9
@@ -302,8 +298,7 @@ def resolve_step_directions(
         is_reversal = (
             previous_heading is not None
             and previous_mode == mode
-            and abs(_normalize_angle(selected - previous_heading))
-            >= _REVERSAL_THRESHOLD
+            and abs(normalize_angle(selected - previous_heading)) >= _REVERSAL_THRESHOLD
         )
         if is_reversal and not reversal_support:
             selected_state = 1 - selected_state

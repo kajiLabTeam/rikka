@@ -17,8 +17,9 @@ from typing import Any
 
 import numpy as np
 
+from ...common.lib.angles import normalize_angle_array
 from ...particle.lib.recorder import ParticleFilterStepDiagnostics
-from .proposal import _MOTION_STATE_NAMES, _normalize_angle, _weighted_circular_std
+from .motion_model import _MOTION_STATE_NAMES, _weighted_circular_std
 
 
 def _build_step_diagnostics(**values: Any) -> ParticleFilterStepDiagnostics:
@@ -73,7 +74,7 @@ def _build_step_diagnostics(**values: Any) -> ParticleFilterStepDiagnostics:
     heading_total_std_deg = float(
         np.degrees(
             _weighted_circular_std(
-                _normalize_angle(heading_correction + heading_drift),
+                normalize_angle_array(heading_correction + heading_drift),
                 weights,
             )
         )

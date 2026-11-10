@@ -23,11 +23,8 @@ from ....common.config import (
     MAX_SEG_SAMPLES,
     MIN_SEG_SAMPLES,
 )
+from ....common.lib.angles import normalize_angle, score_ratio
 from ....common.lib.models import StepSegment
-from ....common.lib.pdr_math import (
-    _normalize_angle,
-    _score_ratio,
-)
 from .gyro import _step_segment_bounds
 
 
@@ -131,16 +128,16 @@ def _estimate_accel_headings(
     # 手法1: 時間的に早い極大値方向。手法2: ノルムが大きい極大値方向。
     method1_vec = point1 - point2
     method2_vec = point1 - point2 if norm1 >= norm2 else point2 - point1
-    method1_heading = _normalize_angle(
+    method1_heading = normalize_angle(
         float(np.arctan2(method1_vec[1], method1_vec[0])) + direction_offset
     )
-    method2_heading = _normalize_angle(
+    method2_heading = normalize_angle(
         float(np.arctan2(method2_vec[1], method2_vec[0])) + direction_offset
     )
 
-    strength_score = _score_ratio(min(norm1, norm2), ACCEL_HEADING_MIN_PEAK_NORM)
-    separation_score = _score_ratio(peak_distance, ACCEL_HEADING_MIN_PEAK_DISTANCE)
-    line_length_score = _score_ratio(line_length, ACCEL_HEADING_MIN_LINE_LENGTH)
+    strength_score = score_ratio(min(norm1, norm2), ACCEL_HEADING_MIN_PEAK_NORM)
+    separation_score = score_ratio(peak_distance, ACCEL_HEADING_MIN_PEAK_DISTANCE)
+    line_length_score = score_ratio(line_length, ACCEL_HEADING_MIN_LINE_LENGTH)
     duration_score = 1.0 if MIN_SEG_SAMPLES <= seg_len <= MAX_SEG_SAMPLES else 0.0
     confidence = strength_score * separation_score * line_length_score * duration_score
 

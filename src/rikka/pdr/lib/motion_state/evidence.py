@@ -19,16 +19,12 @@ from ....common.config import (
     PF_MOTION_DISPLACEMENT_FULL_CONFIDENCE_M,
     TURNING_YAW_DELTA_THRESHOLD_DEG,
 )
-from ....common.lib.models import (
-    StepHeading,
-    StepMotionEvidence,
-    StepMotionObservation,
-)
+from ....common.lib.angles import normalize_angle
+from ....common.lib.models import StepHeading, StepMotionEvidence, StepMotionObservation
 from ....common.lib.pdr_math import (
     SIDESTEP_BODY_MOTION_ANGLE_THRESHOLD_RAD,
     SIDESTEP_BODY_MOTION_RATIO_THRESHOLD,
     SIDESTEP_STRONG_ANGLE_THRESHOLD_RAD,
-    _normalize_angle,
 )
 from .step_motion import (
     _is_trajectory_sidestep_movement,
@@ -49,9 +45,7 @@ def _motion_calibration_reliability(step_headings: list[StepHeading]) -> float:
             continue
         if heading.yaw_delta is not None and abs(heading.yaw_delta) >= np.deg2rad(20.0):
             continue
-        residuals.append(
-            _normalize_angle(heading.motion_heading - heading.body_heading)
-        )
+        residuals.append(normalize_angle(heading.motion_heading - heading.body_heading))
     if not residuals:
         return 0.0
     concentration = float(
@@ -259,11 +253,11 @@ def build_particle_motion_headings(
                 else 25.0
             )
             delta = np.clip(
-                _normalize_angle(candidate - previous_heading),
+                normalize_angle(candidate - previous_heading),
                 -limit,
                 limit,
             )
-            candidate = _normalize_angle(previous_heading + float(delta))
+            candidate = normalize_angle(previous_heading + float(delta))
         result.append(candidate)
         if _is_trajectory_sidestep_movement(movement):
             after_sidestep_steps = 2
@@ -295,9 +289,7 @@ def _body_motion_angle_diff(step_heading: StepHeading) -> float | None:
     """端末方位と移動方位の絶対角度差を返す。"""
     if step_heading.body_heading is None or step_heading.motion_heading is None:
         return None
-    return abs(
-        _normalize_angle(step_heading.motion_heading - step_heading.body_heading)
-    )
+    return abs(normalize_angle(step_heading.motion_heading - step_heading.body_heading))
 
 
 def _sidestep_evidence(step_heading: StepHeading) -> _SidestepEvidence:

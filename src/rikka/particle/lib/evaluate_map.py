@@ -17,12 +17,12 @@ import sys
 
 import numpy as np
 
+from ...common.lib.angles import normalize_angle_array
 from .landmark import (
     meter_walkable_mask,
     reset_particles_to_landmark,
     resolve_anchor_heading,
 )
-from .proposal import _normalize_angle
 from .recovery.apply import (
     _apply_checkpoint_replay,
     _apply_fallback_recovery,
@@ -112,7 +112,7 @@ def _resample_or_keep(ctx: ParticleRuntime, *, ess_ratio: float | None = None) -
         return
 
     if ctx.effective_heading_rejuvenation_sigma > 0.0:
-        ctx.heading_drift[replaced] = _normalize_angle(
+        ctx.heading_drift[replaced] = normalize_angle_array(
             ctx.heading_drift[replaced]
             + ctx.rng.normal(
                 0, ctx.effective_heading_rejuvenation_sigma, replaced_count
@@ -166,7 +166,7 @@ def _reset_to_landmark(ctx: ParticleRuntime) -> None:
         is_walkable,
     )
     ctx.heading_correction = ctx.proposed_correction
-    ctx.heading_drift = _normalize_angle(
+    ctx.heading_drift = normalize_angle_array(
         ctx.proposed_drift
         + ctx.rng.normal(
             0.0,
@@ -255,7 +255,7 @@ def _anchor_to_landmark(ctx: ParticleRuntime) -> None:
         is_walkable,
     )
     ctx.heading_correction = ctx.proposed_correction
-    ctx.heading_drift = _normalize_angle(
+    ctx.heading_drift = normalize_angle_array(
         ctx.proposed_drift
         + ctx.rng.normal(
             0.0,
@@ -321,7 +321,7 @@ def _apply_anchor_heading(ctx: ParticleRuntime) -> None:
     if landmark is None or landmark.heading_deg is None:
         raise RuntimeError("内部エラー: 確定対象の方位がありません。")
     base_headings = ctx.particle_base_headings[ctx.parent_indices]
-    current_headings = _normalize_angle(
+    current_headings = normalize_angle_array(
         base_headings + ctx.heading_correction + ctx.heading_drift
     )
     ctx.heading_correction, ctx.heading_drift = resolve_anchor_heading(

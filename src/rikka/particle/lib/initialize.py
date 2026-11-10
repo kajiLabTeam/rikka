@@ -1,13 +1,23 @@
-"""particle filter の初期状態生成。
+"""フロアマップの読み込みと初期粒子の生成。1歩目の分布をここで決める。
 
 役割:
-    初期状態生成を独立した段階として実装する。
+    地図画像を歩行可否のグレースケールへ正規化し、粒子の初期位置・初期方位・
+    歩幅倍率・重みと、各種履歴リストを作る。
 依存元:
-    common の共有型・設定と particle/lib の部品、ParticleRuntime を利用する。
+    Matplotlib の画像読み込み、``landmark/lib`` の歩割り当てと座標変換、
+    ``particle/lib`` の地図判定・運動モデル・一様初期化、``ParticleRuntime``。
 利用先:
-    particle/lib/runner が元の実行順序どおりに呼び出す。
+    ``particle.lib.runner`` が ``setup`` の直後に1回だけ呼び出す。
 処理フロー:
-    地図と粒子状態、履歴、準備済み歩列を初期化する。
+    初期分布は ``init_mode`` で分かれる。
+
+    - ``origin``: 起点 (0, 0) に全粒子を置き、地図上の起点画素を検証する。
+    - ``uniform``: 歩行可能画素の面積に比例して粒子を一様配置し、初期方位も
+      ``[-pi, pi)`` から一様に取る。起点画素の検証は行わない。
+
+    初期方位のばらつきは、減衰しない ``heading_correction`` へ入れる。
+    毎歩0へ引き戻される ``heading_drift`` へ入れると数歩で全粒子が同じ方位へ
+    collapse するためである（関数内のコメントに詳細）。
 """
 
 from pathlib import Path
@@ -26,12 +36,8 @@ from ...particle.lib.map_constraints import (
     _validate_floormap_origin,
     _validate_floormap_shape,
 )
-from ...particle.lib.proposal import (
-    _MOTION_FORWARD,
-)
-from ...particle.lib.recorder import (
-    ParticleRecorder,
-)
+from ...particle.lib.motion_model import _MOTION_FORWARD
+from ...particle.lib.recorder import ParticleRecorder
 from .global_init import (
     sample_uniform_headings,
     sample_uniform_walkable_particles,
@@ -65,6 +71,7 @@ def _adaptive_heading_rejuvenation_sigma(
 
 
 def initialize(ctx: ParticleRuntime) -> None:
+    """地図を読み込み、初期粒子・状態・履歴を ``ctx`` へ構築する。"""
     ctx.map_gray = _normalize_floormap_gray(mpimg.imread(Path(ctx.floormap_path)))
     _validate_floormap_shape(ctx.map_gray)
     ctx.global_phase_active = ctx.init_mode == "uniform"

@@ -20,11 +20,8 @@ from ....common.config import (
     SIDESTEP_LATERAL_RATIO,
     SIDESTEP_MIN_LATERAL_DISPLACEMENT_M,
 )
+from ....common.lib.angles import abs_angle_diff, normalize_angle
 from ....common.lib.models import StepHeading, StepSegment
-from ....common.lib.pdr_math import (
-    _abs_angle_diff,
-    _normalize_angle,
-)
 from ....common.lib.time_utils import (
     _sample_gyro_angle,
     _step_mid_index,
@@ -85,8 +82,8 @@ def _build_step_heading(
         selected_heading=selected_heading,
         source=source,
         confidence=accel.confidence,
-        angle_diff_method1=_abs_angle_diff(gyro_heading, accel.method1_heading),
-        angle_diff_method2=_abs_angle_diff(gyro_heading, accel.method2_heading),
+        angle_diff_method1=abs_angle_diff(gyro_heading, accel.method1_heading),
+        angle_diff_method2=abs_angle_diff(gyro_heading, accel.method2_heading),
         segment_start_index=accel.segment_start_index,
         segment_end_index=accel.segment_end_index,
         peak1_index=accel.peak1_index,
@@ -125,7 +122,7 @@ def resolve_step_heading(
     mid_time = _step_mid_time(df_acc, peaks, i)
     gyro_base = _sample_gyro_angle(df_gyro, sample_index=mid_idx, sample_time=mid_time)
     gyro_heading = (
-        None if gyro_base is None else _normalize_angle(gyro_base + direction_offset)
+        None if gyro_base is None else normalize_angle(gyro_base + direction_offset)
     )
     accel_heading = _estimate_accel_headings(
         df_acc, peaks, i, direction_offset, step_segments

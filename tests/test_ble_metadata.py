@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from rikka.ble.lib.loader import load_ble_metadata_landmarks, load_ble_observations
-from rikka.cli import options
+from rikka.cli import resolvers
 from rikka.common.lib.models import Landmark
 
 
@@ -84,7 +84,7 @@ def test_malformed_metadata_is_rejected(tmp_path: Path, contents: str) -> None:
 def test_metadata_without_ble_keeps_legacy_fallback(tmp_path: Path) -> None:
     data = _ble(tmp_path)
     (tmp_path / "metadata.json").write_text("{}")
-    assert options._resolve_ble_inputs(str(tmp_path), True, str(data)) == (
+    assert resolvers._resolve_ble_inputs(str(tmp_path), True, str(data)) == (
         str(data),
         None,
     )
@@ -94,8 +94,8 @@ def test_local_lowercase_ble_and_metadata_are_used(tmp_path: Path) -> None:
     data = _ble(tmp_path)
     _metadata(tmp_path, [_beacon()])
 
-    resolved, landmarks = options._resolve_ble_inputs(
-        str(tmp_path), True, options._BLE_DATA_DEFAULT
+    resolved, landmarks = resolvers._resolve_ble_inputs(
+        str(tmp_path), True, resolvers._BLE_DATA_DEFAULT
     )
 
     assert Path(resolved) == data
@@ -113,7 +113,9 @@ def test_explicit_ble_uses_its_own_metadata(tmp_path: Path) -> None:
     data = _ble(explicit)
     _metadata(explicit, [_beacon(pixel_x=2.0)])
 
-    resolved, landmarks = options._resolve_ble_inputs(str(measurement), True, str(data))
+    resolved, landmarks = resolvers._resolve_ble_inputs(
+        str(measurement), True, str(data)
+    )
 
     assert resolved == str(data)
     assert landmarks == (Landmark("b1", 2.0, 3141.7),)
@@ -135,7 +137,7 @@ def test_position_csv_has_priority_over_metadata(tmp_path: Path) -> None:
         ]
     ).to_csv(tmp_path / "BLE_pos.csv", index=False)
 
-    assert options._resolve_ble_inputs(str(tmp_path), True, str(data))[1] == (
+    assert resolvers._resolve_ble_inputs(str(tmp_path), True, str(data))[1] == (
         Landmark("b1", 10.0, 20.0),
     )
 
@@ -143,7 +145,7 @@ def test_position_csv_has_priority_over_metadata(tmp_path: Path) -> None:
 def test_disabled_ble_does_not_read_invalid_metadata(tmp_path: Path) -> None:
     data = _ble(tmp_path)
     (tmp_path / "metadata.json").write_text("invalid")
-    assert options._resolve_ble_inputs(str(tmp_path), False, str(data)) == (
+    assert resolvers._resolve_ble_inputs(str(tmp_path), False, str(data)) == (
         str(data),
         None,
     )
@@ -155,4 +157,4 @@ def test_empty_active_configuration_does_not_use_global_defaults(
     data = _ble(tmp_path)
     _metadata(tmp_path, [_beacon(enabled=False)])
     with pytest.raises(ValueError, match="有効なBLE配置がありません"):
-        options._resolve_ble_inputs(str(tmp_path), True, str(data))
+        resolvers._resolve_ble_inputs(str(tmp_path), True, str(data))
