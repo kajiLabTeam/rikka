@@ -165,11 +165,31 @@ CLI は同じ `metadata.json` の start 制約から起点と初期方位を読�
 
 ### 既定の入力フォルダ
 
-既定値は `src/rikka/common/config/__init__.py` で次のように定義しています。
+既定値は `src/rikka/common/config/__init__.py` の冒頭に、計測プリセットとして
+定義しています。現在は 14号館5階が有効です。
 
 ```python
-DATA_DIR = "input/1024計測4号館1"
+# --- 14号館5階（有効）---
+DATA_DIR = "input/1024"
+FLOORMAP_PATH = "input/Floormap_building14_5floor.png"
+FLOORMAP_ORIGIN_PX: tuple[int, int] = (2175, 231)
+INITIAL_DIRECTION = 90.0
+
+# --- 4号館2階 ---
+# DATA_DIR = "input/1024計測4号館1"
+# FLOORMAP_PATH = "input/Floormap_building4_2floor.png"
+# FLOORMAP_ORIGIN_PX: tuple[int, int] = (4340, 160)
+# INITIAL_DIRECTION = 90.0
 ```
+
+計測を切り替えるときは、有効にしたいブロックのコメントを外し、もう一方を
+コメントアウトします。両方を同時に有効にすると `FLOORMAP_ORIGIN_PX` の型注釈が
+二重定義になり、mypy がエラーにします。
+
+起点と初期方位は、Android ロガー形式の計測では `metadata.json` の start 制約が
+優先されます。上記の値が実際に効くのは、metadata を持たない入力と、Python API を
+既定値で呼ぶ場合です。`DATA_DIR` と `FLOORMAP_PATH` は metadata からは決まらない
+ため、常にこの値が使われます。
 
 別のデータを使う場合は `-d` で指定します。
 
@@ -849,11 +869,13 @@ uv run rikka sensor
 
 | 項目 | 既定値 | 説明 |
 |---|---:|---|
-| `DATA_DIR` | `input/1024計測4号館1` | 入力データ |
-| `FLOORMAP_PATH` | `input/Floormap_building4_2floor.png` | 背景マップ |
+| `DATA_DIR` | `input/1024` | 入力データ（14号館5階の計測） |
+| `FLOORMAP_PATH` | `input/Floormap_building14_5floor.png` | 背景マップ（2315 × 3746 px） |
 | `FLOORMAP_ORIGIN_PX` | `(2175, 231)` | 軌跡の開始ピクセル |
 | `FLOORMAP_SCALE` | `0.01` | 1 px あたりのメートル数 |
 | `INITIAL_DIRECTION` | `90.0` | 歩行開始方向 [deg] |
+
+4号館2階へ切り替える方法は[既定の入力フォルダ](#既定の入力フォルダ)を参照してください。
 
 ### 歩検出・方位・歩幅
 

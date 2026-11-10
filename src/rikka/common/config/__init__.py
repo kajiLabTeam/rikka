@@ -15,23 +15,45 @@
 
 from math import isfinite
 
-# Data directory path
-# Change this path to use different input data
+# ---------------------------------------------------------------------------
+# 計測プリセット
+#
+# 入力データ・地図・起点・初期方位は計測ごとにまとまって変わるため、4行の
+# ブロック単位で切り替える。使うブロックだけを有効にし、他はコメントアウトする。
+# エディタの行コメント切り替え（VS Code は Cmd+/）で4行まとめて入れ替えられる。
+#
+# 両方を同時に有効にすると FLOORMAP_ORIGIN_PX の型注釈が二重定義になり mypy が
+# エラーにする。片方を必ずコメントアウトすること。
+#
+# 起点と初期方位は、Android ロガー形式の計測（acce.csv・gyro.csv・metadata.json が
+# 揃うフォルダ）では metadata.json の start 制約が優先される。つまり下記の
+# FLOORMAP_ORIGIN_PX と INITIAL_DIRECTION が実際に効くのは、metadata を持たない
+# 入力と、Python API を既定値で呼ぶ場合である。DATA_DIR と FLOORMAP_PATH は
+# metadata からは決まらないため、常にここの値が使われる。
+# ---------------------------------------------------------------------------
 
-DATA_DIR = "input/1024計測4号館1"
-
-# フロアマップ設定
-# 背景として表示するフロアマップ画像のパス
-FLOORMAP_PATH = "input/Floormap_building4_2floor.png"
-# 軌跡の起点（原点）がフロアマップ上で対応するピクセル座標 (x_px, y_px)
-# 実際の歩行開始位置に合わせて調整すること
+# --- 14号館5階（有効）: 地図 2315 x 3746 px、歩行可能 216.9 m^2 ---
+DATA_DIR = "input/1024"
+FLOORMAP_PATH = "input/Floormap_building14_5floor.png"
 FLOORMAP_ORIGIN_PX: tuple[int, int] = (2175, 231)
-# 1ピクセルあたりのメートル数（1px = 1cm = 0.01m）
-
-FLOORMAP_SCALE = 0.01
-# 軌跡の初期方向 [度]（0 = +X、90 = +Y、反時計回りが正）
-# フロアマップ画像上の上下は端末姿勢から決まる Y 軸反転設定に依存する
 INITIAL_DIRECTION = 90.0
+
+# --- 4号館2階: 地図 4400 x 1190 px、歩行可能 151.5 m^2 ---
+# DATA_DIR = "input/1024計測4号館1"
+# FLOORMAP_PATH = "input/Floormap_building4_2floor.png"
+# FLOORMAP_ORIGIN_PX: tuple[int, int] = (4340, 160)
+# INITIAL_DIRECTION = 90.0
+#
+# 4号館の記録では、手動のジャイロバイアス校正条件も比較対象として使える。
+# 全体既定は prewalk_guarded のままにし、必要なときだけ CLI で明示する。
+#   --gyro-bias-method manual --gyro-bias -0.003
+#
+# 直線廊下が主体で歩行可能領域が点対称に近いため、--pf-init uniform では
+# 軌跡が180度反転して確定することがある。向きを確定させるには
+# --ble-landmark --pf-landmark-mode ranging を併用する。
+
+# 1ピクセルあたりのメートル数（1px = 1cm = 0.01m）。どちらの地図でも共通。
+FLOORMAP_SCALE = 0.01
 
 # 軌跡図の描画座標系。floormap は地図画素へ変換して重ね、meter は
 # 初期位置・初期方位を与えない実行向けに (0, 0) 起点のメートル座標で描く。
