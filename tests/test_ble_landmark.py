@@ -1070,7 +1070,10 @@ def test_build_step_observation_map_uses_beacon_median() -> None:
 
 def test_run_pdr_without_ble_matches_prepared_trajectory() -> None:
     """BLE 無効時の run_pdr 軌跡が共有済み軌跡と一致する。"""
-    df_acc, df_gyro = load_sensor_data()
+    # 製品の既定入力が変わっても、同じ回帰用センサーで比較する。
+    df_acc, df_gyro = load_sensor_data(
+        "input/sensor_data/natsuki/1turn_rightsidestep_3turn_leftsidestep"
+    )
 
     result = run_pdr(PdrSettings(), df_acc, df_gyro)
 
