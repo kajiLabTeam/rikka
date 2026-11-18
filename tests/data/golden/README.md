@@ -18,3 +18,16 @@
 各入力CSVを読み、合成地図と上記条件でPFを実行し、`trajectory.csv`、`step_lengths.csv`、
 `step_headings.csv`（方位はラジアンへ変換）を保存する。製品ソースや旧参照値は上書きしない。
 この参照は数値回帰用であり、測位精度の正解データではない。
+
+
+入力CSVがないクリーンなcheckoutでは、Git履歴の元blobから不足分を準備できます。
+既存ファイルは上書きせず、期待値も再生成しません。
+
+```sh
+# 過去のオブジェクトが必要。shallow cloneでは先に履歴を取得する。
+uv run python agent/agent_prepare_test_inputs.py
+uv run pytest
+```
+
+必要なblob IDは準備スクリプトに固定されています。入力は現在のgitignore対象なので、
+テストのために復元した大容量CSVを再コミットする必要はありません。
