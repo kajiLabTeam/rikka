@@ -1000,3 +1000,9 @@ print(ping())  # Hello, rikka
 
 ![sensor_plot サンプル](docs/images/sensor_plot_sample.png)
 ![step_lengths サンプル](docs/images/step_lengths_sample.png)
+
+### アプリ向け方式カタログ・共通実行API
+
+Nozomi等からは `rikka.analysis_api.list_methods()` / `execute_method()` を利用できます。
+方式契約、成果物、動画素材の保存・復元、新方式の追加手順は
+[共通解析API](docs/analysis-api.md) を参照してください。従来のCLI・公開APIも維持しています。
